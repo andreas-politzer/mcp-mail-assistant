@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "outbox-mcp"
+name = "mcp-mail-assistant"
 version = "0.1.0"
-description = "MCP server that lets an AI assistant prepare e-mails and send them only through a separate, single-use send step."
+description = "A confirmation-first MCP server that enables AI assistants to draft and send emails through any SMTP provider."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

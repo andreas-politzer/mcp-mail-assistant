@@ -1,32 +1,50 @@
-# outbox-mcp
+# mcp-mail-assistant
 
-A small [MCP](https://modelcontextprotocol.io) server that lets an AI assistant **prepare** e-mails and send them only in a **separate, explicit second step**, to a fixed list of recipients, over your own SMTP account.
+> **Your AI assistant drafts. You decide what gets sent.**
 
-Typical use: you are on a walk, talking to the assistant, and say "send this to my nephew". The assistant creates a draft, reads you the recipient, subject and text, and sends only after you have clearly said yes.
+A confirmation-first [MCP](https://modelcontextprotocol.io) server that enables AI assistants to draft and send emails through any SMTP provider.
 
-> **Status: Block 0.** Core logic, tests, stdio transport. No HTTP transport or authentication yet, so it cannot be attached to a remote assistant app yet. Nothing here has been run against a real mail account.
+The assistant **prepares** an e-mail as an immutable draft. It is sent only in a **separate, explicit second step**, to a fixed list of recipients, over your own SMTP account.
+
+Typical use: you are on a walk, talking to the assistant, and say "send this to my nephew". The **intended flow** is that the assistant creates a draft, reads you the recipient, subject and text, and sends only after you have clearly said yes. This is how the server is meant to be used, not something it can enforce: it cannot check that a human really said yes (see [Honest limits](#honest-limits)).
+
+## Status
+
+Work in progress, built in stages. Be clear about what is and is not done:
+
+| Part | State |
+| --- | --- |
+| Core: drafts, single send attempt per draft, recipient allow-list, limits, audit log | Built and covered by automated tests. A real test mail to the author's own address was sent through Infomaniak SMTP (STARTTLS, port 587). |
+| OAuth sign-in (authorization server and token check, [security model](docs/oauth-security.md)) | The OAuth server and the token check are implemented and covered by automated tests, including parallel access, as a separate module. They are **not yet connected to a remote MCP HTTP service** (see the next row). The login redirect was checked once in a real Chromium browser. |
+| Remote access (HTTP transport with the sign-in wired to the mail tools) | **Not done yet.** Today the server runs locally over stdio only. |
+| Connection to a real assistant app (Claude custom connector, mobile, voice) | **Not done yet, so not verified.** `docs/oauth-security.md` lists exactly which points still need a real connector. |
+| Other recipients than yourself, attachments | Planned (see [docs/architecture.md](docs/architecture.md)). |
+
+Tested with: Infomaniak (STARTTLS). Other providers that offer standard SMTP with STARTTLS or SSL should work, but have not been tested.
 
 ## How it works
 
 1. `list_recipients` shows who may receive mail (read from `recipients.json`).
 2. `prepare_email(recipient, subject, text)` stores an **immutable draft** and returns a random draft ID. Nothing is sent.
-3. `send_email(draft_id)` sends exactly that draft, **once**.
+3. `send_email(draft_id)` makes a single send attempt for exactly that draft. It is never retried automatically.
 4. `cancel_draft(draft_id)` discards a pending draft.
 
 What the server enforces by itself:
 
-- A draft cannot be changed after it was prepared, and can be sent only once. (The application never changes drafts, and database triggers additionally reject changes and invalid status transitions. This guards against bugs, not against someone with write access to the database file, who could remove the triggers.)
+- A draft cannot be changed after it was prepared, and each draft gets only a single send attempt. (The application never changes drafts, and database triggers additionally reject changes and invalid status transitions. This guards against bugs, not against someone with write access to the database file, who could remove the triggers.)
 - Drafts expire (default 10 minutes).
 - Recipients must be on the allow-list; no free-form addresses, no CC/BCC, fixed sender.
 - Subject and text are checked against header injection and control characters.
 - Limits for preparing and sending (defaults: 3 sends/hour, 10/day).
-- An append-only audit log (database triggers reject updates and deletes). It stores recipient address and subject **in plain text**, but not the message text; instead it keeps a SHA-256 hash that covers recipient address, subject and text. The log is never purged.
+- An append-only audit log (database triggers reject updates and deletes). It stores recipient address and subject **in plain text**, but not the message text; instead it keeps a SHA-256 hash that covers recipient address, subject and text. The log is never purged. As with drafts, these triggers protect against application-level changes, not against someone with direct access to the database file, who could remove them.
 - If the result of sending is unclear (connection dropped after the message was handed over), the draft is marked `unknown` and is **never retried automatically**.
 - STARTTLS never silently falls back to plain text.
 
 ## Honest limits
 
 **The server cannot prove that a human said "yes".** If the assistant is tricked (for example by a malicious web page or document containing instructions), it could call both tools. The allow-list, the limits and the audit log reduce the damage, but they do not remove this risk. Stronger options (an approval prompt in the client, or an approval step outside the chat) are discussed in [docs/architecture.md](docs/architecture.md) and are not built yet.
+
+The sign-in layer is described, with the tests that prove each claim and its known weaknesses, in [docs/oauth-security.md](docs/oauth-security.md).
 
 A stolen SMTP password bypasses this server completely. Use a per-device password and revoke it if in doubt.
 
@@ -53,7 +71,7 @@ uv run --env-file .env outbox-mcp
 
 Credentials belong only in `.env` (never committed; it is in `.gitignore`).
 
-## Known limitations (not addressed in Block 0)
+## Known limitations
 
 Documented on purpose, to be decided later:
 
@@ -105,11 +123,15 @@ src/outbox_mcp/
   security/          validation, recipient allow-list, limits
   storage/           SQLite drafts + audit log
   mail/              message building, SMTP client
+  auth/              OAuth authorization server and token check (not mail-related)
 scripts/               manual SMTP check for your real account
 tests/
-docs/architecture.md
+docs/architecture.md     design decisions, stages, open questions
+docs/oauth-security.md  sign-in security model, limits, tests, known gaps
 ```
 
 ## Who built this
 
-Design and safety rules by Andreas Politzer; implementation built together with Claude (Anthropic). Licensed under MIT.
+Design, safety rules and decisions by Andreas Politzer. The code, tests and documentation were written together with Claude (Anthropic), step by step, with every design decision and every commit reviewed by the author. That is also why the documents say plainly what has and has not been verified.
+
+Licensed under the [MIT License](LICENSE).

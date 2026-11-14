@@ -6,7 +6,7 @@ Let an AI assistant send an e-mail on behalf of its user, by voice or text, with
 
 ## Two-step sending
 
-`prepare_email` creates an immutable draft. `send_email(draft_id)` sends that draft once. The assistant is instructed to show the draft and send only after the user confirmed it in their own words.
+`prepare_email` creates an immutable draft. `send_email(draft_id)` makes a single send attempt for exactly that draft and is never retried automatically. The assistant is instructed to show the draft and send only after the user confirmed it in their own words.
 
 ## Draft states
 
@@ -19,7 +19,7 @@ pending -> expired | cancelled
 - `unknown`: the result is unclear (e.g. connection dropped after the message body was transmitted). No automatic retry.
 - `sent`: the SMTP server accepted the message. This does not guarantee delivery.
 
-Database triggers reject changes to draft content, invalid status transitions, and updates or deletes in the audit log. This protects against programming errors. It does **not** protect against someone who can write to the database file (they can drop the triggers or delete the file), so the file is created with mode `0600`.
+Database triggers reject changes to draft content, invalid status transitions, and updates or deletes in the audit log. This protects against programming errors and application-level changes. It does **not** protect against someone who can write to the database file (they can drop the triggers or delete the file), so the file is created with mode `0600`.
 
 The audit log keeps recipient address and subject in plain text and never the message text; its SHA-256 hash covers recipient address, subject and text.
 

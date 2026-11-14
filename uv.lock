@@ -462,7 +462,7 @@ wheels = [
 ]
 
 [[package]]
-name = "outbox-mcp"
+name = "mcp-mail-assistant"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
