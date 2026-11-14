@@ -29,6 +29,8 @@ If the mail server accepts a message but the final status cannot be stored local
 
 Run exactly one server process per database for now. The startup recovery step turns drafts stuck in `sending` into `unknown`; a second process would do that to the first one's in-flight send.
 
+Over HTTP the same rule holds: one process per database, so the update procedure is stop, update, start. The stateless transport means a restart ends the running connection and the client reconnects.
+
 ## Trust boundaries
 
 | Enforced by the server | Not enforceable by the server |

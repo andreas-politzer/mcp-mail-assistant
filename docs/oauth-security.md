@@ -56,6 +56,15 @@ These are deliberate. They are listed so nobody has to discover them.
 - **No automatic cleanup of expired codes, tokens and token families yet.** They are small and harmless but accumulate. Planned for a maintenance step.
 - **The password is the single factor.** Choose a long passphrase. The server stores only a scrypt hash.
 
+## Connection to the mail tools
+
+`outbox-mcp-http` serves the sign-in and the four mail tools in one process (stateless transport, loopback only).
+
+- **Owner.** Drafts are stored under the subject of the verified access token. A token with another subject cannot see, send or cancel them. No authenticated subject means the call fails (tested).
+- **Restart.** The transport keeps no sessions, and sign-in state lives in SQLite. A restart ends the running connection; the client has to connect again. Existing tokens stay valid (tested with a second app instance on the same database). Mails still in flight at the restart are marked `unknown` at startup.
+- **Slow mail server.** Blocking work runs in at most four worker threads; the sign-in page stays responsive while a send is in flight (tested, and the test fails if the work runs on the event loop).
+- **Annotations.** The tools carry honest hints (`list_recipients` read-only; `send_email` marked destructive and open-world). They are hints for the client, not a security measure. Whether a client asks for an extra approval because of them is not yet verified.
+
 ## Not covered by this module
 
 - Theft of the SMTP password or of the server itself.
@@ -83,4 +92,6 @@ Everything in the tables above was tested against the real application over HTTP
 - how Claude refreshes tokens (parallelism, retries);
 - whether and when Claude calls the revocation endpoint;
 - what Claude's own callback does with the code after the redirect, in the desktop app and in the mobile app;
+- whether Claude shows an extra approval prompt because of the tool annotations;
+- that Claude copes with the stateless transport and with reconnecting after a restart;
 - behaviour behind the production tunnel (host header handling), in streaming mode, and in voice mode.

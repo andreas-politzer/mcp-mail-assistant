@@ -15,8 +15,8 @@ Work in progress, built in stages. Be clear about what is and is not done:
 | Part | State |
 | --- | --- |
 | Core: drafts, single send attempt per draft, recipient allow-list, limits, audit log | Built and covered by automated tests. A real test mail to the author's own address was sent through Infomaniak SMTP (STARTTLS, port 587). |
-| OAuth sign-in (authorization server and token check, [security model](docs/oauth-security.md)) | The OAuth server and the token check are implemented and covered by automated tests, including parallel access, as a separate module. They are **not yet connected to a remote MCP HTTP service** (see the next row). The login redirect was checked once in a real Chromium browser. |
-| Remote access (HTTP transport with the sign-in wired to the mail tools) | **Not done yet.** Today the server runs locally over stdio only. |
+| OAuth sign-in (authorization server and token check, [security model](docs/oauth-security.md)) | Implemented and covered by automated tests, including parallel access. The login redirect was checked once in a real Chromium browser. |
+| Remote access (HTTP transport with the sign-in wired to the mail tools) | Implemented and covered by automated tests with a fake sender: no token, no access; drafts belong to the token's owner; a slow mail server does not block the sign-in page. **Not yet run on the real host and not yet reached from the internet.** Locally, stdio still works as before. |
 | Connection to a real assistant app (Claude custom connector, mobile, voice) | **Not done yet, so not verified.** `docs/oauth-security.md` lists exactly which points still need a real connector. |
 | Other recipients than yourself, attachments | Planned (see [docs/architecture.md](docs/architecture.md)). |
 
@@ -71,14 +71,30 @@ uv run --env-file .env outbox-mcp
 
 Credentials belong only in `.env` (never committed; it is in `.gitignore`).
 
+## Setup (remote, HTTP with sign-in)
+
+```bash
+# Create the password hash for the sign-in page (asks for the passphrase, prints the hash):
+uv run python -m outbox_mcp.auth.passwords
+
+# In .env set OUTBOX_PUBLIC_BASE_URL, OUTBOX_OAUTH_PASSWORD_HASH and OUTBOX_OAUTH_DB_PATH
+# (see .env.example), then:
+uv run --env-file .env outbox-mcp-http
+```
+
+The service listens on `127.0.0.1:8430` only (override with `OUTBOX_HTTP_PORT`). Publish it through a tunnel or reverse proxy that serves HTTPS under `OUTBOX_PUBLIC_BASE_URL`.
+
+- **Stateless transport.** Every request stands alone; the sign-in state lives in SQLite. A restart or update ends the running connection, and the client has to connect again. Sign-ins and tokens survive the restart.
+- **Mail work runs in worker threads** (at most four at once), so a slow SMTP server does not block the sign-in page or other requests.
+- **Owner.** Drafts belong to the signed-in owner (the subject of the access token), not to a fixed name.
+
 ## Known limitations
 
 Documented on purpose, to be decided later:
 
 - No schema versioning for the SQLite database yet (needed before attachments).
-- No MCP tool annotations (`readOnlyHint`, `destructiveHint`, ...) yet.
+- Tool annotations (`readOnlyHint`, `destructiveHint`, ...) are set honestly, but they are only hints for the client, not a security measure. Whether a client asks for an extra approval because of them has not been checked with a real client.
 - Dependencies: `mcp[cli]` pulls in extras the server does not need; the lower bound `mcp>=1.9.0` is untested (tests run against the locked version).
-- Whether tools run blocking inside the event loop has not been checked; relevant for the HTTP transport.
 - Expiry uses the system clock; a backwards clock jump would extend a draft's lifetime.
 - If building the message fails before anything is sent, the draft is reported as `unknown` rather than `failed` (safe, but imprecise).
 - Not yet tested: real TLS with certificate verification, SSL mode (port 465), failed login.
@@ -117,7 +133,8 @@ The tests use a fake sender and a local test SMTP server; no real mail is sent.
 
 ```
 src/outbox_mcp/
-  server.py          MCP tools (thin shell)
+  server.py          MCP tools (thin shell, stdio)
+  http_server.py     HTTP entry point: sign-in plus the mail tools
   service.py         prepare / send / cancel logic
   config.py          settings from environment
   security/          validation, recipient allow-list, limits
