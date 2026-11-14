@@ -1,0 +1,10 @@
+# Example tunnel config. The tunnel id and credentials file come from
+# `cloudflared tunnel create outbox-mcp`. Create the DNS route last
+# (`cloudflared tunnel route dns outbox-mcp relay.example.com`): that is the moment
+# the service becomes reachable from the internet.
+tunnel: <tunnel-id>
+credentials-file: /home/youruser/.cloudflared/<tunnel-id>.json
+ingress:
+  - hostname: relay.example.com
+    service: http://127.0.0.1:8430
+  - service: http_status:404

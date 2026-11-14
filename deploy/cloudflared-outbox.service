@@ -1,0 +1,16 @@
+# Example unit: a dedicated Cloudflare Tunnel for the mail server.
+# Use a separate tunnel (and config file) from any other service on the host.
+[Unit]
+Description=Cloudflare Tunnel for mcp-mail-assistant
+After=network-online.target outbox-mcp.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=youruser
+ExecStart=/usr/bin/cloudflared tunnel --config /home/youruser/.cloudflared/config-outbox.yml run outbox-mcp
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

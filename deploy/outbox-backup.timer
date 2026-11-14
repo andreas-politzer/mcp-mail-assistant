@@ -1,0 +1,12 @@
+# Runs at minute 30 of every hour, so it does not collide with a backup that runs on the full hour
+# (restic locks the repository; a prune needs it exclusively).
+[Unit]
+Description=Hourly restic backup of the mcp-mail-assistant data
+
+[Timer]
+OnCalendar=*:30
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

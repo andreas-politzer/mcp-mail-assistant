@@ -1,0 +1,13 @@
+# Example unit: hourly restic backup of the data directory.
+# A second, separate unit next to any existing backup; it uses the same repository
+# under its own tag. ExecStartPre writes consistent SQLite snapshots first.
+[Unit]
+Description=Restic backup of the mcp-mail-assistant data (SQLite snapshots and config)
+ConditionPathIsMountPoint=/path/to/backup-disk
+
+[Service]
+Type=oneshot
+User=youruser
+ExecStartPre=/usr/bin/python3 /home/youruser/outbox-backup/snapshot.py
+ExecStart=/usr/bin/restic backup /home/youruser/outbox-backup/staging /home/youruser/outbox-data/.env /home/youruser/outbox-data/recipients.json /etc/systemd/system/outbox-mcp.service /etc/systemd/system/cloudflared-outbox.service /etc/systemd/system/outbox-backup.service /etc/systemd/system/outbox-backup.timer --repo /path/to/backup-disk/restic-repo --password-file /home/youruser/.config/restic/password --tag outbox
+ExecStart=/usr/bin/restic forget --repo /path/to/backup-disk/restic-repo --password-file /home/youruser/.config/restic/password --tag outbox --keep-hourly 24 --keep-daily 14 --keep-weekly 8 --keep-monthly 12 --prune

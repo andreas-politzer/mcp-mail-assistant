@@ -82,16 +82,20 @@ These are deliberate. They are listed so nobody has to discover them.
 - **Redirect after login (Chromium 156, 14 Nov 2026).** The login page originally allowed form submission only to itself (`form-action 'self'`). In a real Chromium browser the login succeeded on the server, but the browser blocked the redirect back to `claude.ai` (console: CSP `form-action` violation, the page stayed on the login form). The page now allows form submission to itself and to the origins of the allowed return addresses, by default only `https://claude.ai`. The same flow was repeated in the same browser against a local server and the redirect went through. The automated tests cannot see this, because they run no browser rules; the unit test `test_login_page_may_only_submit_to_itself_and_the_allowed_return_origin` pins the header, and the browser check has to be repeated after any change to the page's security headers.
 - **Python 3.14 (macOS).** The full suite passed on Python 3.14 (321 tests) as well as on Python 3.10.
 
-## Verified only in tests, not yet with a real Claude connector
+## Verified with a real Claude connector (14 November 2026)
 
-Everything in the tables above was tested against the real application over HTTP with a test client. These points can only be confirmed with a real connector and are **not yet verified**:
+Setup: custom connector in the Claude desktop app, then mobile (text chat and live voice chat), against the real server behind a Cloudflare Tunnel. Observed:
 
-- that Claude accepts the discovery documents (including a metadata that advertises only `none`) and registers itself as a public client;
-- that Claude's registration request names `token_endpoint_auth_method` explicitly (if it omits it, registration is refused);
-- the spelling of the issuer address (with or without trailing slash);
-- how Claude refreshes tokens (parallelism, retries);
-- whether and when Claude calls the revocation endpoint;
-- what Claude's own callback does with the code after the redirect, in the desktop app and in the mobile app;
-- whether Claude shows an extra approval prompt because of the tool annotations;
-- that Claude copes with the stateless transport and with reconnecting after a restart;
-- behaviour behind the production tunnel (host header handling), in streaming mode, and in voice mode.
+- **Discovery and registration.** Claude accepted the discovery documents and registered itself as a public client; registration was not refused, so the issuer spelling (with trailing slash) and the registration request were accepted. The database held two registered clients afterwards.
+- **Sign-in.** The login page and redirect worked in the desktop app and the connector became usable. After entering the passphrase the page showed once "request unknown or expired, please start again", although the connection worked afterwards. The cause is **not established** (a second call to the return page is the guess). Repeating the connection and watching the log is still open.
+- **Host header and tunnel.** Requests through the tunnel reached the MCP endpoint (HTTP 200 for authorized calls, 401 without a token); no host header problem appeared.
+- **Stateless transport and restart.** After a service restart, the desktop app and the mobile app used the tools again without a new sign-in.
+- **Streaming and voice mode.** In a live voice chat Claude used the tools (draft, read-out, spoken confirmation, send). The server's send limit was reached once during testing and Claude relayed the refusal correctly.
+- **Approval prompt.** The desktop app asked once whether the tool may be used and remembered "always allow"; later sends showed no prompt. The mobile app showed no prompt in the tests. This is client behaviour, not a protection of the server.
+
+## Still not verified
+
+- How Claude refreshes tokens (parallelism, retries). Access tokens live one hour; the tests so far did not run long enough to see a refresh in the log.
+- Whether and when Claude calls the revocation endpoint, and the effect of `revoke-all` on a live connection.
+- What the failed first return page was exactly (see above).
+- Behaviour after the refresh token expires (90 days of inactivity).

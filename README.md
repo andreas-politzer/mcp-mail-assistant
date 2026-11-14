@@ -10,14 +10,15 @@ Typical use: you are on a walk, talking to the assistant, and say "send this to 
 
 ## Status
 
-Work in progress, built in stages. Be clear about what is and is not done:
+Working end to end for the author, built in stages. Be clear about what is and is not done:
 
 | Part | State |
 | --- | --- |
 | Core: drafts, single send attempt per draft, recipient allow-list, limits, audit log | Built and covered by automated tests. A real test mail to the author's own address was sent through Infomaniak SMTP (STARTTLS, port 587). |
 | OAuth sign-in (authorization server and token check, [security model](docs/oauth-security.md)) | Implemented and covered by automated tests, including parallel access. The login redirect was checked once in a real Chromium browser. |
-| Remote access (HTTP transport with the sign-in wired to the mail tools) | Implemented and covered by automated tests with a fake sender: no token, no access; drafts belong to the token's owner; a slow mail server does not block the sign-in page. **Not yet run on the real host and not yet reached from the internet.** Locally, stdio still works as before. |
-| Connection to a real assistant app (Claude custom connector, mobile, voice) | **Not done yet, so not verified.** `docs/oauth-security.md` lists exactly which points still need a real connector. |
+| Remote access (HTTP transport with the sign-in wired to the mail tools) | Runs on the author's own server behind a Cloudflare Tunnel and is reachable from the internet; without a token every request is refused (checked from outside: HTTP 401). Covered by automated tests with a fake sender: drafts belong to the token's owner, a slow mail server does not block the sign-in page. See [docs/operations.md](docs/operations.md). |
+| Connection to a real assistant app (Claude custom connector) | **Used for real** on Claude desktop, on mobile in a text chat and in a live voice chat: draft, read-out, spoken confirmation, send, test mails arrived with correct umlauts. Reconnecting after a restart worked without a new sign-in. What was observed and what is still open: [docs/oauth-security.md](docs/oauth-security.md#verified-with-a-real-claude-connector-14-november-2026). |
+| Backup and restore | Hourly encrypted backup of the data directory (databases via SQLite snapshots, configuration). The first automatic run of the timer was verified, and a restore was tested once (databases open and pass `integrity_check`, config files identical). See [docs/operations.md](docs/operations.md#backup). |
 | Other recipients than yourself, attachments | Planned (see [docs/architecture.md](docs/architecture.md)). |
 
 Tested with: Infomaniak (STARTTLS). Other providers that offer standard SMTP with STARTTLS or SSL should work, but have not been tested.
@@ -82,7 +83,7 @@ uv run python -m outbox_mcp.auth.passwords
 uv run --env-file .env outbox-mcp-http
 ```
 
-The service listens on `127.0.0.1:8430` only (override with `OUTBOX_HTTP_PORT`). Publish it through a tunnel or reverse proxy that serves HTTPS under `OUTBOX_PUBLIC_BASE_URL`.
+The service listens on `127.0.0.1:8430` only (override with `OUTBOX_HTTP_PORT`). Publish it through a tunnel or reverse proxy that serves HTTPS under `OUTBOX_PUBLIC_BASE_URL`. A complete example (hardened service, tunnel, rate limit, backup with restore test) is in [docs/operations.md](docs/operations.md), with templates in [`deploy/`](deploy/).
 
 - **Stateless transport.** Every request stands alone; the sign-in state lives in SQLite. A restart or update ends the running connection, and the client has to connect again. Sign-ins and tokens survive the restart.
 - **Mail work runs in worker threads** (at most four at once), so a slow SMTP server does not block the sign-in page or other requests.
@@ -93,7 +94,7 @@ The service listens on `127.0.0.1:8430` only (override with `OUTBOX_HTTP_PORT`).
 Documented on purpose, to be decided later:
 
 - No schema versioning for the SQLite database yet (needed before attachments).
-- Tool annotations (`readOnlyHint`, `destructiveHint`, ...) are set honestly, but they are only hints for the client, not a security measure. Whether a client asks for an extra approval because of them has not been checked with a real client.
+- Tool annotations (`readOnlyHint`, `destructiveHint`, ...) are set honestly, but they are only hints for the client, not a security measure. Claude's desktop app asked once for permission before the first send and then remembered "always allow"; the mobile app showed no prompt. Other clients have not been checked.
 - Dependencies: `mcp[cli]` pulls in extras the server does not need; the lower bound `mcp>=1.9.0` is untested (tests run against the locked version).
 - Expiry uses the system clock; a backwards clock jump would extend a draft's lifetime.
 - If building the message fails before anything is sent, the draft is reported as `unknown` rather than `failed` (safe, but imprecise).
@@ -142,9 +143,11 @@ src/outbox_mcp/
   mail/              message building, SMTP client
   auth/              OAuth authorization server and token check (not mail-related)
 scripts/               manual SMTP check for your real account
+deploy/                example systemd units, tunnel config and the SQLite snapshot script
 tests/
 docs/architecture.md     design decisions, stages, open questions
 docs/oauth-security.md  sign-in security model, limits, tests, known gaps
+docs/operations.md      running it for real: layout, tunnel, limits, backup and restore test
 ```
 
 ## Who built this

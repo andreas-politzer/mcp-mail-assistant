@@ -1,0 +1,33 @@
+# Example unit: the mail server itself. Replace youruser and the paths.
+# Install as /etc/systemd/system/outbox-mcp.service, then:
+#   sudo systemctl daemon-reload && sudo systemctl enable --now outbox-mcp
+[Unit]
+Description=mcp-mail-assistant (HTTP, listens on 127.0.0.1 only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/home/youruser/outbox-data
+EnvironmentFile=/home/youruser/outbox-data/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/youruser/mcp-mail-assistant/.venv/bin/outbox-mcp-http
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/youruser/outbox-data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target
