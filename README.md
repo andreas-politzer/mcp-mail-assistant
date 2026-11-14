@@ -65,6 +65,28 @@ Documented on purpose, to be decided later:
 - If building the message fails before anything is sent, the draft is reported as `unknown` rather than `failed` (safe, but imprecise).
 - Not yet tested: real TLS with certificate verification, SSL mode (port 465), failed login.
 
+## Testing against your real mail account
+
+Before attaching anything to an assistant, check that your SMTP account works. The script
+`scripts/test_infomaniak_smtp.py` was written for Infomaniak but works with any provider that
+offers STARTTLS on port 587. It uses the real flow (`prepare_email`, then `send_email`) and:
+
+- sends **exactly one** test mail, **only to your own sender address** (there is no option to choose another recipient);
+- shows sender, recipient, subject and text first, and sends only if you type `SEND` in capital letters; anything else cancels. It needs an interactive terminal;
+- requires `OUTBOX_SMTP_SECURITY=starttls` and port 587, makes one attempt, never retries and never falls back to unencrypted connections;
+- reads settings only from the environment (`.env`) and never prints passwords. It uses a temporary database that is deleted afterwards.
+
+```bash
+# 1. Look at the mail without connecting anywhere (works with the placeholder values):
+uv run --env-file .env.example python scripts/test_infomaniak_smtp.py --dry-run
+
+# 2. The real test, with your own .env:
+uv run --env-file .env python scripts/test_infomaniak_smtp.py
+```
+
+"Sent" means the mail server accepted the message. Then check your inbox and spam folder.
+The screen before the confirmation shows your address; do not paste it into public places.
+
 ## Tests
 
 ```bash
@@ -83,6 +105,7 @@ src/outbox_mcp/
   security/          validation, recipient allow-list, limits
   storage/           SQLite drafts + audit log
   mail/              message building, SMTP client
+scripts/               manual SMTP check for your real account
 tests/
 docs/architecture.md
 ```
