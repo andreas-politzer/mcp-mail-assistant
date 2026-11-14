@@ -7,6 +7,7 @@ Error messages name the file the AI asked for, never its content.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import os
 import re
@@ -173,10 +174,7 @@ class AttachmentPolicy:
             current.resolve().relative_to(base)
         except ValueError:
             raise refuse("it lies outside the notes folder") from None
-        try:
-            fd = os.open(current, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        except OSError:
-            raise refuse("it cannot be opened") from None
+        fd = _open_below(base, parts, refuse)
         try:
             info = os.fstat(fd)
             if not stat.S_ISREG(info.st_mode):
@@ -204,6 +202,40 @@ class AttachmentPolicy:
         return Attachment(
             name=safe_filename(parts[-1]), data=data, sha256=hashlib.sha256(data).hexdigest()
         )
+
+
+def _open_dir(base: Path):
+    return os.open(base, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+
+
+def _open_below(base: Path, parts: Tuple[str, ...], refuse) -> int:
+    """Open the file by walking down from `base` one component at a time. Every step uses
+    O_NOFOLLOW relative to the directory opened before it, so a folder swapped for a symlink
+    after the earlier checks is still refused (no check-then-use gap)."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    dir_fd = _open_dir(base)
+    try:
+        for part in parts[:-1]:
+            try:
+                next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | nofollow, dir_fd=dir_fd)
+            except OSError as exc:
+                raise _open_error(exc, refuse) from None
+            os.close(dir_fd)
+            dir_fd = next_fd
+        try:
+            return os.open(parts[-1], os.O_RDONLY | nofollow, dir_fd=dir_fd)
+        except OSError as exc:
+            raise _open_error(exc, refuse) from None
+    finally:
+        os.close(dir_fd)
+
+
+def _open_error(exc: OSError, refuse) -> AttachmentRejected:
+    if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+        return refuse("it is or contains a symbolic link")
+    if exc.errno == errno.ENOENT:
+        return refuse("the file does not exist")
+    return refuse("it cannot be opened")
 
 
 def _show(path: str) -> str:

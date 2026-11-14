@@ -1,5 +1,6 @@
 import os
 import unicodedata
+from pathlib import Path
 
 import pytest
 
@@ -126,6 +127,19 @@ def test_symlinked_folder_is_refused(vault, tmp_path):
     (outside / "z.md").write_text("z", encoding="utf-8")
     os.symlink(outside, vault / "Projects/linkdir")
     rejected(policy(vault), ["Projects/linkdir/z.md"], "symbolic link")
+
+
+def test_folder_swapped_for_symlink_after_the_early_checks_is_still_refused(vault, monkeypatch):
+    """The early symlink check can be raced; opening component by component must catch it."""
+    os.symlink(vault / "Notes", vault / "Projects/linkdir")  # points inside the vault
+    monkeypatch.setattr(Path, "is_symlink", lambda self: False)
+    rejected(policy(vault, allowed_folders=["Projects", "Notes"]), ["Projects/linkdir/other.md"], "symbolic link")
+
+
+def test_file_swapped_for_symlink_after_the_early_checks_is_still_refused(vault, monkeypatch):
+    os.symlink(vault / "Notes/other.md", vault / "Projects/inner.md")
+    monkeypatch.setattr(Path, "is_symlink", lambda self: False)
+    rejected(policy(vault), ["Projects/inner.md"], "symbolic link")
 
 
 def test_missing_file_and_directory(vault):
