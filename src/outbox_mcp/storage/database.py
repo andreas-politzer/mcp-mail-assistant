@@ -1,0 +1,357 @@
+"""SQLite storage for drafts and the audit log.
+
+Database triggers enforce the important rules (immutable draft content, allowed status
+changes, append-only audit log), so a bug in the calling code cannot silently break them.
+This protects against programming errors, not against someone who can write to the
+database file: that person can drop the triggers or delete the file.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import secrets
+import sqlite3
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterator, List, Optional
+
+from ..errors import DraftNotFound, DraftNotSendable, RateLimitExceeded
+from ..security.rate_limiter import DAY, HOUR, RateLimits, prepare_limit_reached, send_limit_reason
+
+_FINAL = ("sent", "failed", "unknown", "expired", "cancelled")
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS drafts (
+    id TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    status TEXT NOT NULL CHECK (status IN
+        ('pending','sending','sent','failed','unknown','expired','cancelled')),
+    recipient_name TEXT NOT NULL,
+    recipient_address TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    body_sha256 TEXT NOT NULL,
+    sending_at REAL,
+    finished_at REAL,
+    detail TEXT
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    event TEXT NOT NULL,
+    draft_id TEXT,
+    owner TEXT,
+    recipient_address TEXT,
+    subject TEXT,
+    body_sha256 TEXT,
+    detail TEXT
+);
+CREATE INDEX IF NOT EXISTS audit_event_ts ON audit_log(event, ts);
+
+CREATE TRIGGER IF NOT EXISTS drafts_content_immutable
+BEFORE UPDATE ON drafts
+WHEN NEW.id IS NOT OLD.id OR NEW.owner IS NOT OLD.owner
+  OR NEW.created_at IS NOT OLD.created_at OR NEW.expires_at IS NOT OLD.expires_at
+  OR NEW.recipient_name IS NOT OLD.recipient_name
+  OR NEW.recipient_address IS NOT OLD.recipient_address
+  OR NEW.subject IS NOT OLD.subject OR NEW.body IS NOT OLD.body
+  OR NEW.body_sha256 IS NOT OLD.body_sha256
+BEGIN
+    SELECT RAISE(ABORT, 'draft content is immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS drafts_final_is_final
+BEFORE UPDATE ON drafts
+WHEN OLD.status IN ('sent','failed','unknown','expired','cancelled')
+BEGIN
+    SELECT RAISE(ABORT, 'draft is in a final state');
+END;
+
+CREATE TRIGGER IF NOT EXISTS drafts_valid_transition
+BEFORE UPDATE ON drafts
+WHEN NEW.status IS NOT OLD.status AND NOT (
+       (OLD.status = 'pending' AND NEW.status IN ('sending','expired','cancelled'))
+    OR (OLD.status = 'sending' AND NEW.status IN ('sent','failed','unknown')))
+BEGIN
+    SELECT RAISE(ABORT, 'invalid status transition');
+END;
+
+CREATE TRIGGER IF NOT EXISTS drafts_no_delete_active
+BEFORE DELETE ON drafts
+WHEN OLD.status IN ('pending','sending')
+BEGIN
+    SELECT RAISE(ABORT, 'active drafts cannot be deleted');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_no_update
+BEFORE UPDATE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit log is append-only');
+END;
+
+CREATE TRIGGER IF NOT EXISTS audit_no_delete
+BEFORE DELETE ON audit_log
+BEGIN
+    SELECT RAISE(ABORT, 'audit log is append-only');
+END;
+"""
+
+
+@dataclass(frozen=True)
+class Draft:
+    id: str
+    owner: str
+    created_at: float
+    expires_at: float
+    status: str
+    recipient_name: str
+    recipient_address: str
+    subject: str
+    body: str
+    body_sha256: str
+    sending_at: Optional[float]
+    finished_at: Optional[float]
+    detail: Optional[str]
+
+    @property
+    def fingerprint(self) -> str:
+        return self.body_sha256[:12]
+
+
+def body_hash(subject: str, body: str, address: str) -> str:
+    h = hashlib.sha256()
+    for part in (address, subject, body):
+        h.update(part.encode("utf-8"))
+        h.update(b"\x00")
+    return h.hexdigest()
+
+
+class Database:
+    def __init__(self, path: Path) -> None:
+        self.path = str(path)
+        self._restrict_permissions()
+        with self._connect() as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.executescript(_SCHEMA)
+
+    # -- plumbing -----------------------------------------------------------------
+
+    def _restrict_permissions(self) -> None:
+        """Create the file readable by the owner only (0600). SQLite gives its -wal and -shm
+        files the same permissions as the main file. Best effort on platforms without chmod."""
+        try:
+            os.close(os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600))
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
+
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
+        conn = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        conn.row_factory = sqlite3.Row
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    @contextmanager
+    def _tx(self) -> Iterator[sqlite3.Connection]:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
+            else:
+                conn.execute("COMMIT")
+
+    @staticmethod
+    def _draft(row: sqlite3.Row) -> Draft:
+        return Draft(**{k: row[k] for k in row.keys()})
+
+    @staticmethod
+    def _audit(conn, now, event, draft: Optional[Draft] = None, draft_id=None, owner=None, detail=None):
+        conn.execute(
+            "INSERT INTO audit_log(ts,event,draft_id,owner,recipient_address,subject,body_sha256,detail)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (
+                now,
+                event,
+                draft.id if draft else draft_id,
+                draft.owner if draft else owner,
+                draft.recipient_address if draft else None,
+                draft.subject if draft else None,
+                draft.body_sha256 if draft else None,
+                detail,
+            ),
+        )
+
+    @staticmethod
+    def _count(conn, event: str, since: float) -> int:
+        return conn.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE event=? AND ts>?", (event, since)
+        ).fetchone()[0]
+
+    @staticmethod
+    def _load(conn, draft_id: str, owner: str) -> Draft:
+        row = conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
+        if row is None or row["owner"] != owner:
+            raise DraftNotFound("No such draft. Prepare a new draft with prepare_email.")
+        return Database._draft(row)
+
+    # -- operations ---------------------------------------------------------------
+
+    def create_draft(
+        self,
+        owner: str,
+        recipient_name: str,
+        recipient_address: str,
+        subject: str,
+        body: str,
+        now: float,
+        ttl_seconds: int,
+        limits: RateLimits,
+    ) -> Draft:
+        with self._tx() as conn:
+            if prepare_limit_reached(self._count(conn, "prepared", now - HOUR), limits):
+                raise RateLimitExceeded(
+                    f"The limit of {limits.max_prepares_per_hour} prepared drafts per hour has been reached."
+                )
+            draft = Draft(
+                id="drf_" + secrets.token_urlsafe(16),
+                owner=owner,
+                created_at=now,
+                expires_at=now + ttl_seconds,
+                status="pending",
+                recipient_name=recipient_name,
+                recipient_address=recipient_address,
+                subject=subject,
+                body=body,
+                body_sha256=body_hash(subject, body, recipient_address),
+                sending_at=None,
+                finished_at=None,
+                detail=None,
+            )
+            conn.execute(
+                "INSERT INTO drafts(id,owner,created_at,expires_at,status,recipient_name,"
+                "recipient_address,subject,body,body_sha256) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    draft.id, owner, now, draft.expires_at, "pending", recipient_name,
+                    recipient_address, subject, body, draft.body_sha256,
+                ),
+            )
+            self._audit(conn, now, "prepared", draft)
+            return draft
+
+    def get_draft(self, draft_id: str, owner: str) -> Draft:
+        with self._connect() as conn:
+            return self._load(conn, draft_id, owner)
+
+    def expire_stale(self, now: float) -> int:
+        with self._tx() as conn:
+            rows = conn.execute(
+                "SELECT * FROM drafts WHERE status='pending' AND expires_at<=?", (now,)
+            ).fetchall()
+            for row in rows:
+                conn.execute("UPDATE drafts SET status='expired', finished_at=? WHERE id=?", (now, row["id"]))
+                self._audit(conn, now, "expired", self._draft(row))
+            return len(rows)
+
+    def cancel(self, draft_id: str, owner: str, now: float) -> Draft:
+        expired = False
+        with self._tx() as conn:
+            draft = self._load(conn, draft_id, owner)
+            if draft.status != "pending":
+                raise DraftNotSendable(draft.status)
+            if draft.expires_at <= now:
+                conn.execute("UPDATE drafts SET status='expired', finished_at=? WHERE id=?", (now, draft.id))
+                self._audit(conn, now, "expired", draft)
+                expired = True
+            else:
+                conn.execute("UPDATE drafts SET status='cancelled', finished_at=? WHERE id=?", (now, draft.id))
+                self._audit(conn, now, "cancelled", draft)
+        if expired:
+            raise DraftNotSendable("expired")
+        return self.get_draft(draft_id, owner)
+
+    def claim_for_sending(self, draft_id: str, owner: str, now: float, limits: RateLimits) -> Draft:
+        """Atomically move pending -> sending. Only one caller can ever succeed per draft."""
+        expired = False
+        limited: Optional[str] = None
+        with self._tx() as conn:
+            draft = self._load(conn, draft_id, owner)
+            if draft.status != "pending":
+                raise DraftNotSendable(draft.status)
+            if draft.expires_at <= now:
+                conn.execute("UPDATE drafts SET status='expired', finished_at=? WHERE id=?", (now, draft.id))
+                self._audit(conn, now, "expired", draft)
+                expired = True
+            else:
+                reason = send_limit_reason(
+                    self._count(conn, "claimed", now - HOUR),
+                    self._count(conn, "claimed", now - DAY),
+                    limits,
+                )
+                if reason:
+                    self._audit(conn, now, "rate_limited", draft, detail=reason)
+                    limited = reason
+                else:
+                    conn.execute("UPDATE drafts SET status='sending', sending_at=? WHERE id=?", (now, draft.id))
+                    self._audit(conn, now, "claimed", draft)
+        if expired:
+            raise DraftNotSendable("expired")
+        if limited:
+            raise RateLimitExceeded(limited)
+        return self.get_draft(draft_id, owner)
+
+    def finish(self, draft_id: str, status: str, now: float, detail: Optional[str] = None) -> None:
+        if status not in ("sent", "failed", "unknown"):
+            raise ValueError("invalid final status")
+        with self._tx() as conn:
+            row = conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
+            if row is None:
+                raise DraftNotFound("No such draft.")
+            conn.execute(
+                "UPDATE drafts SET status=?, finished_at=?, detail=? WHERE id=?",
+                (status, now, detail, draft_id),
+            )
+            self._audit(conn, now, status, self._draft(row), detail=detail)
+
+    def recover_interrupted(self, now: float) -> int:
+        """Drafts stuck in 'sending' (crash, restart) have an unknown result."""
+        with self._tx() as conn:
+            rows = conn.execute("SELECT * FROM drafts WHERE status='sending'").fetchall()
+            for row in rows:
+                conn.execute(
+                    "UPDATE drafts SET status='unknown', finished_at=?, detail=? WHERE id=?",
+                    (now, "service stopped while sending", row["id"]),
+                )
+                self._audit(conn, now, "unknown", self._draft(row), detail="service stopped while sending")
+            return len(rows)
+
+    def purge(self, now: float, retention_days: int) -> int:
+        cutoff = now - retention_days * DAY
+        with self._tx() as conn:
+            cur = conn.execute(
+                "DELETE FROM drafts WHERE status IN ('sent','failed','unknown','expired','cancelled')"
+                " AND COALESCE(finished_at, created_at) < ?",
+                (cutoff,),
+            )
+            return cur.rowcount
+
+    # -- reading helpers (also used by tests) -------------------------------------
+
+    def count_events(self, event: str, since: float = 0.0) -> int:
+        with self._connect() as conn:
+            return self._count(conn, event, since)
+
+    def audit_events(self) -> List[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM audit_log ORDER BY seq").fetchall()
+

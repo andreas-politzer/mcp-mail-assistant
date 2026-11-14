@@ -1,0 +1,9 @@
+{
+  "recipients": [
+    {
+      "name": "Me",
+      "address": "you@example.com",
+      "aliases": ["myself", "self"]
+    }
+  ]
+}

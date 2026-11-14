@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "outbox-mcp"
+version = "0.1.0"
+description = "MCP server that lets an AI assistant prepare e-mails and send them only through a separate, single-use send step."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Andreas Politzer" }]
+dependencies = [
+    "mcp[cli]>=1.9.0,<2.0.0",
+]
+
+[project.scripts]
+outbox-mcp = "outbox_mcp.server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "aiosmtpd>=1.4.6",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/outbox_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

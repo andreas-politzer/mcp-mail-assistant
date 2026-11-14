@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+# Local configuration and data: never commit these
+.env
+recipients.json
+*.db
+*.db-wal
+*.db-shm
