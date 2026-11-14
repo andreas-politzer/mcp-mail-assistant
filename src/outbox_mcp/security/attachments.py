@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Sequence, Tuple
 
-from ..errors import AttachmentRejected
+from ..errors import AttachmentRejected, ConfigError
 
 _SENSITIVE_NAME_PARTS = (
     "passw", "kennwort", "secret", "geheim", "token", "credential", "api_key", "api-key", "apikey",
@@ -92,6 +92,11 @@ class AttachmentPolicy:
         max_file_bytes: int = 200_000,
         max_total_bytes: int = 500_000,
     ) -> None:
+        if not (hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY") and os.open in os.supports_dir_fd):
+            raise ConfigError(
+                "Attachments need an operating system with O_NOFOLLOW, O_DIRECTORY and dir_fd "
+                "support (Linux, macOS). They are refused here instead of running less safely."
+            )
         self.root = Path(root)
         self.allowed = [_parts(f) for f in allowed_folders if _parts(f)]
         self.denied = [_parts(f) for f in denied_folders if _parts(f)]
@@ -205,14 +210,14 @@ class AttachmentPolicy:
 
 
 def _open_dir(base: Path):
-    return os.open(base, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    return os.open(base, os.O_RDONLY | os.O_DIRECTORY)
 
 
 def _open_below(base: Path, parts: Tuple[str, ...], refuse) -> int:
     """Open the file by walking down from `base` one component at a time. Every step uses
     O_NOFOLLOW relative to the directory opened before it, so a folder swapped for a symlink
     after the earlier checks is still refused (no check-then-use gap)."""
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    nofollow = os.O_NOFOLLOW
     dir_fd = _open_dir(base)
     try:
         for part in parts[:-1]:
@@ -223,7 +228,8 @@ def _open_below(base: Path, parts: Tuple[str, ...], refuse) -> int:
             os.close(dir_fd)
             dir_fd = next_fd
         try:
-            return os.open(parts[-1], os.O_RDONLY | nofollow, dir_fd=dir_fd)
+            # O_NONBLOCK: opening a named pipe must not wait for a writer; fstat then refuses it.
+            return os.open(parts[-1], os.O_RDONLY | nofollow | os.O_NONBLOCK, dir_fd=dir_fd)
         except OSError as exc:
             raise _open_error(exc, refuse) from None
     finally:

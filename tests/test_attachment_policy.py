@@ -1,10 +1,11 @@
 import os
+import threading
 import unicodedata
 from pathlib import Path
 
 import pytest
 
-from outbox_mcp.errors import AttachmentRejected
+from outbox_mcp.errors import AttachmentRejected, ConfigError
 from outbox_mcp.security.attachments import AttachmentPolicy, safe_filename
 
 
@@ -276,3 +277,27 @@ def test_project_note_style_path_with_hyphens_and_subfolder(vault):
     (vault / "Projects/E-Mail-Versand/E-Mail-Versand.md").write_text("# E-Mail-Versand\n", encoding="utf-8")
     [a] = policy(vault).load(["Projects/E-Mail-Versand/E-Mail-Versand.md"])
     assert a.name == "E-Mail-Versand.md"
+
+
+def test_named_pipe_is_refused_without_blocking(vault):
+    os.mkfifo(vault / "Projects/pipe.md")
+    outcome = []
+
+    def attempt():
+        try:
+            policy(vault).load(["Projects/pipe.md"])
+            outcome.append("loaded")
+        except AttachmentRejected as exc:
+            outcome.append(str(exc))
+
+    worker = threading.Thread(target=attempt, daemon=True)
+    worker.start()
+    worker.join(5)
+    assert not worker.is_alive(), "opening a named pipe blocked the check"
+    assert "regular file" in outcome[0]
+
+
+def test_refuses_to_run_without_the_required_os_support(vault, monkeypatch):
+    monkeypatch.delattr(os, "O_NOFOLLOW")
+    with pytest.raises(ConfigError, match="O_NOFOLLOW"):
+        policy(vault)

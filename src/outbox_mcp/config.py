@@ -83,6 +83,9 @@ class Config:
                 "OUTBOX_ATTACHMENT_ALLOWED_FOLDERS is required when OUTBOX_ATTACHMENT_ROOT is set."
             )
 
+        if attachment_root and not Path(attachment_root).is_absolute():
+            raise ConfigError("OUTBOX_ATTACHMENT_ROOT must be an absolute path.")
+
         security = e.get("OUTBOX_SMTP_SECURITY", "starttls").strip().lower()
         if security not in _SECURITY_MODES:
             raise ConfigError("OUTBOX_SMTP_SECURITY must be one of: starttls, ssl, none.")

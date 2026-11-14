@@ -229,3 +229,8 @@ def test_attachment_settings_from_env():
 def test_root_without_allowed_folders_is_a_config_error():
     with pytest.raises(ConfigError, match="ALLOWED_FOLDERS"):
         Config.from_env({**BASE, "OUTBOX_ATTACHMENT_ROOT": "/srv/vault"})
+
+
+def test_relative_attachment_root_is_a_config_error():
+    with pytest.raises(ConfigError, match="absolute"):
+        Config.from_env({**BASE, "OUTBOX_ATTACHMENT_ROOT": "vault", "OUTBOX_ATTACHMENT_ALLOWED_FOLDERS": "Projects"})
