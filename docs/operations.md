@@ -44,3 +44,23 @@ Design:
 - **Edit and test on the right machine.** Server commands run on the server; a guard such as `[ "$(hostname)" = yourhost ] && { ... }` at the start of a pasted block prevents running them on your laptop.
 - **Two registered clients after the first connection.** Claude registered itself twice, and the sign-in page showed once "request unknown or expired, please start again", although the connection was working afterwards. The cause is not established (a second call to the return page is the guess). It is harmless, and listed in [oauth-security.md](oauth-security.md).
 - **Claude's own approval prompt.** The desktop app asked once whether the tool may be used and remembered "always allow". The server itself still requires a draft ID and the assistant's explicit send call.
+
+
+## Managing recipients
+
+Recipients are approved on the server, never in the chat. Over SSH on the server, in the code
+folder (the admin tool needs only the database location, not the mail password):
+
+```bash
+export OUTBOX_DB_PATH=/path/to/outbox-data/mail.db
+uv run outbox-admin pending                      # open suggestions from the AI
+uv run outbox-admin approve ferdinand@example.org --alias Ferdi
+uv run outbox-admin add "Anna" anna@example.org
+uv run outbox-admin block someone@example.org    # can never be suggested again
+uv run outbox-admin list
+```
+
+`approve` shows name, address and the AI's (unverified) note and asks for confirmation. Check the
+address against the real contact. The first start after the upgrade to schema version 2 imports
+the old `recipients.json` once; afterwards the database is the truth and the file is ignored.
+Back up before the first start with a new version.

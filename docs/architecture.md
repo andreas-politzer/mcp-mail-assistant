@@ -63,3 +63,23 @@ Plan: test the simplest variant with self-only sending first, decide before allo
 ## Kill switch
 
 Stop the service, revoke the SMTP device password at the mail provider, remove the connector from the assistant.
+
+
+## Recipient registry (stage 2)
+
+Recipients live in the database (`recipients`, schema version 2), not in a file. The recipients
+file is imported once on the first start with an empty registry and ignored afterwards.
+
+- The AI side has two tools: `suggest_recipient` (puts a name and address on a waiting list) and
+  `list_suggestions` (status of its own suggestions). No tool can approve, reject, block or add.
+- The admin side is `outbox-admin` (command line, no mail credentials needed). It is the only
+  place where a suggestion becomes an active recipient. A later admin API and app use the same
+  `RecipientStore`, on a listener that is not reachable through the public tunnel.
+- States: suggested, active, rejected, removed, expired (30 days without a decision), blocked
+  (the address can never be suggested again). History is kept; every change is in the audit log.
+- Limits: 5 open suggestions, 10 per day. Claude's note is stored, marked "not verified" in the
+  admin output, and never decides anything. Names and aliases of active recipients stay unique.
+- A recipient that is blocked or removed stops pending drafts too: the allowed-check runs again
+  when a draft is sent.
+- Not verifiable by the server: that an address came from the user and not from a document. The
+  safeguard is the user's check of name and address at approval time.

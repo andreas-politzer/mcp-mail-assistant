@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 outbox-mcp = "outbox_mcp.server:main"
 outbox-mcp-http = "outbox_mcp.http_server:main"
+outbox-admin = "outbox_mcp.admin_cli:run"
 
 [dependency-groups]
 dev = [

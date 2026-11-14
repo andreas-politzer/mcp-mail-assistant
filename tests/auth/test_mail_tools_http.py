@@ -120,7 +120,8 @@ def test_a_real_login_token_works_for_the_tools(mail_client, store, clock):
 def test_tool_list_and_honest_annotations(mail_client, token):
     resp = mail_client.post("/mcp", json=rpc("tools/list"), headers=auth(token))
     tools = {t["name"]: t for t in resp.json()["result"]["tools"]}
-    assert set(tools) == {"list_recipients", "prepare_email", "send_email", "cancel_draft"}
+    assert set(tools) == {"list_recipients", "prepare_email", "send_email", "cancel_draft",
+                          "suggest_recipient", "list_suggestions"}
     ann = {name: t["annotations"] for name, t in tools.items()}
     assert ann["list_recipients"]["readOnlyHint"] is True
     for name in ("prepare_email", "send_email", "cancel_draft"):

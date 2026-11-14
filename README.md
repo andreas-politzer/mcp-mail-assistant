@@ -20,13 +20,14 @@ Working end to end for the author, built in stages. Be clear about what is and i
 | Connection to a real assistant app (Claude custom connector) | **Used for real** on Claude desktop, on mobile in a text chat and in a live voice chat: draft, read-out, spoken confirmation, send, test mails arrived with correct umlauts. Reconnecting after a restart worked without a new sign-in. What was observed and what is still open: [docs/oauth-security.md](docs/oauth-security.md#verified-with-a-real-claude-connector-14-november-2026). |
 | Backup and restore | Hourly encrypted backup of the data directory (databases via SQLite snapshots, configuration). The first automatic run of the timer was verified, and a restore was tested once (databases open and pass `integrity_check`, config files identical). See [docs/operations.md](docs/operations.md#backup). |
 | Markdown attachments from an allowed notes folder | Built and tested locally, not yet deployed (see [docs/architecture.md](docs/architecture.md)). |
-| Other recipients than yourself | Planned (see [docs/architecture.md](docs/architecture.md)). |
+| New recipients: the AI suggests, you approve outside the chat (admin command line) | Built and tested locally, not yet deployed. |
+| Admin API and desktop/web app, contact import | Planned. |
 
 Tested with: Infomaniak (STARTTLS). Other providers that offer standard SMTP with STARTTLS or SSL should work, but have not been tested.
 
 ## How it works
 
-1. `list_recipients` shows who may receive mail (read from `recipients.json`).
+1. `list_recipients` shows who may receive mail (the active entries of the recipient registry in the database; `recipients.json` is imported once on the first start). `suggest_recipient` puts a new contact on a waiting list and `list_suggestions` shows its status. Only the user can approve a suggestion, with the admin command line `outbox-admin` outside the chat; no tool can.
 2. `prepare_email(recipient, subject, text)` stores an **immutable draft** and returns a random draft ID. Nothing is sent.
 3. `send_email(draft_id)` makes a single send attempt for exactly that draft. It is never retried automatically.
 4. `cancel_draft(draft_id)` discards a pending draft.
@@ -67,7 +68,7 @@ A stolen SMTP password bypasses this server completely. Use a per-device passwor
 ```bash
 uv sync
 cp .env.example .env              # fill in your SMTP settings
-cp recipients.example.json recipients.json
+cp recipients.example.json recipients.json   # imported once on the first start; later use outbox-admin
 uv run --env-file .env outbox-mcp
 ```
 

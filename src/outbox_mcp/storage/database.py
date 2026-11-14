@@ -119,6 +119,26 @@ BEGIN
     SELECT RAISE(ABORT, 'attachments can only be added to a pending draft');
 END;
 
+CREATE TABLE IF NOT EXISTS recipients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    address TEXT NOT NULL,
+    address_key TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL CHECK (status IN
+        ('suggested','active','rejected','removed','expired','blocked')),
+    aliases TEXT NOT NULL DEFAULT '[]',
+    note TEXT NOT NULL DEFAULT '',
+    suggested_by TEXT,
+    created_at REAL NOT NULL,
+    decided_at REAL
+);
+
+CREATE TRIGGER IF NOT EXISTS recipients_no_delete
+BEFORE DELETE ON recipients
+BEGIN
+    SELECT RAISE(ABORT, 'recipient history is kept');
+END;
+
 CREATE TRIGGER IF NOT EXISTS audit_no_update
 BEFORE UPDATE ON audit_log
 BEGIN
@@ -168,9 +188,9 @@ def body_hash(subject: str, body: str, address: str, attachments: Sequence[Attac
 
 
 class Database:
-    # Version 1: drafts, audit log and draft_attachments. The schema script only creates what
+    # Version 1: drafts, audit log and draft_attachments. Version 2: the recipient registry. The schema script only creates what
     # is missing, so opening an older database upgrades it without touching existing rows.
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2
 
     def __init__(self, path: Path) -> None:
         self.path = str(path)

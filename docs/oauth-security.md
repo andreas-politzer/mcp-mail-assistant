@@ -58,7 +58,7 @@ These are deliberate. They are listed so nobody has to discover them.
 
 ## Connection to the mail tools
 
-`outbox-mcp-http` serves the sign-in and the four mail tools in one process (stateless transport, loopback only).
+`outbox-mcp-http` serves the sign-in and the mail tools (including the recipient suggestion tools) in one process (stateless transport, loopback only).
 
 - **Owner.** Drafts are stored under the subject of the verified access token. A token with another subject cannot see, send or cancel them. No authenticated subject means the call fails (tested).
 - **Restart.** The transport keeps no sessions, and sign-in state lives in SQLite. A restart ends the running connection; the client has to connect again. Existing tokens stay valid (tested with a second app instance on the same database). Mails still in flight at the restart are marked `unknown` at startup.

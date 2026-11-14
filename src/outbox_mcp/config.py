@@ -42,6 +42,9 @@ class Config:
     max_attachments: int = 3
     max_attachment_bytes: int = 200_000
     max_attachments_total_bytes: int = 500_000
+    max_open_suggestions: int = 5
+    max_suggestions_per_day: int = 10
+    suggestion_ttl_days: int = 30
 
     @property
     def limits(self) -> RateLimits:
@@ -142,5 +145,8 @@ class Config:
             max_attachments=number("OUTBOX_MAX_ATTACHMENTS", 3),
             max_attachment_bytes=number("OUTBOX_MAX_ATTACHMENT_BYTES", 200_000),
             max_attachments_total_bytes=number("OUTBOX_MAX_ATTACHMENTS_TOTAL_BYTES", 500_000),
+            max_open_suggestions=number("OUTBOX_MAX_OPEN_SUGGESTIONS", 5),
+            max_suggestions_per_day=number("OUTBOX_MAX_SUGGESTIONS_PER_DAY", 10),
+            suggestion_ttl_days=number("OUTBOX_SUGGESTION_TTL_DAYS", 30),
         )
         return config
