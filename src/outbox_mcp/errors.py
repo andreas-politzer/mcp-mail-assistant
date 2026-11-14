@@ -18,6 +18,10 @@ class ValidationError(OutboxError, ValueError):
     """A subject, text or address was rejected."""
 
 
+class AttachmentRejected(OutboxError, ValueError):
+    """An attachment was refused. The whole draft is refused with it; nothing is prepared."""
+
+
 class RecipientNotAllowed(OutboxError):
     """The recipient is not on the allowed recipient list."""
 

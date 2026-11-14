@@ -53,6 +53,12 @@ Plan: test the simplest variant with self-only sending first, decide before allo
 - Stage 1: HTTP transport with authentication, real sending to oneself only.
 - Stage 2: fixed list of other recipients.
 - Stage 3: attachments, read by the server from an allowed folder by path (with an excluded-folders list).
+  Version 1 (`security/attachments.py`): Markdown only, at most 3 files, 200 KB each and 500 KB in total;
+  only inside allowed folders, blocked folders win; folder names compared case- and Unicode-insensitively;
+  hidden files, symlinks, `..`, absolute paths, sensitive names (password, secret, token, .env, .pem ...)
+  and files that contain secret patterns (a warning layer, not proof) are refused. One refused file refuses
+  the whole draft. The file is opened once, checked on the open handle and stored as an immutable copy with
+  the draft; the audit log records name, size and SHA-256, never the content.
 
 ## Kill switch
 

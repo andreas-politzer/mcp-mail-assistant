@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import sys
 import time
-from typing import Callable, Dict, Optional, Protocol
+from typing import Callable, Dict, List, Optional, Protocol
 
 from .config import Config
-from .errors import DraftNotSendable, RecipientNotAllowed
+from .errors import AttachmentRejected, DraftNotSendable, RecipientNotAllowed
 from .mail.message_builder import build_message
 from .mail.smtp_client import SmtpSendFailed, SmtpSendUnknown
+from .security.attachments import AttachmentPolicy
 from .security.recipients import RecipientList
 from .security.validation import validate_body, validate_subject
 from .storage.database import Database
@@ -27,6 +28,12 @@ CONFIRMATION_INSTRUCTIONS = (
     "for changes, cancel it and prepare a new one."
 )
 
+ATTACHMENT_INSTRUCTIONS = (
+    " The draft carries the attachments listed under 'attachments'. Tell the user their file "
+    "names before asking for confirmation. They are fixed copies made now; later changes to "
+    "the files do not affect this draft."
+)
+
 
 class OutboxService:
     def __init__(
@@ -38,6 +45,24 @@ class OutboxService:
         clock: Callable[[], float] = time.time,
     ) -> None:
         self.config, self.recipients, self.db, self.sender, self.clock = config, recipients, db, sender, clock
+        self.attachment_policy: Optional[AttachmentPolicy] = None
+        if config.attachment_root is not None:
+            self.attachment_policy = AttachmentPolicy(
+                config.attachment_root, config.attachment_allowed_folders,
+                config.attachment_denied_folders, config.max_attachments,
+                config.max_attachment_bytes, config.max_attachments_total_bytes,
+            )
+
+    def _load_attachments(self, attachments) -> List:
+        if attachments is None:
+            return []
+        if not isinstance(attachments, (list, tuple)):
+            raise AttachmentRejected("The attachments must be a list of file paths.")
+        if not attachments:
+            return []
+        if self.attachment_policy is None:
+            raise AttachmentRejected("Attachments are not enabled on this server.")
+        return self.attachment_policy.load(attachments)
 
     def _housekeeping(self) -> None:
         now = self.clock()
@@ -52,14 +77,18 @@ class OutboxService:
             ]
         }
 
-    def prepare_email(self, owner: str, recipient: str, subject: str, text: str) -> Dict:
+    def prepare_email(
+        self, owner: str, recipient: str, subject: str, text: str, attachments=None
+    ) -> Dict:
         self._housekeeping()
         cfg = self.config
         subject = validate_subject(subject, cfg.max_subject_chars)
         body = validate_body(text, cfg.max_body_chars)
         rec = self.recipients.resolve(recipient)
+        loaded = self._load_attachments(attachments)
         draft = self.db.create_draft(
-            owner, rec.name, rec.address, subject, body, self.clock(), cfg.draft_ttl_seconds, cfg.limits
+            owner, rec.name, rec.address, subject, body, self.clock(), cfg.draft_ttl_seconds,
+            cfg.limits, loaded,
         )
         return {
             "draft_id": draft.id,
@@ -70,7 +99,8 @@ class OutboxService:
             "text": draft.body,
             "fingerprint": draft.fingerprint,
             "expires_at": draft.expires_at,
-            "instructions": CONFIRMATION_INSTRUCTIONS,
+            "attachments": [{"name": a.name, "size_bytes": a.size} for a in loaded],
+            "instructions": CONFIRMATION_INSTRUCTIONS + (ATTACHMENT_INSTRUCTIONS if loaded else ""),
         }
 
     def send_email(self, owner: str, draft_id: str) -> Dict:
@@ -82,11 +112,12 @@ class OutboxService:
             raise RecipientNotAllowed(
                 "This recipient is no longer on the allowed list. The draft was not sent."
             )
+        stored_attachments = self.db.attachments_of(draft.id)
         draft = self.db.claim_for_sending(draft_id, owner, now, cfg.limits)
         try:
             message = build_message(
                 cfg.from_address, cfg.from_name, draft.recipient_address,
-                draft.recipient_name, draft.subject, draft.body,
+                draft.recipient_name, draft.subject, draft.body, attachments=stored_attachments,
             )
             self.sender.send(message, cfg.from_address, draft.recipient_address)
         except SmtpSendFailed as exc:

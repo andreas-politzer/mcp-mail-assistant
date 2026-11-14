@@ -82,3 +82,10 @@ def test_client_giving_up_does_not_leave_a_send_half_recorded(config, recipients
         time.sleep(0.05)
     assert slow.sent == ["ferdinand@example.org"]
     assert db.get_draft(draft_id, LOCAL_OWNER).status == "sent"
+
+
+def test_prepare_email_tool_accepts_attachments(service):
+    tools = {t.name: t for t in asyncio.run(build_server(service).list_tools())}
+    props = tools["prepare_email"].inputSchema["properties"]
+    assert "attachments" in props
+    assert "attachments" not in tools["prepare_email"].inputSchema.get("required", [])

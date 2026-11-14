@@ -1,11 +1,13 @@
-"""Builds the actual e-mail. Fixed sender, exactly one recipient, no CC/BCC, no attachments (yet)."""
+"""Builds the actual e-mail. Fixed sender, exactly one recipient, no CC/BCC.
+
+Attachments (already checked and stored with the draft) are Markdown files only."""
 
 from __future__ import annotations
 
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 from email.headerregistry import Address
-from typing import Optional
+from typing import Optional, Sequence
 
 
 def _address(name: str, address: str) -> Address:
@@ -21,6 +23,7 @@ def build_message(
     subject: str,
     body: str,
     message_id_domain: Optional[str] = None,
+    attachments: Sequence = (),
 ) -> EmailMessage:
     msg = EmailMessage()
     msg["From"] = _address(from_name, from_address)
@@ -29,4 +32,9 @@ def build_message(
     msg["Date"] = formatdate(localtime=True)
     msg["Message-ID"] = make_msgid(domain=message_id_domain or from_address.rpartition("@")[2])
     msg.set_content(body, subtype="plain", charset="utf-8")
+    for attachment in attachments:
+        msg.add_attachment(
+            attachment.data, maintype="text", subtype="markdown",
+            filename=attachment.name, params={"charset": "utf-8"},
+        )
     return msg

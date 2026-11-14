@@ -15,9 +15,10 @@ import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List, Optional
+from typing import Iterator, List, Optional, Sequence
 
-from ..errors import DraftNotFound, DraftNotSendable, RateLimitExceeded
+from ..errors import ConfigError, DraftNotFound, DraftNotSendable, RateLimitExceeded
+from ..security.attachments import Attachment
 from ..security.rate_limiter import DAY, HOUR, RateLimits, prepare_limit_reached, send_limit_reason
 
 _FINAL = ("sent", "failed", "unknown", "expired", "cancelled")
@@ -88,6 +89,36 @@ BEGIN
     SELECT RAISE(ABORT, 'active drafts cannot be deleted');
 END;
 
+CREATE TABLE IF NOT EXISTS draft_attachments (
+    draft_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    data BLOB NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    PRIMARY KEY (draft_id, position)
+);
+
+CREATE TRIGGER IF NOT EXISTS attachments_immutable
+BEFORE UPDATE ON draft_attachments
+BEGIN
+    SELECT RAISE(ABORT, 'attachments are immutable');
+END;
+
+CREATE TRIGGER IF NOT EXISTS attachments_keep_while_active
+BEFORE DELETE ON draft_attachments
+WHEN EXISTS (SELECT 1 FROM drafts WHERE id = OLD.draft_id AND status IN ('pending','sending'))
+BEGIN
+    SELECT RAISE(ABORT, 'attachments of active drafts cannot be deleted');
+END;
+
+CREATE TRIGGER IF NOT EXISTS attachments_only_for_pending
+BEFORE INSERT ON draft_attachments
+WHEN NOT EXISTS (SELECT 1 FROM drafts WHERE id = NEW.draft_id AND status = 'pending')
+BEGIN
+    SELECT RAISE(ABORT, 'attachments can only be added to a pending draft');
+END;
+
 CREATE TRIGGER IF NOT EXISTS audit_no_update
 BEFORE UPDATE ON audit_log
 BEGIN
@@ -123,21 +154,38 @@ class Draft:
         return self.body_sha256[:12]
 
 
-def body_hash(subject: str, body: str, address: str) -> str:
+def body_hash(subject: str, body: str, address: str, attachments: Sequence[Attachment] = ()) -> str:
+    """Fingerprint of everything the user confirms. Without attachments the value is the same
+    as before attachments existed."""
     h = hashlib.sha256()
     for part in (address, subject, body):
         h.update(part.encode("utf-8"))
         h.update(b"\x00")
+    for attachment in attachments:
+        h.update(b"attachment\x00" + attachment.name.encode("utf-8") + b"\x00")
+        h.update(attachment.sha256.encode("ascii") + b"\x00")
     return h.hexdigest()
 
 
 class Database:
+    # Version 1: drafts, audit log and draft_attachments. The schema script only creates what
+    # is missing, so opening an older database upgrades it without touching existing rows.
+    SCHEMA_VERSION = 1
+
     def __init__(self, path: Path) -> None:
         self.path = str(path)
         self._restrict_permissions()
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if version > self.SCHEMA_VERSION:
+                raise ConfigError(
+                    "The mail database was written by a newer version of outbox-mcp. "
+                    "Update the program instead of opening it with this one."
+                )
             conn.executescript(_SCHEMA)
+            if version < self.SCHEMA_VERSION:
+                conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
 
     # -- plumbing -----------------------------------------------------------------
 
@@ -217,6 +265,7 @@ class Database:
         now: float,
         ttl_seconds: int,
         limits: RateLimits,
+        attachments: Sequence[Attachment] = (),
     ) -> Draft:
         with self._tx() as conn:
             if prepare_limit_reached(self._count(conn, "prepared", now - HOUR), limits):
@@ -233,7 +282,7 @@ class Database:
                 recipient_address=recipient_address,
                 subject=subject,
                 body=body,
-                body_sha256=body_hash(subject, body, recipient_address),
+                body_sha256=body_hash(subject, body, recipient_address, attachments),
                 sending_at=None,
                 finished_at=None,
                 detail=None,
@@ -246,8 +295,27 @@ class Database:
                     recipient_address, subject, body, draft.body_sha256,
                 ),
             )
-            self._audit(conn, now, "prepared", draft)
+            for position, attachment in enumerate(attachments):
+                conn.execute(
+                    "INSERT INTO draft_attachments(draft_id,position,name,data,size_bytes,sha256)"
+                    " VALUES (?,?,?,?,?,?)",
+                    (draft.id, position, attachment.name, attachment.data, attachment.size, attachment.sha256),
+                )
+            detail = None
+            if attachments:
+                detail = "attachments: " + "; ".join(
+                    f"{a.name} ({a.size} bytes, sha256 {a.sha256})" for a in attachments
+                )
+            self._audit(conn, now, "prepared", draft, detail=detail)
             return draft
+
+    def attachments_of(self, draft_id: str) -> List[Attachment]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT name,data,sha256 FROM draft_attachments WHERE draft_id=? ORDER BY position",
+                (draft_id,),
+            ).fetchall()
+        return [Attachment(name=r["name"], data=bytes(r["data"]), sha256=r["sha256"]) for r in rows]
 
     def get_draft(self, draft_id: str, owner: str) -> Draft:
         with self._connect() as conn:
@@ -337,12 +405,16 @@ class Database:
 
     def purge(self, now: float, retention_days: int) -> int:
         cutoff = now - retention_days * DAY
+        old = (
+            "status IN ('sent','failed','unknown','expired','cancelled')"
+            " AND COALESCE(finished_at, created_at) < ?"
+        )
         with self._tx() as conn:
-            cur = conn.execute(
-                "DELETE FROM drafts WHERE status IN ('sent','failed','unknown','expired','cancelled')"
-                " AND COALESCE(finished_at, created_at) < ?",
+            conn.execute(
+                f"DELETE FROM draft_attachments WHERE draft_id IN (SELECT id FROM drafts WHERE {old})",
                 (cutoff,),
             )
+            cur = conn.execute(f"DELETE FROM drafts WHERE {old}", (cutoff,))
             return cur.rowcount
 
     # -- reading helpers (also used by tests) -------------------------------------

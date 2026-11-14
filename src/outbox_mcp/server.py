@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Callable
+from typing import Callable, List, Optional
 
 import anyio
 import anyio.to_thread
@@ -57,10 +57,15 @@ def register_tools(mcp: FastMCP, service: OutboxService, owner: Callable[[], str
     @mcp.tool(annotations=ToolAnnotations(
         title="Prepare e-mail draft", readOnlyHint=False, destructiveHint=False,
         idempotentHint=False, openWorldHint=False))
-    async def prepare_email(recipient: str, subject: str, text: str) -> dict:
-        """Create a draft. Nothing is sent. Show the draft to the user and ask for confirmation."""
+    async def prepare_email(
+        recipient: str, subject: str, text: str, attachments: Optional[List[str]] = None
+    ) -> dict:
+        """Create a draft. Nothing is sent. Show the draft to the user and ask for confirmation.
+
+        attachments (optional): up to a few Markdown notes, each as a path relative to the notes
+        folder, for example "Projects/Plan.md". Files outside the allowed folders are refused."""
         who = owner()
-        return await run(service.prepare_email, who, recipient, subject, text)
+        return await run(service.prepare_email, who, recipient, subject, text, attachments)
 
     @mcp.tool(annotations=ToolAnnotations(
         title="Send prepared e-mail", readOnlyHint=False, destructiveHint=True,

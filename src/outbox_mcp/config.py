@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Tuple
 
 from .errors import ConfigError, ValidationError
 from .security.rate_limiter import RateLimits
@@ -36,6 +36,12 @@ class Config:
     max_sends_per_day: int = 10
     max_subject_chars: int = 150
     max_body_chars: int = 20000
+    attachment_root: Optional[Path] = None
+    attachment_allowed_folders: Tuple[str, ...] = ()
+    attachment_denied_folders: Tuple[str, ...] = ()
+    max_attachments: int = 3
+    max_attachment_bytes: int = 200_000
+    max_attachments_total_bytes: int = 500_000
 
     @property
     def limits(self) -> RateLimits:
@@ -66,6 +72,16 @@ class Config:
             if value <= 0:
                 raise ConfigError(f"Setting {name} must be greater than zero.")
             return value
+
+        def folders(name: str) -> Tuple[str, ...]:
+            return tuple(part.strip() for part in e.get(name, "").split(",") if part.strip())
+
+        attachment_root = e.get("OUTBOX_ATTACHMENT_ROOT", "").strip()
+        allowed_folders = folders("OUTBOX_ATTACHMENT_ALLOWED_FOLDERS")
+        if attachment_root and not allowed_folders:
+            raise ConfigError(
+                "OUTBOX_ATTACHMENT_ALLOWED_FOLDERS is required when OUTBOX_ATTACHMENT_ROOT is set."
+            )
 
         security = e.get("OUTBOX_SMTP_SECURITY", "starttls").strip().lower()
         if security not in _SECURITY_MODES:
@@ -117,5 +133,11 @@ class Config:
             max_sends_per_day=number("OUTBOX_MAX_SENDS_PER_DAY", 10),
             max_subject_chars=number("OUTBOX_MAX_SUBJECT_CHARS", 150),
             max_body_chars=number("OUTBOX_MAX_BODY_CHARS", 20000),
+            attachment_root=Path(attachment_root) if attachment_root else None,
+            attachment_allowed_folders=allowed_folders,
+            attachment_denied_folders=folders("OUTBOX_ATTACHMENT_DENIED_FOLDERS"),
+            max_attachments=number("OUTBOX_MAX_ATTACHMENTS", 3),
+            max_attachment_bytes=number("OUTBOX_MAX_ATTACHMENT_BYTES", 200_000),
+            max_attachments_total_bytes=number("OUTBOX_MAX_ATTACHMENTS_TOTAL_BYTES", 500_000),
         )
         return config
