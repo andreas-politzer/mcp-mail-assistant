@@ -7,7 +7,7 @@ from outbox_mcp.security.validation import (
 
 
 @pytest.mark.parametrize("bad", [
-    "a\nb", "a\rb", "a\x00b", "a b", "Hi\r\nBcc: x@y.de", "", "   ",
+    "a\nb", "a\rb", "a\x00b", "a b", "Hi\r\nBcc: x@example.net", "", "   ",
 ])
 def test_subject_rejects(bad):
     with pytest.raises(ValidationError):
@@ -34,7 +34,7 @@ def test_body_normalises_and_rejects():
 
 @pytest.mark.parametrize("bad", [
     "no-at.example.com", "a@b", "a b@example.com", "Name <a@example.com>",
-    "a@example.com, b@example.com", "a@example.com\nBcc: x@y.de", ".a@example.com",
+    "a@example.com, b@example.com", "a@example.com\nBcc: x@example.net", ".a@example.com",
     "a..b@example.com", "a@-example.com", "", "(c)a@example.com", "a@example.com;b@example.com",
 ])
 def test_address_rejects(bad):

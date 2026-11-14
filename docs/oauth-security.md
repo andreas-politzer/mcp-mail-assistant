@@ -1,6 +1,6 @@
 # OAuth security model
 
-This document says what the sign-in protects, how, and what it does **not** protect. Every claim names the test that proves it. Claims that cannot be tested without a real Claude connector are listed separately and marked as unverified.
+This document says what the sign-in protects, how, and what it does **not** protect. Each protection in the table names the test that proves it. Claims that cannot be tested without a real Claude connector are listed separately and marked as unverified.
 
 ## Goal
 

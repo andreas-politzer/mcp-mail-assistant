@@ -59,7 +59,7 @@ def _message(stamp: str):
     subject = "outbox-mcp SMTP test (Grüße)"
     text = (
         "Hello,\n\n"
-        "this is a test message from outbox-mcp (scripts/test_infomaniak_smtp.py).\n"
+        "this is a test message from mcp-mail-assistant (scripts/test_infomaniak_smtp.py).\n"
         "If you can read this, SMTP delivery to your own mailbox works.\n\n"
         "Character check: Grüße, äöüß, €\n"
         f"Sent at (UTC): {stamp}\n"

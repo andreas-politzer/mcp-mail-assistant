@@ -143,7 +143,7 @@ def test_main_happy_path_and_dry_run():
 
 
 def test_main_has_no_way_to_choose_a_recipient():
-    for argv in (["--to", "x@y.de"], ["--recipient", "x@y.de"], ["x@y.de"]):
+    for argv in (["--to", "x@example.net"], ["--recipient", "x@example.net"], ["x@example.net"]):
         with pytest.raises(SystemExit) as e:
             script.main(argv, ENV, lambda p: "SEND", io.StringIO(), True, lambda c: FakeSender())
         assert e.value.code == 2

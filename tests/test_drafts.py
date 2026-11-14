@@ -33,7 +33,7 @@ def test_owner_isolation(db):
 def test_content_immutable(db):
     d = make(db)
     conn = sqlite3.connect(db.path)
-    for col, val in [("body", "x"), ("subject", "x"), ("recipient_address", "x@y.de"), ("expires_at", 1)]:
+    for col, val in [("body", "x"), ("subject", "x"), ("recipient_address", "x@example.net"), ("expires_at", 1)]:
         with pytest.raises(sqlite3.DatabaseError):
             conn.execute(f"UPDATE drafts SET {col}=? WHERE id=?", (val, d.id))
     conn.close()

@@ -75,7 +75,7 @@ def test_unknown_recipient_refused(svc):
 
 def test_validation_applies(svc):
     with pytest.raises(ValidationError):
-        prep(svc, subject="a\nBcc: x@y.de")
+        prep(svc, subject="a\nBcc: x@example.net")
 
 
 def test_expiry(svc, clock, sender):
@@ -142,9 +142,9 @@ def test_text_that_looks_like_headers_stays_in_the_body(svc, sender):
 def test_builder_refuses_header_injection():
     from outbox_mcp.mail.message_builder import build_message
     with pytest.raises(ValueError):
-        build_message("me@example.com", "Me", "you@example.org", "Evil\r\nBcc: x@y.de", "S", "b")
+        build_message("me@example.com", "Me", "you@example.org", "Evil\r\nBcc: x@example.net", "S", "b")
     with pytest.raises(ValueError):
-        build_message("me@example.com", "Me", "you@example.org", "You", "S\r\nBcc: x@y.de", "b")
+        build_message("me@example.com", "Me", "you@example.org", "You", "S\r\nBcc: x@example.net", "b")
 
 
 # ---- B2: the database fails after the mail server already answered -------------------
