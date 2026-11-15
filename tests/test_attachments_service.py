@@ -322,3 +322,16 @@ def test_version_2_database_gets_the_origin_column(tmp_path):
     Database(path)  # a second open is harmless
     with sqlite3.connect(path) as conn:
         assert [r[1] for r in conn.execute("PRAGMA table_info(draft_attachments)")].count("source_path") == 1
+
+
+def test_an_interrupted_migration_is_finished_at_the_next_start(tmp_path):
+    """The column was added but the version was not stored yet (a crash in between)."""
+    path = tmp_path / "half.db"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(OLD_V2)
+        conn.execute("ALTER TABLE draft_attachments ADD COLUMN source_path TEXT")
+    db = Database(path)
+    assert [(a.name, a.source) for a in db.attachments_of("drf_old")] == [("old.md", "")]
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION
+        assert [r[1] for r in conn.execute("PRAGMA table_info(draft_attachments)")].count("source_path") == 1
