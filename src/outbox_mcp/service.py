@@ -68,6 +68,8 @@ class OutboxService:
                 config.attachment_root, config.attachment_allowed_folders,
                 config.attachment_denied_folders, clock(),
             )
+            # The configured notes folder is the first file source (migration from schema 4).
+            db.ensure_server_folder_source(config.attachment_root, clock())
         # Tell the admin side which starting values this process really runs with (information only).
         db.report_start_limits(config.limits, clock())
 

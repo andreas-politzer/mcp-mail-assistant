@@ -324,7 +324,7 @@ def test_version_2_database_gets_the_origin_column(tmp_path):
     old = db.attachments_of("drf_old")
     assert [(a.name, a.source) for a in old] == [("old.md", "")]
     with sqlite3.connect(path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION == 4
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION == 5
         columns = [r[1] for r in conn.execute("PRAGMA table_info(draft_attachments)")]
     assert columns.count("source_path") == 1
     Database(path)  # a second open is harmless

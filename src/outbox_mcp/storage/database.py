@@ -17,8 +17,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator, List, Optional, Sequence, Tuple
 
-from ..errors import ConfigError, DraftNotFound, DraftNotSendable, RateLimitExceeded, ValidationError
-from ..security.attachments import Attachment, key_parts, path_key
+from .. import sources as src_rules
+from ..errors import (
+    ConfigError, DraftNotFound, DraftNotSendable, RateLimitExceeded, SourceRejected, ValidationError,
+)
+from ..security.attachments import Attachment, key_parts, path_key, text_problem
 from ..security.rate_limiter import (
     DAY, HARD_MAX_SENDS_PER_DAY, HARD_MAX_SENDS_PER_HOUR, HOUR, RateLimits, clamp,
     prepare_limit_reached, send_limit_reason,
@@ -178,6 +181,82 @@ BEFORE DELETE ON audit_log
 BEGIN
     SELECT RAISE(ABORT, 'audit log is append-only');
 END;
+
+CREATE TABLE IF NOT EXISTS file_sources (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('server_folder','upload')),
+    scope TEXT NOT NULL CHECK (scope IN ('folder','file')),
+    label TEXT NOT NULL,
+    label_key TEXT NOT NULL,
+    origin_display TEXT NOT NULL DEFAULT '',
+    real_path TEXT,
+    rule_root TEXT NOT NULL,
+    file_key TEXT,
+    file_display TEXT,
+    status TEXT NOT NULL CHECK (status IN ('active','removed')),
+    sync_epoch INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    created_by TEXT NOT NULL,
+    removed_at REAL,
+    removed_by TEXT,
+    CHECK (kind = 'upload' OR (real_path IS NOT NULL AND scope = 'folder')),
+    CHECK (kind = 'server_folder' OR real_path IS NULL),
+    CHECK (scope = 'folder' OR file_key IS NOT NULL)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS file_sources_active_label
+ON file_sources(label_key) WHERE status = 'active';
+
+CREATE UNIQUE INDEX IF NOT EXISTS file_sources_active_path
+ON file_sources(real_path) WHERE status = 'active' AND real_path IS NOT NULL;
+
+CREATE TRIGGER IF NOT EXISTS file_sources_no_delete
+BEFORE DELETE ON file_sources
+BEGIN
+    SELECT RAISE(ABORT, 'source history is kept');
+END;
+
+CREATE TRIGGER IF NOT EXISTS file_sources_stay_removed
+BEFORE UPDATE ON file_sources
+WHEN OLD.status = 'removed' AND NEW.status IS NOT 'removed'
+BEGIN
+    SELECT RAISE(ABORT, 'a removed source stays removed');
+END;
+
+CREATE TRIGGER IF NOT EXISTS file_sources_identity_fixed
+BEFORE UPDATE ON file_sources
+WHEN NEW.id IS NOT OLD.id OR NEW.kind IS NOT OLD.kind OR NEW.scope IS NOT OLD.scope
+  OR NEW.real_path IS NOT OLD.real_path OR NEW.rule_root IS NOT OLD.rule_root
+  OR NEW.file_key IS NOT OLD.file_key
+BEGIN
+    SELECT RAISE(ABORT, 'the identity of a source cannot change');
+END;
+
+CREATE TABLE IF NOT EXISTS stored_files (
+    source_id TEXT NOT NULL,
+    path_key TEXT NOT NULL,
+    path_display TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('current','purged','removed')),
+    purged_reason TEXT,
+    version INTEGER NOT NULL,
+    sha256 TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    content BLOB,
+    uploaded_at REAL NOT NULL,
+    changed_at REAL NOT NULL,
+    PRIMARY KEY (source_id, path_key),
+    CHECK (
+        (state = 'current' AND content IS NOT NULL AND purged_reason IS NULL)
+        OR (state = 'purged' AND content IS NULL AND purged_reason IN ('blocked','source_removed'))
+        OR (state = 'removed' AND content IS NULL AND purged_reason = 'removed_local')
+    )
+);
+
+CREATE TRIGGER IF NOT EXISTS stored_files_no_delete
+BEFORE DELETE ON stored_files
+BEGIN
+    SELECT RAISE(ABORT, 'stored file history is kept');
+END;
 """
 
 
@@ -217,9 +296,10 @@ def body_hash(subject: str, body: str, address: str, attachments: Sequence[Attac
 
 class Database:
     # Version 1: drafts, audit log and draft_attachments. Version 2: the recipient registry. Version 3: the origin path of
-    # an attachment (checked again when sending). Version 4: file_access_rules and settings. The schema script only
+    # an attachment (checked again when sending). Version 4: file_access_rules and settings. Version 5: file sources
+    # (file_sources, stored_files) and the source id on rules and on the origin of an attachment. The schema script only
     # creates what is missing, so opening an older database upgrades it without touching existing rows.
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 5
 
     def __init__(self, path: Path) -> None:
         self.path = str(path)
@@ -236,6 +316,14 @@ class Database:
             columns = [r[1] for r in conn.execute("PRAGMA table_info(draft_attachments)")]
             if "source_path" not in columns:  # version 3: remember where an attachment came from
                 conn.execute("ALTER TABLE draft_attachments ADD COLUMN source_path TEXT")
+            # version 5: which source a rule or an attachment origin belongs to (empty for older rows)
+            for table, column in (
+                ("file_access_rules", "source_id"),
+                ("draft_attachments", "source_id"),
+                ("draft_attachments", "origin_key"),
+            ):
+                if column not in [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
             if version < self.SCHEMA_VERSION:
                 conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
 
@@ -732,6 +820,424 @@ class Database:
                 (marker, "1", now),
             )
         return count
+
+    # -- file sources (schema 5) ----------------------------------------------------
+    # A source is a place Claude may attach files from (see outbox_mcp/sources.py). Rules, stored
+    # copies and the audit entry of every change are written in one transaction. Rules of one source
+    # never apply to another; removing a source keeps its rules as history that is never effective.
+
+    @staticmethod
+    def _active_source(conn, source_id: str) -> sqlite3.Row:
+        row = conn.execute("SELECT * FROM file_sources WHERE id=?", (source_id,)).fetchone()
+        if row is None:
+            raise SourceRejected("state", "This source does not exist.")
+        if row["status"] != "active":
+            raise SourceRejected("state", "This source has been removed.")
+        return row
+
+    @staticmethod
+    def _norm_real_path(real_path) -> str:
+        text = os.path.normpath(str(real_path))
+        if not os.path.isabs(text) or text == os.path.sep:
+            raise SourceRejected("input", "A folder source needs an absolute folder path (not '/').")
+        return text
+
+    def _insert_source(
+        self, conn, kind, scope, label, now, changed_by, origin_display, real_path, file_name, rule_root=None
+    ) -> str:
+        if kind not in src_rules.SOURCE_KINDS or scope not in src_rules.SOURCE_SCOPES:
+            raise SourceRejected("input", "Unknown kind or scope of a source.")
+        label_display, label_key = src_rules.clean_label(label)
+        origin = src_rules.clean_display(origin_display)
+        file_display = file_key = None
+        if kind == "server_folder":
+            if scope != "folder":
+                raise SourceRejected("input", "A server folder source is a folder.")
+            if real_path is None:
+                raise SourceRejected("input", "A server folder source needs its folder path.")
+            real = self._norm_real_path(real_path)
+            for other in conn.execute(
+                "SELECT real_path FROM file_sources WHERE status='active' AND real_path IS NOT NULL"
+            ):
+                o = other["real_path"]
+                if real == o or real.startswith(o + os.sep) or o.startswith(real + os.sep):
+                    raise SourceRejected("input", "This folder overlaps with a folder that is already a source.")
+        else:
+            if real_path is not None:
+                raise SourceRejected("input", "An upload source has no folder path on the server.")
+            real = None
+        if scope == "file":
+            if file_name is None:
+                raise SourceRejected("input", "A single-file source needs the file name.")
+            file_display, file_key = src_rules.clean_relative_path(file_name)
+            if "/" in file_display:
+                raise SourceRejected("input", "A single-file source is registered by its file name only.")
+            src_rules.check_stored_name(kind, file_display)
+        elif file_name is not None:
+            raise SourceRejected("input", "Only a single-file source has a file name.")
+        active = conn.execute("SELECT COUNT(*) FROM file_sources WHERE status='active'").fetchone()[0]
+        if active >= src_rules.MAX_ACTIVE_SOURCES:
+            raise SourceRejected("quota", f"At most {src_rules.MAX_ACTIVE_SOURCES} sources can be active.")
+        source_id = src_rules.new_source_id(secrets.token_hex(8))
+        try:
+            conn.execute(
+                "INSERT INTO file_sources(id,kind,scope,label,label_key,origin_display,real_path,rule_root,"
+                "file_key,file_display,status,sync_epoch,created_at,created_by)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,'active',0,?,?)",
+                (
+                    source_id, kind, scope, label_display, label_key, origin, real,
+                    rule_root or f"source:{source_id}", file_key, file_display, now, changed_by,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            raise SourceRejected("input", "A source with this name or folder already exists.") from None
+        self._audit(
+            conn, now, "source_created", owner=changed_by,
+            detail=f"source={source_id} label={label_display} kind={kind} scope={scope}",
+        )
+        return source_id
+
+    def create_source(
+        self, kind: str, scope: str, label: str, now: float, changed_by: str, *,
+        origin_display: str = "", real_path=None, file_name: Optional[str] = None,
+    ) -> str:
+        """Register a new source. It allows nothing at first: a folder source needs a rule that
+        allows a folder, a single-file source allows only its one file."""
+        with self._tx() as conn:
+            return self._insert_source(
+                conn, kind, scope, label, now, changed_by, origin_display, real_path, file_name
+            )
+
+    def ensure_server_folder_source(self, root, now: float, label: str = "notes") -> str:
+        """The notes folder from the configuration as a source (the migration from schema 4).
+        Existing rules of that folder become the rules of this source; nothing is copied or moved.
+        Calling it again returns the same source. A source that was removed once is never
+        revived: registering the same folder again gives a new source without the old rules."""
+        root_key = self._root_key(root)
+        with self._tx() as conn:
+            row = conn.execute(
+                "SELECT id FROM file_sources WHERE status='active' AND real_path=?", (root_key,)
+            ).fetchone()
+            if row:
+                return row["id"]
+            legacy_free = conn.execute(
+                "SELECT 1 FROM file_sources WHERE rule_root=?", (root_key,)
+            ).fetchone() is None
+            name, n = label, 1
+            while conn.execute(
+                "SELECT 1 FROM file_sources WHERE status='active' AND label_key=?",
+                (src_rules.clean_label(name)[1],),
+            ).fetchone():
+                n += 1
+                name = f"{label}-{n}"
+            source_id = self._insert_source(
+                conn, "server_folder", "folder", name, now, "system", "", root_key, None,
+                rule_root=root_key if legacy_free else None,
+            )
+            if legacy_free:
+                conn.execute(
+                    "UPDATE file_access_rules SET source_id=? WHERE scope='attach' AND root_path=?"
+                    " AND source_id IS NULL",
+                    (source_id, root_key),
+                )
+            return source_id
+
+    def get_source(self, source_id: str) -> Optional[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute("SELECT * FROM file_sources WHERE id=?", (source_id,)).fetchone()
+
+    def list_sources(self, include_removed: bool = False) -> List[sqlite3.Row]:
+        with self._connect() as conn:
+            where = "" if include_removed else " WHERE status='active'"
+            return conn.execute(f"SELECT * FROM file_sources{where} ORDER BY created_at, id").fetchall()
+
+    def source_epoch(self, source_id: str) -> Optional[int]:
+        row = self.get_source(source_id)
+        return None if row is None else row["sync_epoch"]
+
+    @staticmethod
+    def _source_rule_lists(conn, src: sqlite3.Row):
+        """(allowed, denied) path parts of one source. Nothing is effective for a removed source."""
+        if src["status"] != "active":
+            return [], []
+        allowed, denied = [], []
+        for row in conn.execute(
+            "SELECT path_key, effect FROM file_access_rules WHERE scope='attach' AND root_path=?"
+            " AND (source_id=? OR source_id IS NULL)",
+            (src["rule_root"], src["id"]),
+        ):
+            if row["effect"] == "allow":
+                allowed.append(key_parts(row["path_key"]))
+            elif row["effect"] == "deny":
+                denied.append(key_parts(row["path_key"]))
+        return allowed, denied
+
+    def source_rule_lists(self, source_id: str):
+        with self._connect() as conn:
+            src = conn.execute("SELECT * FROM file_sources WHERE id=?", (source_id,)).fetchone()
+            return ([], []) if src is None else self._source_rule_lists(conn, src)
+
+    def _path_state(self, conn, src: sqlite3.Row, key: str) -> str:
+        if src["status"] != "active":
+            return "none"
+        allowed, denied = self._source_rule_lists(conn, src)
+        return src_rules.evaluate(src["scope"], src["file_key"], allowed, denied, key)
+
+    def source_path_state(self, source_id: str, path: str) -> str:
+        """'allowed', 'denied' or 'none' for a relative path inside one source, as the rules are now."""
+        _, key = src_rules.clean_relative_path(path)
+        with self._connect() as conn:
+            src = conn.execute("SELECT * FROM file_sources WHERE id=?", (source_id,)).fetchone()
+            return "none" if src is None else self._path_state(conn, src, key)
+
+    @staticmethod
+    def _purge(conn, source_id: str, keys: Sequence[str], reason: str, now: float) -> int:
+        count = 0
+        for key in keys:
+            cur = conn.execute(
+                "UPDATE stored_files SET state='purged', purged_reason=?, content=NULL, changed_at=?"
+                " WHERE source_id=? AND path_key=? AND state='current'",
+                (reason, now, source_id, key),
+            )
+            count += cur.rowcount
+        return count
+
+    def _purge_unallowed(self, conn, src: sqlite3.Row, now: float) -> int:
+        keys = [
+            r["path_key"]
+            for r in conn.execute(
+                "SELECT path_key FROM stored_files WHERE source_id=? AND state='current'", (src["id"],)
+            )
+            if self._path_state(conn, src, r["path_key"]) != "allowed"
+        ]
+        return self._purge(conn, src["id"], keys, "blocked", now)
+
+    def set_source_rule(self, source_id: str, path: str, effect: str, now: float, changed_by: str) -> int:
+        """Set, change or clear (effect 'cleared') a rule inside one source. Returns how many stored
+        copies were deleted because the file is not allowed any more. The rule, the deletion and the
+        audit entry are written in one transaction. Rows are never deleted. Only a folder can be
+        allowed: a single file can only be blocked (its registration is the allowance)."""
+        if effect not in ("allow", "deny", "cleared"):
+            raise SourceRejected("input", "Unknown effect of a rule.")
+        try:
+            display, key = self._rule_path(path)
+        except ValueError as exc:
+            raise SourceRejected("input", str(exc)) from None
+        with self._tx() as conn:
+            src = self._active_source(conn, source_id)
+            if src["scope"] == "file":
+                if key != src["file_key"]:
+                    raise SourceRejected("permission", "This source holds one file only; nothing else can be ruled.")
+                if effect == "allow":
+                    raise SourceRejected(
+                        "permission", "A single file is allowed by registering it; it can only be blocked."
+                    )
+            elif effect == "allow" and src_rules.looks_like_file(key):
+                raise SourceRejected(
+                    "permission", "A single file cannot be allowed, only blocked. Allow its folder instead."
+                )
+            row = conn.execute(
+                "SELECT effect FROM file_access_rules WHERE scope='attach' AND root_path=? AND path_key=?",
+                (src["rule_root"], key),
+            ).fetchone()
+            before = row["effect"] if row else "none"
+            if row is None:
+                conn.execute(
+                    "INSERT INTO file_access_rules(scope,root_path,path_key,path_display,effect,changed_at,"
+                    "changed_by,source_id) VALUES ('attach',?,?,?,?,?,?,?)",
+                    (src["rule_root"], key, display, effect, now, changed_by, source_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE file_access_rules SET effect=?, path_display=?, changed_at=?, changed_by=?, source_id=?"
+                    " WHERE scope='attach' AND root_path=? AND path_key=?",
+                    (effect, display, now, changed_by, source_id, src["rule_root"], key),
+                )
+            conn.execute("UPDATE file_sources SET sync_epoch=sync_epoch+1 WHERE id=?", (source_id,))
+            self._audit(
+                conn, now, "source_rule_set", owner=changed_by,
+                detail=f"source={source_id} label={src['label']} path={display} {before} -> {effect}",
+            )
+            purged = self._purge_unallowed(conn, src, now)
+            if purged:
+                self._audit(
+                    conn, now, "stored_files_purged", owner=changed_by,
+                    detail=f"source={source_id} label={src['label']} count={purged} reason=blocked",
+                )
+            return purged
+
+    def remove_source(self, source_id: str, now: float, changed_by: str) -> int:
+        """Remove a source for good. Its stored copies are deleted, its rules stay as history and are
+        never effective again (registering the same thing again makes a new source with no rules).
+        Returns the number of copies deleted."""
+        with self._tx() as conn:
+            src = self._active_source(conn, source_id)
+            conn.execute(
+                "UPDATE file_sources SET status='removed', removed_at=?, removed_by=?, sync_epoch=sync_epoch+1"
+                " WHERE id=?",
+                (now, changed_by, source_id),
+            )
+            keys = [
+                r["path_key"]
+                for r in conn.execute(
+                    "SELECT path_key FROM stored_files WHERE source_id=? AND state='current'", (source_id,)
+                )
+            ]
+            purged = self._purge(conn, source_id, keys, "source_removed", now)
+            self._audit(
+                conn, now, "source_removed", owner=changed_by,
+                detail=f"source={source_id} label={src['label']} purged_files={purged}",
+            )
+            return purged
+
+    # -- stored copies ----------------------------------------------------------------
+
+    def _put_stored(self, conn, src: sqlite3.Row, path: str, data, claimed_sha256, now: float):
+        """Store one uploaded file inside the transaction `conn` is in. The server checks everything again:
+        hash, path, name and type, rules, size, text and secret scan, quotas. Returns
+        (row dict, changed). Raises SourceRejected with a category."""
+        if not isinstance(data, (bytes, bytearray)):
+            raise SourceRejected("input", "The file content must be bytes.")
+        data = bytes(data)
+        sha = src_rules.sha256_hex(data)
+        if not isinstance(claimed_sha256, str) or claimed_sha256.lower() != sha:
+            raise SourceRejected("integrity", "The hash of the file does not match its content.")
+        if src["kind"] != "upload":
+            raise SourceRejected("state", "Files can only be stored in an upload source.")
+        display, key = src_rules.clean_relative_path(path)
+        src_rules.check_stored_name(src["kind"], display)
+        state = self._path_state(conn, src, key)
+        if state == "denied":
+            raise SourceRejected("permission", f"'{display}' is blocked.")
+        if state != "allowed":
+            raise SourceRejected("permission", f"'{display}' is not in an allowed folder of this source.")
+        if len(data) > src_rules.MAX_FILE_BYTES:
+            raise SourceRejected("content", f"'{display}' is too large (limit {src_rules.MAX_FILE_BYTES} bytes).")
+        problem = text_problem(data)
+        if problem:
+            raise SourceRejected("content", f"'{display}' is not allowed: {problem}.")
+        old = conn.execute(
+            "SELECT state, version, sha256, size_bytes FROM stored_files WHERE source_id=? AND path_key=?",
+            (src["id"], key),
+        ).fetchone()
+        if old is not None and old["state"] == "current" and old["sha256"] == sha:
+            return {"path_key": key, "path_display": display, "version": old["version"], "sha256": sha,
+                    "size": len(data)}, False
+        replaced = old["size_bytes"] if old is not None and old["state"] == "current" else 0
+        files, used = conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(size_bytes),0) FROM stored_files WHERE source_id=? AND state='current'",
+            (src["id"],),
+        ).fetchone()
+        if old is None or old["state"] != "current":
+            if files + 1 > src_rules.MAX_FILES_PER_SOURCE:
+                raise SourceRejected(
+                    "quota", f"A source can hold at most {src_rules.MAX_FILES_PER_SOURCE} files."
+                )
+        total = conn.execute(
+            "SELECT COALESCE(SUM(size_bytes),0) FROM stored_files WHERE state='current'"
+        ).fetchone()[0]
+        if total - replaced + len(data) > src_rules.MAX_TOTAL_BYTES:
+            raise SourceRejected("quota", f"The stored files may not exceed {src_rules.MAX_TOTAL_BYTES} bytes in total.")
+        version = (old["version"] if old is not None else 0) + 1
+        conn.execute(
+            "INSERT INTO stored_files(source_id,path_key,path_display,state,purged_reason,version,sha256,"
+            "size_bytes,content,uploaded_at,changed_at) VALUES (?,?,?,'current',NULL,?,?,?,?,?,?)"
+            " ON CONFLICT(source_id,path_key) DO UPDATE SET path_display=excluded.path_display,"
+            " state='current', purged_reason=NULL, version=excluded.version, sha256=excluded.sha256,"
+            " size_bytes=excluded.size_bytes, content=excluded.content, uploaded_at=excluded.uploaded_at,"
+            " changed_at=excluded.changed_at",
+            (src["id"], key, display, version, sha, len(data), data, now, now),
+        )
+        return {"path_key": key, "path_display": display, "version": version, "sha256": sha, "size": len(data)}, True
+
+    def put_stored_file(
+        self, source_id: str, path: str, data: bytes, claimed_sha256: str, now: float, changed_by: str
+    ) -> dict:
+        """Store (or replace) one uploaded file. Same content again changes nothing (no new version).
+        The result has path_key, path_display, version, sha256, size and `changed`."""
+        with self._tx() as conn:
+            src = self._active_source(conn, source_id)
+            result, changed = self._put_stored(conn, src, path, data, claimed_sha256, now)
+            if changed:
+                conn.execute("UPDATE file_sources SET sync_epoch=sync_epoch+1 WHERE id=?", (source_id,))
+                self._audit(
+                    conn, now, "stored_file_stored", owner=changed_by,
+                    detail=(
+                        f"source={source_id} label={src['label']} path={result['path_display']}"
+                        f" version={result['version']} id={src_rules.short_version(result['sha256'])}"
+                    ),
+                )
+            return {**result, "changed": changed}
+
+    def remove_stored_file(self, source_id: str, path: str, now: float, changed_by: str) -> bool:
+        """Mark a stored copy as removed (the file is gone on the uploading side). Deletes the content."""
+        display, key = src_rules.clean_relative_path(path)
+        with self._tx() as conn:
+            src = self._active_source(conn, source_id)
+            cur = conn.execute(
+                "UPDATE stored_files SET state='removed', purged_reason='removed_local', content=NULL,"
+                " changed_at=? WHERE source_id=? AND path_key=? AND state='current'",
+                (now, source_id, key),
+            )
+            if not cur.rowcount:
+                return False
+            conn.execute("UPDATE file_sources SET sync_epoch=sync_epoch+1 WHERE id=?", (source_id,))
+            self._audit(
+                conn, now, "stored_file_removed", owner=changed_by,
+                detail=f"source={source_id} label={src['label']} path={display}",
+            )
+            return True
+
+    def stored_content(self, source_id: str, path: str) -> Optional[dict]:
+        """The stored copy of a file: only if its source is active, the copy is current and the rules
+        allow the path right now. None otherwise. Returns data, sha256, version, size, uploaded_at."""
+        try:
+            _, key = src_rules.clean_relative_path(path)
+        except SourceRejected:
+            return None
+        with self._connect() as conn:
+            src = conn.execute("SELECT * FROM file_sources WHERE id=?", (source_id,)).fetchone()
+            if src is None or src["status"] != "active" or self._path_state(conn, src, key) != "allowed":
+                return None
+            row = conn.execute(
+                "SELECT content, sha256, version, size_bytes, uploaded_at FROM stored_files"
+                " WHERE source_id=? AND path_key=? AND state='current'",
+                (source_id, key),
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "data": bytes(row["content"]), "sha256": row["sha256"], "version": row["version"],
+                "size": row["size_bytes"], "uploaded_at": row["uploaded_at"],
+            }
+
+    def list_stored_files(self, source_id: str, state: Optional[str] = None) -> List[sqlite3.Row]:
+        """Metadata of the stored files of a source (never the content), ordered by path."""
+        with self._connect() as conn:
+            query = (
+                "SELECT path_key, path_display, state, purged_reason, version, sha256, size_bytes,"
+                " uploaded_at, changed_at FROM stored_files WHERE source_id=?"
+            )
+            args: list = [source_id]
+            if state is not None:
+                query += " AND state=?"
+                args.append(state)
+            return conn.execute(query + " ORDER BY path_key", args).fetchall()
+
+    def source_usage(self) -> dict:
+        """Counts for the quota display: active sources, current files and bytes (total and per source)."""
+        with self._connect() as conn:
+            active = conn.execute("SELECT COUNT(*) FROM file_sources WHERE status='active'").fetchone()[0]
+            per = {}
+            for r in conn.execute(
+                "SELECT source_id, state, COUNT(*) n, COALESCE(SUM(size_bytes),0) b FROM stored_files"
+                " GROUP BY source_id, state"
+            ):
+                entry = per.setdefault(r["source_id"], {"current": 0, "purged": 0, "removed": 0, "bytes": 0})
+                entry[r["state"]] = r["n"]
+                if r["state"] == "current":
+                    entry["bytes"] = r["b"]
+            return {"sources": active, "bytes": sum(e["bytes"] for e in per.values()), "per_source": per}
 
     # -- reading helpers (also used by tests) -------------------------------------
 

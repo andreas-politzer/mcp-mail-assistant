@@ -22,6 +22,17 @@ class AttachmentRejected(OutboxError, ValueError):
     """An attachment was refused. The whole draft is refused with it; nothing is prepared."""
 
 
+class SourceRejected(OutboxError, ValueError):
+    """A file source, a rule on it or a stored file was refused. `category` says why:
+    input (malformed request), state (source missing or not active), permission (path, name,
+    type or rules), integrity (hash does not match), content (size, text or secret check) or
+    quota. Nothing was changed."""
+
+    def __init__(self, category: str, message: str) -> None:
+        self.category = category
+        super().__init__(message)
+
+
 class RecipientNotAllowed(OutboxError):
     """The recipient is not on the allowed recipient list."""
 

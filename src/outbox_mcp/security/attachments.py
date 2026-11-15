@@ -61,6 +61,20 @@ class Attachment:
         return len(self.data)
 
 
+def text_problem(data: bytes) -> Optional[str]:
+    """Why these bytes cannot be attached as text (not UTF-8, NUL bytes, looks like a secret),
+    or None if they are fine. Used for files read from a folder and for uploaded copies alike."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return "it is not valid UTF-8 text"
+    if "\x00" in text:
+        return "it is not a text file (contains NUL bytes)"
+    if _LABELLED_VALUE.search(text) or any(pattern.search(text) for pattern in _SECRET_PATTERNS):
+        return "it looks like it contains a secret (a password, key or token)"
+    return None
+
+
 def safe_filename(name: str) -> str:
     """A file name that cannot break out of a mail header or confuse a mail program."""
     cleaned = "".join("_" if (ord(c) < 32 or ord(c) == 127 or c in '\\/:"<>|?*') else c for c in name).strip()
@@ -231,14 +245,9 @@ class AttachmentPolicy:
             raise AttachmentRejected(
                 f"Attachment '{_show(path)}' is too large (limit {self.max_file_bytes} bytes)."
             )
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            raise refuse("it is not valid UTF-8 text") from None
-        if "\x00" in text:
-            raise refuse("it is not a text file (contains NUL bytes)")
-        if _LABELLED_VALUE.search(text) or any(pattern.search(text) for pattern in _SECRET_PATTERNS):
-            raise refuse("it looks like it contains a secret (a password, key or token)")
+        problem = text_problem(data)
+        if problem:
+            raise refuse(problem)
         return Attachment(
             name=safe_filename(parts[-1]), data=data, sha256=hashlib.sha256(data).hexdigest(),
             source=path,
