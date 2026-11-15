@@ -136,8 +136,10 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
   const { plan, scan } = phase
   const s = plan.summary
   const nothing = s.new + s.changed + s.removed === 0
-  const emptyRead = scan.empty && source.files > 0
-  const mass = s.removed > 0 && s.removed * 2 >= source.files
+  // What the server holds now, from the plan itself (not from the list on screen, which may be a moment old).
+  const serverFiles = s.removed + s.changed + s.unchanged
+  const emptyRead = scan.empty && serverFiles > 0
+  const mass = s.removed > 0 && s.removed * 2 >= serverFiles
   const needsAck = emptyRead || mass
   const notSent = plan.rejected_count
 
@@ -187,8 +189,8 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
           <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="mt-0.5" />
           <span>
             {emptyRead
-              ? <>Auf diesem Mac wurde keine einzige Textdatei gefunden, auf dem Server liegen aber <b>{source.files}</b>. Dieser Abgleich würde <b>alle</b> Kopien löschen. Stimmt das?</>
-              : <>Dieser Abgleich löscht <b>{s.removed}</b> von <b>{source.files}</b> Kopien auf dem Server. Stimmt das?</>}
+              ? <>Auf diesem Mac wurde keine einzige Textdatei gefunden, auf dem Server liegen aber <b>{serverFiles}</b>. Dieser Abgleich würde <b>alle</b> Kopien löschen. Stimmt das?</>
+              : <>Dieser Abgleich löscht <b>{s.removed}</b> von <b>{serverFiles}</b> Kopien auf dem Server. Stimmt das?</>}
             {' '}Ja, diese Kopien sollen gelöscht werden.
           </span>
         </label>

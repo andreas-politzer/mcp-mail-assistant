@@ -202,6 +202,24 @@ describe('synchronisation', () => {
     expect(await currentPaths(src.id)).toEqual(['Projekte/Sub/b.md', 'Projekte/a.md'].sort())
   })
 
+  it('judges deletions by the plan, even while the list on screen is still showing old numbers', async () => {
+    const dir = await setUp('Alt-Zahlen')
+    const src = (await sourceByLabel('Alt-Zahlen'))!
+    await allowAndSync('Alt-Zahlen')
+    // from now on the list of sources answers slowly, so the window keeps showing "0 Dateien" for a while
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).endsWith('/admin/sources') && (init?.method ?? 'GET') === 'GET') await new Promise((r) => setTimeout(r, 2500))
+      return realFetch(input, init)
+    })
+    await runSync()
+    for (const p of ['Projekte/a.md', 'Projekte/Sub/b.md', 'Privat/c.md', 'root.md', 'Projekte/passwort.md']) rmSync(join(dir, p))
+    await startSync()
+    expect(text(document.body)).toContain('keine einzige Textdatei')
+    expect((screen.getByText('Abgleich ausführen') as HTMLButtonElement).disabled).toBe(true)
+    spy.mockRestore()
+    expect((await currentPaths(src.id)).length).toBe(2)
+  })
+
   it('sends in several passes, removes only in the last one, and survives a failed pass', async () => {
     const files: Record<string, string> = { 'Doc/old.md': 'old' }
     const dir = await setUp('Passes', files)
