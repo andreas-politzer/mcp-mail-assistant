@@ -9,7 +9,7 @@ import unicodedata
 import pytest
 
 from outbox_mcp.errors import AttachmentRejected, DraftNotSendable, RecipientNotAllowed
-from outbox_mcp.security.attachments import AttachmentPolicy
+from outbox_mcp.security.attachments import AttachmentPolicy, path_key
 from outbox_mcp.security.rate_limiter import RateLimits
 from outbox_mcp.service import OutboxService
 from outbox_mcp.storage.database import Database
@@ -224,10 +224,20 @@ def prepare(svc, attachments=("Projects/a.md",)):
     return svc.prepare_email("o", "Ferdinand", "Betreff", "Hallo", list(attachments))["draft_id"]
 
 
+def _raw_rule(db, root, path, effect):
+    import os
+    with sqlite3.connect(db.path) as conn:
+        conn.execute(
+            "INSERT INTO file_access_rules(scope,root_path,path_key,path_display,effect,changed_at,changed_by)"
+            " VALUES ('attach',?,?,?,?,0,'x') ON CONFLICT(scope,root_path,path_key) DO UPDATE SET effect=excluded.effect",
+            (os.path.normpath(str(root)), path_key(path), path, effect),
+        )
+
+
 def test_a_rule_change_by_another_connection_before_sending_stops_the_mail(svc, att_config, db, sender, clock):
+    """The send-time check on its own: a rule written without any consequence (no draft cancelled)."""
     draft_id = prepare(svc)
-    admin = Database(db.path)  # the admin side has its own connection
-    admin.set_file_rule("attach", att_config.attachment_root, "Projects", "deny", clock(), "admin:test")
+    _raw_rule(Database(db.path), att_config.attachment_root, "Projects", "deny")
     with pytest.raises(AttachmentRejected, match="no longer allowed"):
         svc.send_email("o", draft_id)
     assert sender.sent == []
@@ -235,9 +245,18 @@ def test_a_rule_change_by_another_connection_before_sending_stops_the_mail(svc, 
     assert db.count_events("claimed") == 0
 
 
+def test_a_rule_change_through_the_database_cancels_the_draft(svc, att_config, db, sender, clock):
+    from outbox_mcp.errors import DraftNotSendable
+    draft_id = prepare(svc)
+    Database(db.path).set_file_rule("attach", att_config.attachment_root, "Projects", "deny", clock(), "admin:test")
+    with pytest.raises(DraftNotSendable):
+        svc.send_email("o", draft_id)
+    assert sender.sent == [] and db.get_draft(draft_id, "o").status == "cancelled"
+
+
 def test_a_single_file_block_stops_the_mail(svc, att_config, db, sender, clock):
     draft_id = prepare(svc)
-    db.set_file_rule("attach", att_config.attachment_root, "Projects/a.md", "deny", clock(), "admin:test")
+    _raw_rule(db, att_config.attachment_root, "Projects/a.md", "deny")
     with pytest.raises(AttachmentRejected):
         svc.send_email("o", draft_id)
     assert sender.sent == []

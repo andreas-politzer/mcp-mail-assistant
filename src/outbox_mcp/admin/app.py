@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -25,8 +26,9 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from ..auth.passwords import verify_password
-from ..errors import OutboxError, RecipientNotAllowed, ValidationError
-from ..security.attachments import key_parts, path_key
+from .. import sources as src_rules
+from ..errors import OutboxError, RecipientNotAllowed, SourceRejected, ValidationError
+from ..security.attachments import is_sensitive_name, key_parts, path_key
 from ..security.rate_limiter import HARD_MAX_SENDS_PER_DAY, HARD_MAX_SENDS_PER_HOUR
 from ..storage.database import Database
 from ..storage.recipient_store import RecipientRecord, RecipientStore
@@ -35,7 +37,10 @@ from .folders import (
     apply_change, attachable_files, clean_relative, count_attachable, describe, fingerprint,
     is_ambiguous, list_folder, load_rules, real_entry,
 )
+from .folders import Rule
+from .folders import evaluate as rule_evaluate
 from .sessions import ConfirmationStore, LoginThrottle, SessionStore
+from .sync import PASS_BYTES, PASS_FILES, make_plan
 
 SOURCE = "admin:web"
 _STATUSES = ("suggested", "active", "rejected", "removed", "expired", "blocked")
@@ -84,12 +89,13 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
         scheme, _, token = header.partition(" ")
         return token.strip() if scheme.lower() == "bearer" and token.strip() else None
 
-    async def read_json(request: Request) -> Dict[str, Any]:
+    async def read_json(request: Request, limit: Optional[int] = None) -> Dict[str, Any]:
+        limit = limit or config.max_body_bytes
         length = request.headers.get("content-length")
-        if length and length.isdigit() and int(length) > config.max_body_bytes:
+        if length and length.isdigit() and int(length) > limit:
             raise _TooLarge()
         raw = await request.body()
-        if len(raw) > config.max_body_bytes:
+        if len(raw) > limit:
             raise _TooLarge()
         if not raw.strip():
             return {}
@@ -118,6 +124,12 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
                 return fail(request, 413, "too_large", "The request is too large.")
             except RecipientNotAllowed as exc:
                 return fail(request, 409, "conflict", str(exc))
+            except SourceRejected as exc:
+                if exc.category == "state":
+                    return fail(request, 404, "not_found", str(exc))
+                if exc.category in ("quota", "conflict"):
+                    return fail(request, 409, exc.category, str(exc))
+                return fail(request, 400, "invalid", str(exc))
             except OutboxError as exc:
                 return fail(request, 400, "invalid", str(exc))
             except Exception:  # never leak details; the database transaction has been rolled back
@@ -274,7 +286,9 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
         }
 
     async def put_rule(request: Request) -> Response:
-        data = await read_json(request)
+        return await put_notes_rule(request, await read_json(request))
+
+    async def put_notes_rule(request: Request, data: Dict[str, Any]) -> Response:
         plan = await run_in_threadpool(plan_rule, text(data, "path"), text(data, "effect"))
         rel, effect = plan["rel"], plan["effect"]
         if plan["unchanged"]:
@@ -394,6 +408,320 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
         ]
         return reply(request, 200, {"entries": items, "next_before": items[-1]["seq"] if len(items) == limit else None})
 
+    # -- file sources ------------------------------------------------------------------
+
+    def get_source(sid: str):
+        row = db.get_source(sid)
+        if row is None or row["status"] != "active":
+            raise SourceRejected("state", "This source does not exist.")
+        return row
+
+    def source_view(row, usage: Dict[str, Any]) -> Dict[str, Any]:
+        per = usage["per_source"].get(row["id"], {})
+        return {
+            "id": row["id"], "label": row["label"], "kind": row["kind"], "scope": row["scope"],
+            "origin_display": row["origin_display"], "file_name": row["file_display"],
+            "created_at": row["created_at"], "epoch": row["sync_epoch"],
+            "files": per.get("current", 0), "bytes": per.get("bytes", 0),
+        }
+
+    def quota_view(usage: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "sources": usage["sources"], "max_sources": src_rules.MAX_ACTIVE_SOURCES,
+            "max_files_per_source": src_rules.MAX_FILES_PER_SOURCE, "max_file_bytes": src_rules.MAX_FILE_BYTES,
+            "bytes_used": usage["bytes"], "max_total_bytes": src_rules.MAX_TOTAL_BYTES,
+            "apply_files": PASS_FILES, "apply_bytes": PASS_BYTES,
+        }
+
+    async def list_sources_ep(request: Request) -> Response:
+        def work():
+            usage = db.source_usage()
+            return {"sources": [source_view(r, usage) for r in db.list_sources()], "quota": quota_view(usage)}
+        return reply(request, 200, await run_in_threadpool(work))
+
+    async def create_source_ep(request: Request) -> Response:
+        data = await read_json(request)
+        if data.get("kind", "upload") != "upload":
+            raise ValidationError("Only an upload source can be created here.")
+        scope = data.get("scope", "folder")
+        origin = data.get("origin_display", "")
+        if not isinstance(origin, str) or len(origin) > 200 or any(ord(c) < 32 for c in origin):
+            raise ValidationError("'origin_display' must be short plain text.")
+        file_name = data.get("file_name") if scope == "file" else None
+        sid = await run_in_threadpool(
+            lambda: db.create_source(
+                "upload", scope if isinstance(scope, str) else "", text(data, "label"), clock(), SOURCE,
+                origin_display=origin.strip(), file_name=file_name,
+            )
+        )
+        usage = await run_in_threadpool(db.source_usage)
+        return reply(request, 201, {"source": source_view(db.get_source(sid), usage), "quota": quota_view(usage)})
+
+    async def rename_source_ep(request: Request) -> Response:
+        sid = request.path_params["sid"]
+        data = await read_json(request)
+        await run_in_threadpool(db.rename_source, sid, text(data, "label"), clock(), SOURCE)
+        usage = await run_in_threadpool(db.source_usage)
+        return reply(request, 200, {"source": source_view(db.get_source(sid), usage)})
+
+    async def remove_source_ep(request: Request) -> Response:
+        sid = request.path_params["sid"]
+        effects = await run_in_threadpool(db.remove_source, sid, clock(), SOURCE)
+        return reply(request, 200, {"status": "done", **effects})
+
+    def rule_objects(sid: str) -> list:
+        return [Rule(key_parts(k), e, d) for k, e, d in db.source_rules(sid)]
+
+    async def evaluate_ep(request: Request) -> Response:
+        src = await run_in_threadpool(get_source, request.path_params["sid"])
+        data = await read_json(request)
+        paths = data.get("paths")
+        if not isinstance(paths, list) or len(paths) > 1000 or not all(isinstance(p, str) for p in paths):
+            raise ValidationError("'paths' must be a list of at most 1000 paths.")
+
+        def work():
+            rules = rule_objects(src["id"])
+            allowed, denied = db.source_rule_lists(src["id"])
+            out = []
+            for raw in paths:
+                try:
+                    display, key = src_rules.clean_relative_path(raw)
+                except SourceRejected as exc:
+                    out.append({"path": raw[:200], "state": "invalid", "error": str(exc)})
+                    continue
+                state = src_rules.evaluate(src["scope"], src["file_key"], allowed, denied, key)
+                _, rule = rule_evaluate(key_parts(key), rules)
+                parts = key_parts(key)
+                out.append({
+                    "path": display, "state": state,
+                    "source_rule": rule.display if rule else None,
+                    "inherited": bool(rule and rule.parts != parts),
+                    "own_rule": next((r.effect for r in rules if r.parts == parts), None),
+                    "sensitive": any(is_sensitive_name(p) for p in display.split("/")),
+                })
+            return out
+        return reply(request, 200, {"results": await run_in_threadpool(work)})
+
+    def stored_preview(src, rules_before: list, rules_after: list) -> Dict[str, Any]:
+        def lists(rules):
+            return ([r.parts for r in rules if r.effect == "allow"], [r.parts for r in rules if r.effect == "deny"])
+        files = db.list_stored_files(src["id"], "current")
+        count = lambda rules: sum(  # noqa: E731
+            1 for f in files
+            if src_rules.evaluate(src["scope"], src["file_key"], *lists(rules), f["path_key"]) == "allowed"
+        )
+        return {"stored_files_allowed_before": count(rules_before), "stored_files_allowed_after": count(rules_after)}
+
+    async def source_rule_ep(request: Request) -> Response:
+        sid = request.path_params["sid"]
+        data = await read_json(request)
+        src = await run_in_threadpool(get_source, sid)
+        if src["kind"] == "server_folder":
+            if root is None or src["real_path"] != db._norm_real_path(root):
+                raise ValidationError("This folder source is not managed here.")
+            return await put_notes_rule(request, data)
+        path, effect = text(data, "path"), text(data, "effect")
+        if effect not in ("allow", "deny", "clear"):
+            raise ValidationError("'effect' must be allow, deny or clear.")
+        try:
+            display, key = db._rule_path(path)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from None
+        rules = await run_in_threadpool(rule_objects, sid)
+        old = next((r.effect for r in rules if r.parts == key_parts(key)), None)
+        if (old is None) if effect == "clear" else (old == effect):
+            return reply(request, 200, {"status": "unchanged"})
+        loosening = effect == "allow" or (effect == "clear" and old == "deny")
+        if loosening:
+            token = bearer(request) or ""
+            action = f"source-rule:{sid}:{key}:{effect}"
+            state = fingerprint(rules) + f":{src['sync_epoch']}"
+            given = data.get("confirmation_id")
+            if given is None:
+                cid = confirmations.issue(token, action, state)
+                after = apply_change(rules, display, effect)
+                preview = {"path": display, "change": f"{old or 'none'} -> {effect}"}
+                preview.update(await run_in_threadpool(stored_preview, src, rules, after))
+                return reply(request, 200, {
+                    "status": "confirmation_required", "confirmation_id": cid,
+                    "expires_in": config.confirmation_seconds, "preview": preview,
+                })
+            if not confirmations.consume(given, token, action, state):
+                return fail(request, 409, "confirmation_invalid",
+                            "The confirmation is invalid, used up, expired, or the rules changed in the meantime. Ask again.")
+        effects = await run_in_threadpool(
+            db.set_source_rule, sid, display, "cleared" if effect == "clear" else effect, clock(), SOURCE
+        )
+        return reply(request, 200, {"status": "done", **effects})
+
+    async def source_folders_ep(request: Request) -> Response:
+        src = await run_in_threadpool(get_source, request.path_params["sid"])
+        if src["kind"] != "server_folder" or root is None or src["real_path"] != db._norm_real_path(root):
+            raise ValidationError("Only the server's own folder source has a folder tree.")
+        rules = await run_in_threadpool(rule_objects, src["id"])
+        data = await run_in_threadpool(list_folder, root, request.query_params.get("path", ""), rules)
+        return reply(request, 200, data)
+
+    FILES_PAGE = 100
+
+    async def source_files_ep(request: Request) -> Response:
+        src = await run_in_threadpool(get_source, request.path_params["sid"])
+        if src["kind"] != "upload":
+            raise ValidationError("Only an upload source lists stored files.")
+        prefix = request.query_params.get("path", "")
+        parts = ()
+        if prefix:
+            _, pkey = src_rules.clean_relative_path(prefix)
+            parts = key_parts(pkey)
+        cursor = request.query_params.get("cursor", "")
+
+        def work():
+            allowed, denied = db.source_rule_lists(src["id"])
+            rows = [
+                r for r in db.list_stored_files(src["id"])
+                if key_parts(r["path_key"])[: len(parts)] == parts and r["path_key"] > cursor
+            ]
+            page = rows[:FILES_PAGE]
+            return {
+                "files": [{
+                    "path": r["path_display"], "state": r["state"], "reason": r["purged_reason"],
+                    "version": r["version"], "id": src_rules.short_version(r["sha256"]) if r["sha256"] else None,
+                    "size": r["size_bytes"], "uploaded_at": r["uploaded_at"],
+                    "allowed_now": r["state"] == "current"
+                    and src_rules.evaluate(src["scope"], src["file_key"], allowed, denied, r["path_key"]) == "allowed",
+                } for r in page],
+                "next_cursor": page[-1]["path_key"] if len(rows) > FILES_PAGE else None,
+            }
+        return reply(request, 200, await run_in_threadpool(work))
+
+    SYNC_TTL = 900
+
+    # A finished pass is remembered for a while, so the same request can safely be repeated when the
+    # answer got lost on the way (network drop after the server had already stored everything). Only the
+    # same session, the same source and exactly the same files get the remembered answer; nothing is
+    # applied a second time and no second audit entry is written.
+    replays: Dict[str, tuple] = {}
+    replay_lock = threading.Lock()
+    REPLAY_MAX = 50
+
+    def request_digest(sid: str, files: list) -> str:
+        items = sorted(
+            (str(f.get("path", "")), str(f.get("sha256", "")).lower(),
+             hashlib.sha256(str(f.get("content", "")).encode("utf-8")).hexdigest())
+            for f in files
+        )
+        return hashlib.sha256(json.dumps([sid, items]).encode("utf-8")).hexdigest()
+
+    def remember(cid: str, token: str, digest: str, response: Dict[str, Any]) -> None:
+        now = clock()
+        with replay_lock:
+            for k in [k for k, v in replays.items() if v[3] <= now]:
+                del replays[k]
+            while len(replays) >= REPLAY_MAX:
+                del replays[min(replays, key=lambda k: replays[k][3])]
+            replays[cid] = (hashlib.sha256(token.encode()).hexdigest(), digest, response, now + SYNC_TTL)
+
+    def remembered(cid: Any, token: str, digest: str) -> Optional[Dict[str, Any]]:
+        if not isinstance(cid, str):
+            return None
+        with replay_lock:
+            item = replays.get(cid)
+        if item is None or item[3] <= clock():
+            return None
+        key = hashlib.sha256(token.encode()).hexdigest()
+        return item[2] if item[0] == key and item[1] == digest else None
+
+    async def sync_plan_ep(request: Request) -> Response:
+        sid = request.path_params["sid"]
+        src = await run_in_threadpool(get_source, sid)
+        data = await read_json(request, config.max_apply_bytes)
+        plan = await run_in_threadpool(make_plan, db, src, data.get("manifest"))
+        token = bearer(request) or ""
+        payload = {
+            "source": sid, "epoch": src["sync_epoch"], "todo": plan["todo"], "removals": plan["removals"],
+        }
+        cid = confirmations.issue(
+            token, f"sync:{sid}", f"epoch:{src['sync_epoch']}", payload=payload,
+            ttl=max(config.confirmation_seconds, SYNC_TTL),
+        )
+        first = [plan["todo"][k]["path"] for k in plan["passes"][0]] if plan["passes"] else []
+        out = {
+            "confirmation_id": cid, "expires_in": max(config.confirmation_seconds, SYNC_TTL),
+            "epoch": src["sync_epoch"], "summary": plan["summary"], "items": plan["items"],
+            "items_truncated": plan["items_truncated"], "rejected": plan["rejected"],
+            "rejected_count": plan["rejected_count"], "passes": max(len(plan["passes"]), 1),
+            "next_pass": first,
+        }
+        if plan["single_file"]:
+            out["single_file"] = True
+        return reply(request, 200, out)
+
+    async def sync_apply_ep(request: Request) -> Response:
+        sid = request.path_params["sid"]
+        src = await run_in_threadpool(get_source, sid)
+        data = await read_json(request, config.max_apply_bytes)
+        token = bearer(request) or ""
+        files_in = data.get("files")
+        digest = request_digest(sid, files_in) if isinstance(files_in, list) and all(
+            isinstance(f, dict) for f in files_in) else ""
+        again = remembered(data.get("confirmation_id"), token, digest) if digest else None
+        if again is not None:
+            return reply(request, 200, {**again, "replayed": True})
+        ok, payload = confirmations.consume_payload(
+            data.get("confirmation_id"), token, f"sync:{sid}", f"epoch:{src['sync_epoch']}"
+        )
+        if not ok or payload is None or payload["source"] != sid or payload["epoch"] != src["sync_epoch"]:
+            return fail(request, 409, "confirmation_invalid",
+                        "The confirmation is invalid, used up, expired, or the source changed in the meantime. Plan again.")
+        files = data.get("files")
+        if not isinstance(files, list) or not all(isinstance(f, dict) for f in files):
+            raise ValidationError("'files' must be a list.")
+        todo: Dict[str, dict] = payload["todo"]
+        batch, seen, total = [], set(), 0
+        try:
+            for f in files:
+                path, sha, content = f.get("path"), f.get("sha256"), f.get("content")
+                if not isinstance(path, str) or not isinstance(content, str) or not isinstance(sha, str):
+                    raise SourceRejected("input", "Every file needs path, sha256 and content (text).")
+                _, key = src_rules.clean_relative_path(path)
+                planned = todo.get(key)
+                if planned is None or key in seen:
+                    raise SourceRejected("integrity", f"'{path[:200]}' is not part of the plan or is sent twice.")
+                if sha.lower() != planned["sha256"]:
+                    raise SourceRejected("integrity", f"'{path[:200]}' differs from the plan.")
+                raw = content.encode("utf-8")
+                seen.add(key)
+                total += len(raw)
+                batch.append((planned["path"], raw, sha))
+            if len(batch) > PASS_FILES or total > PASS_BYTES:
+                raise SourceRejected(
+                    "input", f"A pass takes at most {PASS_FILES} files and {PASS_BYTES} bytes. Send the rest in the next pass."
+                )
+            remaining = {k: v for k, v in todo.items() if k not in seen}
+            final = not remaining
+            result = await run_in_threadpool(
+                db.apply_sync, sid, batch, payload["removals"] if final else [], clock(), SOURCE, payload["epoch"]
+            )
+        except OutboxError:
+            # the confirmation was used up by the attempt; nothing was stored; the client plans again
+            raise
+        if final:
+            out = {"status": "done", **result, "remaining": 0}
+            remember(data["confirmation_id"], token, digest, out)
+            return reply(request, 200, out)
+        next_payload = {**payload, "todo": remaining, "epoch": result["epoch"]}
+        cid = confirmations.issue(
+            token, f"sync:{sid}", f"epoch:{result['epoch']}", payload=next_payload,
+            ttl=max(config.confirmation_seconds, SYNC_TTL),
+        )
+        nxt = [remaining[k]["path"] for k in sorted(remaining)]
+        out = {
+            "status": "partial", **result, "remaining": len(remaining), "confirmation_id": cid,
+            "next_pass": nxt[:PASS_FILES],
+        }
+        remember(data["confirmation_id"], token, digest, out)
+        return reply(request, 200, out)
+
     routes = [
         Route("/admin/login", endpoint(login, auth=False), methods=["POST"]),
         Route("/admin/logout", endpoint(logout), methods=["POST"]),
@@ -405,6 +733,16 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
         Route("/admin/recipients/{rid:int}/unblock", endpoint(unblock), methods=["POST"]),
         Route("/admin/folders", endpoint(folders), methods=["GET"]),
         Route("/admin/folders/rule", endpoint(put_rule), methods=["PUT"]),
+        Route("/admin/sources", endpoint(list_sources_ep), methods=["GET"]),
+        Route("/admin/sources", endpoint(create_source_ep), methods=["POST"]),
+        Route("/admin/sources/{sid}/rename", endpoint(rename_source_ep), methods=["POST"]),
+        Route("/admin/sources/{sid}/remove", endpoint(remove_source_ep), methods=["POST"]),
+        Route("/admin/sources/{sid}/evaluate", endpoint(evaluate_ep), methods=["POST"]),
+        Route("/admin/sources/{sid}/rule", endpoint(source_rule_ep), methods=["PUT"]),
+        Route("/admin/sources/{sid}/folders", endpoint(source_folders_ep), methods=["GET"]),
+        Route("/admin/sources/{sid}/files", endpoint(source_files_ep), methods=["GET"]),
+        Route("/admin/sources/{sid}/sync/plan", endpoint(sync_plan_ep), methods=["POST"]),
+        Route("/admin/sources/{sid}/sync/apply", endpoint(sync_apply_ep), methods=["POST"]),
         Route("/admin/audit", endpoint(audit), methods=["GET"]),
         Route("/admin/limits", endpoint(get_limits), methods=["GET"]),
         Route("/admin/limits", endpoint(put_limits), methods=["PUT"]),

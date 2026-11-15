@@ -63,10 +63,24 @@ def register_tools(mcp: FastMCP, service: OutboxService, owner: Callable[[], str
     ) -> dict:
         """Create a draft. Nothing is sent. Show the draft to the user and ask for confirmation.
 
-        attachments (optional): up to a few Markdown notes, each as a path relative to the notes
-        folder, for example "Projects/Plan.md". Files outside the allowed folders are refused."""
+        attachments (optional): up to a few files, each as 'source:relative/path' exactly as
+        list_attachments shows it ('attach_as'), for example "Mac:Projekte/Plan.md". A path without
+        a source name means the notes folder. Files that are not allowed are refused. If a file is
+        blocked or replaced before the mail is sent, the draft is refused and must be prepared again."""
         who = owner()
         return await run(service.prepare_email, who, recipient, subject, text, attachments)
+
+    @mcp.tool(annotations=ToolAnnotations(
+        title="List files that can be attached", readOnlyHint=True, openWorldHint=False))
+    async def list_attachments(
+        source: Optional[str] = None, path_prefix: Optional[str] = None,
+        cursor: Optional[str] = None, limit: int = 50,
+    ) -> dict:
+        """List the files the user has allowed as attachments (name, size, version, upload date).
+        It shows nothing else: no contents, no blocked files. Narrow it with source (the source
+        name) and path_prefix; at most 50 entries come back, use next_cursor for more. Pass the
+        'attach_as' value of a file to prepare_email."""
+        return await run(service.list_attachments, source, path_prefix, cursor, limit)
 
     @mcp.tool(annotations=ToolAnnotations(
         title="Suggest a new recipient", readOnlyHint=False, destructiveHint=False,

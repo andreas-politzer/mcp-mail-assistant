@@ -63,11 +63,21 @@ def make_v4(path):
     return db
 
 
+def legacy_rule(path, root, rule_path, effect):
+    """A rule as schema 4 wrote it (no source column)."""
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO file_access_rules(scope,root_path,path_key,path_display,effect,changed_at,changed_by)"
+            " VALUES ('attach',?,?,?,?,?,?)",
+            (root, src_rules.path_key(rule_path), rule_path, effect, NOW, ADMIN),
+        )
+
+
 def test_version_4_database_is_upgraded_and_keeps_its_rows(tmp_path):
     path = tmp_path / "v4.db"
-    db = make_v4(path)
-    db.set_file_rule("attach", "/notes", "Projekte", "allow", NOW, ADMIN)
-    db.set_file_rule("attach", "/notes", "Projekte/Privat", "deny", NOW, ADMIN)
+    make_v4(path)
+    legacy_rule(path, "/notes", "Projekte", "allow")
+    legacy_rule(path, "/notes", "Projekte/Privat", "deny")
     again = Database(path)
     with sqlite3.connect(path) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
@@ -81,8 +91,8 @@ def test_version_4_database_is_upgraded_and_keeps_its_rows(tmp_path):
 
 def test_migration_turns_the_configured_root_into_one_source_and_takes_over_its_rules(tmp_path):
     path = tmp_path / "v4.db"
-    db = make_v4(path)
-    db.set_file_rule("attach", "/notes", "Projekte", "allow", NOW, ADMIN)
+    make_v4(path)
+    legacy_rule(path, "/notes", "Projekte", "allow")
     db = Database(path)
     sid = db.ensure_server_folder_source("/notes", NOW)
     src = db.get_source(sid)
@@ -298,7 +308,7 @@ def test_removing_a_source_deletes_copies_keeps_rules_as_history_and_stops_every
     other = db.create_source("upload", "folder", "Zweite", NOW, ADMIN)
     db.set_source_rule(other, "Projekte", "allow", NOW, ADMIN)
     put(db, other, "Projekte/a.md")
-    assert db.remove_source(up, NOW + 1, ADMIN) == 1
+    assert db.remove_source(up, NOW + 1, ADMIN)["purged_files"] == 1
     (row,) = db.list_stored_files(up)
     assert (row["state"], row["purged_reason"]) == ("purged", "source_removed")
     assert db.stored_content(up, "Projekte/a.md") is None
@@ -307,7 +317,7 @@ def test_removing_a_source_deletes_copies_keeps_rules_as_history_and_stops_every
     rejected("state", db.set_source_rule, up, "Projekte", "allow", NOW, ADMIN)
     rejected("state", db.remove_source, up, NOW, ADMIN)
     assert db.stored_content(other, "Projekte/a.md") is not None  # the other source is untouched
-    assert [e["detail"] for e in audit_events(db, "source_removed")] == [f"source={up} label=Mac Projekte purged_files=1"]
+    assert [e["detail"] for e in audit_events(db, "source_removed")] == [f"source={up} label=Mac Projekte purged_files=1 cancelled_drafts=0"]
     assert db.list_sources() != [] and all(s["id"] != up for s in db.list_sources())
     assert any(s["id"] == up and s["status"] == "removed" for s in db.list_sources(include_removed=True))
 
@@ -438,7 +448,7 @@ def test_quota_is_kept_under_parallel_uploads(db, monkeypatch):
 def test_a_block_deletes_the_stored_copy_at_once_and_unblocking_does_not_bring_it_back(db, up):
     put(db, up, "Projekte/Privat/a.md", "geheimer Plan")
     put(db, up, "Projekte/ok.md", "ok")
-    purged = db.set_source_rule(up, "Projekte/Privat", "deny", NOW + 1, ADMIN)
+    purged = db.set_source_rule(up, "Projekte/Privat", "deny", NOW + 1, ADMIN)["purged_files"]
     assert purged == 1
     rows = {r["path_display"]: r for r in db.list_stored_files(up)}
     assert (rows["Projekte/Privat/a.md"]["state"], rows["Projekte/Privat/a.md"]["purged_reason"]) == ("purged", "blocked")
@@ -458,14 +468,14 @@ def test_a_block_deletes_the_stored_copy_at_once_and_unblocking_does_not_bring_i
 
 def test_removing_an_allow_also_deletes_copies_that_are_no_longer_allowed(db, up):
     put(db, up, "Projekte/a.md")
-    assert db.set_source_rule(up, "Projekte", "cleared", NOW, ADMIN) == 1
+    assert db.set_source_rule(up, "Projekte", "cleared", NOW, ADMIN)["purged_files"] == 1
     assert db.stored_content(up, "Projekte/a.md") is None
 
 
 def test_blocking_the_registered_file_deletes_its_copy(db):
     sid = db.create_source("upload", "file", "Plan", NOW, ADMIN, file_name="Plan.md")
     put(db, sid, "Plan.md")
-    assert db.set_source_rule(sid, "Plan.md", "deny", NOW, ADMIN) == 1
+    assert db.set_source_rule(sid, "Plan.md", "deny", NOW, ADMIN)["purged_files"] == 1
     assert db.stored_content(sid, "Plan.md") is None
 
 

@@ -54,7 +54,12 @@ class Attachment:
     name: str
     data: bytes
     sha256: str
-    source: str = ""  # the path it was read from, to check the rules again when sending
+    source: str = ""  # the path it was read from (relative to its source), to check the rules again when sending
+    source_id: str = ""  # the file source it came from (stored with the draft)
+    origin_key: str = ""  # the normalised form of `source` (stored with the draft)
+    label: str = ""  # the source's name, only used to answer prepare_email (not stored)
+    version: str = ""  # short version id (first 12 characters of the SHA-256), only for the answer
+    as_of: Optional[float] = None  # when an uploaded copy was made, only for the answer
 
     @property
     def size(self) -> int:

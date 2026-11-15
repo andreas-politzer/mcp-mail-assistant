@@ -437,11 +437,12 @@ class Database:
             )
             for position, attachment in enumerate(attachments):
                 conn.execute(
-                    "INSERT INTO draft_attachments(draft_id,position,name,data,size_bytes,sha256,source_path)"
-                    " VALUES (?,?,?,?,?,?,?)",
+                    "INSERT INTO draft_attachments(draft_id,position,name,data,size_bytes,sha256,source_path,"
+                    "source_id,origin_key) VALUES (?,?,?,?,?,?,?,?,?)",
                     (
                         draft.id, position, attachment.name, attachment.data, attachment.size,
-                        attachment.sha256, attachment.source,
+                        attachment.sha256, attachment.source, attachment.source_id or None,
+                        attachment.origin_key or None,
                     ),
                 )
             detail = None
@@ -455,12 +456,14 @@ class Database:
     def attachments_of(self, draft_id: str) -> List[Attachment]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT name,data,sha256,source_path FROM draft_attachments WHERE draft_id=? ORDER BY position",
+                "SELECT name,data,sha256,source_path,source_id,origin_key FROM draft_attachments"
+                " WHERE draft_id=? ORDER BY position",
                 (draft_id,),
             ).fetchall()
         return [
             Attachment(
-                name=r["name"], data=bytes(r["data"]), sha256=r["sha256"], source=r["source_path"] or ""
+                name=r["name"], data=bytes(r["data"]), sha256=r["sha256"], source=r["source_path"] or "",
+                source_id=r["source_id"] or "", origin_key=r["origin_key"] or "",
             )
             for r in rows
         ]
@@ -763,6 +766,12 @@ class Database:
                 conn, now, "file_rule_set", owner=changed_by,
                 detail=f"scope={scope} path={display} {before} -> {effect}",
             )
+            if scope == "attach":
+                src = conn.execute(
+                    "SELECT id FROM file_sources WHERE rule_root=? AND status='active'", (root_key,)
+                ).fetchone()
+                if src is not None:
+                    self._after_rules_changed(conn, src["id"], now, changed_by)
 
     def file_rules(self, scope: str, root) -> List[sqlite3.Row]:
         with self._connect() as conn:
@@ -1012,10 +1021,89 @@ class Database:
         ]
         return self._purge(conn, src["id"], keys, "blocked", now)
 
-    def set_source_rule(self, source_id: str, path: str, effect: str, now: float, changed_by: str) -> int:
-        """Set, change or clear (effect 'cleared') a rule inside one source. Returns how many stored
-        copies were deleted because the file is not allowed any more. The rule, the deletion and the
-        audit entry are written in one transaction. Rows are never deleted. Only a folder can be
+    def _attachment_ok(self, conn, source_id, source_path, sha256) -> bool:
+        """The one check of a draft attachment against the rules as they are now: the source is
+        active, the path text is clean and of an allowed type, the rules allow it and, for an upload
+        source, the stored copy is still current and is exactly the version the draft holds.
+        Used to cancel open drafts when something is blocked and again when sending."""
+        if not source_id or not source_path:
+            return False
+        src = conn.execute("SELECT * FROM file_sources WHERE id=?", (source_id,)).fetchone()
+        if src is None or src["status"] != "active":
+            return False
+        try:
+            display, key = src_rules.clean_relative_path(source_path)
+            src_rules.check_stored_name(src["kind"], display)
+        except SourceRejected:
+            return False
+        if self._path_state(conn, src, key) != "allowed":
+            return False
+        if src["kind"] == "upload":
+            row = conn.execute(
+                "SELECT sha256 FROM stored_files WHERE source_id=? AND path_key=? AND state='current'",
+                (source_id, key),
+            ).fetchone()
+            return row is not None and row["sha256"] == sha256
+        return True
+
+    def attachment_still_allowed(self, attachment: Attachment) -> bool:
+        with self._connect() as conn:
+            return self._attachment_ok(conn, attachment.source_id, attachment.source, attachment.sha256)
+
+    def find_source_by_label(self, label: str) -> Optional[sqlite3.Row]:
+        try:
+            _, key = src_rules.clean_label(label)
+        except SourceRejected:
+            return None
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM file_sources WHERE status='active' AND label_key=?", (key,)
+            ).fetchone()
+
+    def _after_rules_changed(self, conn, source_id: str, now: float, changed_by: str) -> dict:
+        """Everything that must follow a rule change or a removal, inside the same transaction:
+        stored copies that are not allowed any more are deleted; open drafts that hold such a file
+        are cancelled (and their copies deleted); copies in ended drafts that were never sent
+        (failed, expired, cancelled) are deleted too. Sent and unknown drafts keep their copies until
+        the normal retention ends: they are the record of what went out."""
+        src = conn.execute("SELECT * FROM file_sources WHERE id=?", (source_id,)).fetchone()
+        purged = self._purge_unallowed(conn, src, now)
+        rows = conn.execute(
+            "SELECT da.draft_id, da.position, da.sha256, da.source_path, d.status FROM draft_attachments da"
+            " JOIN drafts d ON d.id=da.draft_id WHERE da.source_id=?",
+            (source_id,),
+        ).fetchall()
+        bad = [r for r in rows if not self._attachment_ok(conn, source_id, r["source_path"], r["sha256"])]
+        cancelled = sorted({r["draft_id"] for r in bad if r["status"] == "pending"})
+        deleted = 0
+        for draft_id in cancelled:
+            row = conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
+            conn.execute(
+                "UPDATE drafts SET status='cancelled', finished_at=?, detail=? WHERE id=? AND status='pending'",
+                (now, "an attachment was blocked or removed", draft_id),
+            )
+            self._audit(
+                conn, now, "draft_cancelled_by_block", self._draft(row),
+                detail=f"source={source_id} label={src['label']}",
+            )
+            deleted += conn.execute("DELETE FROM draft_attachments WHERE draft_id=?", (draft_id,)).rowcount
+        for r in bad:
+            if r["status"] in ("failed", "expired", "cancelled") and r["draft_id"] not in cancelled:
+                deleted += conn.execute(
+                    "DELETE FROM draft_attachments WHERE draft_id=? AND position=?",
+                    (r["draft_id"], r["position"]),
+                ).rowcount
+        if deleted:
+            self._audit(
+                conn, now, "draft_copies_deleted", owner=changed_by,
+                detail=f"source={source_id} label={src['label']} count={deleted}",
+            )
+        return {"purged_files": purged, "cancelled_drafts": len(cancelled), "deleted_copies": deleted}
+
+    def set_source_rule(self, source_id: str, path: str, effect: str, now: float, changed_by: str) -> dict:
+        """Set, change or clear (effect 'cleared') a rule inside one source. Returns what the change
+        removed (see _after_rules_changed). The rule, everything it removes and the audit entries are
+        written in one transaction. Rows are never deleted. Only a folder can be
         allowed: a single file can only be blocked (its registration is the allowance)."""
         if effect not in ("allow", "deny", "cleared"):
             raise SourceRejected("input", "Unknown effect of a rule.")
@@ -1058,18 +1146,18 @@ class Database:
                 conn, now, "source_rule_set", owner=changed_by,
                 detail=f"source={source_id} label={src['label']} path={display} {before} -> {effect}",
             )
-            purged = self._purge_unallowed(conn, src, now)
-            if purged:
+            effects = self._after_rules_changed(conn, source_id, now, changed_by)
+            if effects["purged_files"]:
                 self._audit(
                     conn, now, "stored_files_purged", owner=changed_by,
-                    detail=f"source={source_id} label={src['label']} count={purged} reason=blocked",
+                    detail=f"source={source_id} label={src['label']} count={effects['purged_files']} reason=blocked",
                 )
-            return purged
+            return effects
 
-    def remove_source(self, source_id: str, now: float, changed_by: str) -> int:
+    def remove_source(self, source_id: str, now: float, changed_by: str) -> dict:
         """Remove a source for good. Its stored copies are deleted, its rules stay as history and are
         never effective again (registering the same thing again makes a new source with no rules).
-        Returns the number of copies deleted."""
+        Open drafts with a file from it are cancelled. Returns what was removed."""
         with self._tx() as conn:
             src = self._active_source(conn, source_id)
             conn.execute(
@@ -1084,11 +1172,16 @@ class Database:
                 )
             ]
             purged = self._purge(conn, source_id, keys, "source_removed", now)
+            effects = self._after_rules_changed(conn, source_id, now, changed_by)
+            effects["purged_files"] += purged
             self._audit(
                 conn, now, "source_removed", owner=changed_by,
-                detail=f"source={source_id} label={src['label']} purged_files={purged}",
+                detail=(
+                    f"source={source_id} label={src['label']} purged_files={effects['purged_files']}"
+                    f" cancelled_drafts={effects['cancelled_drafts']}"
+                ),
             )
-            return purged
+            return effects
 
     # -- stored copies ----------------------------------------------------------------
 
@@ -1223,6 +1316,105 @@ class Database:
                 query += " AND state=?"
                 args.append(state)
             return conn.execute(query + " ORDER BY path_key", args).fetchall()
+
+    def list_allowed_files(self, source_id: str) -> List[dict]:
+        """The current stored files of an upload source that the rules allow right now (what Claude may
+        see). Metadata only, never the content, ordered by path."""
+        with self._connect() as conn:
+            src = conn.execute("SELECT * FROM file_sources WHERE id=?", (source_id,)).fetchone()
+            if src is None or src["status"] != "active" or src["kind"] != "upload":
+                return []
+            out = []
+            for r in conn.execute(
+                "SELECT path_key, path_display, version, sha256, size_bytes, uploaded_at FROM stored_files"
+                " WHERE source_id=? AND state='current' ORDER BY path_key",
+                (source_id,),
+            ).fetchall():
+                try:
+                    src_rules.check_stored_name("upload", r["path_display"])
+                except SourceRejected:
+                    continue
+                if self._path_state(conn, src, r["path_key"]) == "allowed":
+                    out.append(dict(r))
+            return out
+
+    def rename_source(self, source_id: str, label: str, now: float, changed_by: str) -> str:
+        """Change the name of an active source. The name is only what people and Claude see; nothing else
+        about the source changes. Returns the new name as shown."""
+        display, key = src_rules.clean_label(label)
+        with self._tx() as conn:
+            src = self._active_source(conn, source_id)
+            if src["label_key"] == key and src["label"] == display:
+                return display
+            try:
+                conn.execute("UPDATE file_sources SET label=?, label_key=? WHERE id=?", (display, key, source_id))
+            except sqlite3.IntegrityError:
+                raise SourceRejected("conflict", "A source with this name already exists.") from None
+            self._audit(
+                conn, now, "source_renamed", owner=changed_by,
+                detail=f"source={source_id} from={src['label']} to={display}",
+            )
+            return display
+
+    def source_rules(self, source_id: str) -> List[tuple]:
+        """The allow and deny rules of one source as (path_key, effect, path_display)."""
+        with self._connect() as conn:
+            src = conn.execute("SELECT * FROM file_sources WHERE id=?", (source_id,)).fetchone()
+            if src is None or src["status"] != "active":
+                return []
+            return [
+                (r["path_key"], r["effect"], r["path_display"])
+                for r in conn.execute(
+                    "SELECT path_key, effect, path_display FROM file_access_rules WHERE scope='attach'"
+                    " AND root_path=? AND (source_id=? OR source_id IS NULL) AND effect IN ('allow','deny')"
+                    " ORDER BY path_key",
+                    (src["rule_root"], source_id),
+                )
+            ]
+
+    def apply_sync(
+        self, source_id: str, files: Sequence[tuple], removals: Sequence[str], now: float, changed_by: str,
+        expected_epoch: int,
+    ) -> dict:
+        """One pass of a synchronisation, all or nothing. `files` are (path, bytes, claimed sha256);
+        `removals` are path keys whose stored copy is to be marked removed. Integrity, permission,
+        quota and state violations undo the whole pass (SourceRejected); a file whose content is
+        not acceptable (too large, not text, secret) is skipped and reported. One audit entry covers
+        the pass. A changed epoch (a rule, a removal or another upload happened meanwhile) refuses it."""
+        with self._tx() as conn:
+            src = self._active_source(conn, source_id)
+            if src["sync_epoch"] != expected_epoch:
+                raise SourceRejected("conflict", "The source changed while the synchronisation was prepared. Plan again.")
+            stored, unchanged, skipped = 0, 0, []
+            for path, data, sha in files:
+                try:
+                    _, changed = self._put_stored(conn, src, path, data, sha, now)
+                except SourceRejected as exc:
+                    if exc.category != "content":
+                        raise
+                    skipped.append({"path": str(path)[:200], "reason": str(exc)})
+                    continue
+                stored += 1 if changed else 0
+                unchanged += 0 if changed else 1
+            removed = 0
+            for key in removals:
+                removed += conn.execute(
+                    "UPDATE stored_files SET state='removed', purged_reason='removed_local', content=NULL,"
+                    " changed_at=? WHERE source_id=? AND path_key=? AND state='current'",
+                    (now, source_id, key),
+                ).rowcount
+            epoch = src["sync_epoch"]
+            if stored or removed:
+                epoch += 1
+                conn.execute("UPDATE file_sources SET sync_epoch=? WHERE id=?", (epoch, source_id))
+            self._audit(
+                conn, now, "source_synced", owner=changed_by,
+                detail=(
+                    f"source={source_id} label={src['label']} stored={stored} removed={removed}"
+                    f" unchanged={unchanged} skipped={len(skipped)}"
+                ),
+            )
+            return {"stored": stored, "removed": removed, "unchanged": unchanged, "skipped": skipped, "epoch": epoch}
 
     def source_usage(self) -> dict:
         """Counts for the quota display: active sources, current files and bytes (total and per source)."""

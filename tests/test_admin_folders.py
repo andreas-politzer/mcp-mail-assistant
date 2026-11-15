@@ -9,7 +9,7 @@ from outbox_mcp.admin.app import build_admin_app
 from outbox_mcp.admin.config import AdminConfig
 from outbox_mcp.admin.folders import evaluate, load_rules
 from outbox_mcp.auth.passwords import hash_password
-from outbox_mcp.errors import AttachmentRejected, RecipientNotAllowed
+from outbox_mcp.errors import DraftNotSendable, AttachmentRejected, RecipientNotAllowed
 from outbox_mcp.security.attachments import AttachmentPolicy, key_parts, path_key
 from outbox_mcp.service import OutboxService
 from outbox_mcp.storage.database import Database
@@ -359,9 +359,10 @@ def test_a_rule_set_through_the_api_governs_the_mail_service(config, sender, clo
         assert allow_with_confirmation(c, h, "Projects").json()["status"] == "done"
         draft = service.prepare_email("o", "Ferdinand", "S", "T", attachments=["Projects/a.md"])["draft_id"]
         assert put(c, h, "Projects", "deny").json()["status"] == "done"
-    with pytest.raises(AttachmentRejected):
+    with pytest.raises(DraftNotSendable):  # the block cancelled the open draft at once
         service.send_email("o", draft)
     assert sender.sent == []
+    assert db.get_draft(draft, "o").status == "cancelled"
 
 
 # -- review round: deny is final, no symlink races, rule and audit are one unit, one protection list ---------

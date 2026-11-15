@@ -25,6 +25,7 @@ class AdminConfig:
     max_failed_logins: int = 5
     lockout_seconds: int = 15 * 60
     max_body_bytes: int = 16 * 1024
+    max_apply_bytes: int = 16 * 1024 * 1024  # the upload route only (files of one pass)
     attachment_root: Optional[Path] = None
     confirmation_seconds: int = 120
 

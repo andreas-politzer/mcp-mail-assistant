@@ -48,7 +48,9 @@ def prep(svc, attachments=None, **kw):
 def test_prepare_lists_name_and_size_but_no_hash(svc, vault):
     d = prep(svc, ["Projects/note.md"])
     size = (vault / "Projects/note.md").stat().st_size
-    assert d["attachments"] == [{"name": "note.md", "size_bytes": size}]
+    (info,) = d["attachments"]
+    assert (info["name"], info["size_bytes"], info["source"], info["path"]) == ("note.md", size, "notes", "Projects/note.md")
+    assert len(info["version"]) == 12 and "as_of" not in info  # a notes-folder file has no upload date
     assert "sha256" not in str(d["attachments"])
     assert "attachment" in d["instructions"].lower()
 
@@ -247,9 +249,23 @@ def test_the_origin_path_is_stored_with_the_attachment(svc, db):
     assert db.attachments_of(d["draft_id"])[0].source == "Projects/note.md"
 
 
+def raw_rule(db, root, path, effect):
+    """Write a rule behind the back of every consequence (no draft is cancelled): this is how the
+    check at send time is tested on its own."""
+    import os
+
+    from outbox_mcp.security.attachments import path_key
+    with sqlite3.connect(db.path) as conn:
+        conn.execute(
+            "INSERT INTO file_access_rules(scope,root_path,path_key,path_display,effect,changed_at,changed_by)"
+            " VALUES ('attach',?,?,?,?,0,'x') ON CONFLICT(scope,root_path,path_key) DO UPDATE SET effect=excluded.effect",
+            (os.path.normpath(str(root)), path_key(path), path, effect),
+        )
+
+
 def test_send_is_refused_when_the_folder_is_no_longer_allowed(svc, att_config, db, sender, clock):
     d = prep(svc, ["Projects/note.md"])
-    db.set_file_rule("attach", att_config.attachment_root, "Projects", "cleared", clock(), "admin:test")
+    raw_rule(db, att_config.attachment_root, "Projects", "cleared")
     with pytest.raises(AttachmentRejected, match="no longer allowed"):
         svc.send_email("o", d["draft_id"])
     assert sender.sent == []
@@ -258,10 +274,22 @@ def test_send_is_refused_when_the_folder_is_no_longer_allowed(svc, att_config, d
 
 def test_send_is_refused_when_the_folder_is_now_blocked(svc, att_config, db, sender, clock):
     d = prep(svc, ["Projects/note.md"])
-    db.set_file_rule("attach", att_config.attachment_root, "Projects", "deny", clock(), "admin:test")
+    raw_rule(db, att_config.attachment_root, "Projects", "deny")
     with pytest.raises(AttachmentRejected, match="no longer allowed"):
         svc.send_email("o", d["draft_id"])
     assert sender.sent == []
+
+
+def test_blocking_through_the_database_cancels_the_open_draft_at_once(svc, att_config, db, sender, clock):
+    from outbox_mcp.errors import DraftNotSendable
+    d = prep(svc, ["Projects/note.md"])
+    db.set_file_rule("attach", att_config.attachment_root, "Projects", "deny", clock(), "admin:test")
+    assert db.get_draft(d["draft_id"], "o").status == "cancelled"
+    assert db.attachments_of(d["draft_id"]) == []  # the copy is gone
+    with pytest.raises(DraftNotSendable):
+        svc.send_email("o", d["draft_id"])
+    assert sender.sent == []
+    assert db.count_events("draft_cancelled_by_block") == 1
 
 
 def test_configuration_lines_changed_later_are_ignored(svc, att_config, recipients, db, sender, clock):

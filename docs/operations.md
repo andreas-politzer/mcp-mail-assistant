@@ -82,7 +82,7 @@ The admin API is its own small service (`outbox-admin-api`, example unit in `dep
 - **How sends are counted:** a send counts from the moment it is claimed, whatever becomes of it: sent, failed, unknown or interrupted by a crash. A failed send therefore uses up a slot, which stops a failing loop from flooding the mailbox. Refused attempts, expired drafts and cancelled drafts do not count. Counting and the decision happen inside the same write transaction as the claim, so parallel sends cannot get past the limit.
 - Not available yet: contact import.
 
-## File sources (schema 5, data model only)
+## File sources (schema 5)
 
 Schema version 5 adds `file_sources` and `stored_files` and a `source_id` on rules and on the origin of a draft attachment. Opening an older database upgrades it without changing existing rows; the first start of the mail service registers the configured notes folder as the first source (`ensure_server_folder_source`) and takes over its existing rules.
 
@@ -91,5 +91,26 @@ Schema version 5 adds `file_sources` and `stored_files` and a `source_id` on rul
 * Removing a source deletes its stored copies; its rules stay as history and are never effective again. Registering the same thing again creates a new source without rules.
 * Blocking a path (or clearing the allow above it) deletes the affected stored copies in the same transaction as the rule and the audit entry. Allowing again does not bring a copy back; it must be uploaded again.
 * Limits (checked inside the storing transaction): 20 active sources, 500 files per source, 200 KB per file, 50 MB in total (current copies only).
-* Not yet connected: the attachment policy and the send check still use the notes folder directly (work package 6b), and there are no admin endpoints for sources yet (6c).
+* Attachments: `prepare_email` takes `source:relative/path` (a path without a known source name is a file of the notes folder). The answer names, per file, name, size, source, path, version (12 hex characters) and, for uploads, the upload date. At send time every copy is checked again inside the claim transaction: source active, rules allow the path and, for an upload, the stored copy still has the same hash. A draft whose attachment was replaced must be prepared again.
+* A block, or removing a source, cancels open drafts that hold a file of it (audit `draft_cancelled_by_block`) and deletes the attachment copies of those drafts and of failed, expired or cancelled ones. Copies of sent (and unknown) drafts stay until the 7-day retention.
+* `list_attachments` (read-only MCP tool): allowed current files of active sources, paginated (50 at most), no contents. Each entry has `attach_as` to pass to `prepare_email`.
+
+### Admin API for sources
+
+All endpoints need the session; loosening changes (allowing, clearing a block) use the confirmation step.
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /admin/sources` | sources with file count, bytes, epoch, and the quota block |
+| `POST /admin/sources` | create an upload source (`label`, `scope` folder or file, `origin_display`, `file_name` for a single file) |
+| `POST /admin/sources/{id}/rename` | change the name only |
+| `POST /admin/sources/{id}/remove` | remove at once; returns `purged_files`, `cancelled_drafts`, `deleted_copies` |
+| `POST /admin/sources/{id}/evaluate` | state, rule, inherited, own rule, sensitive for up to 1000 paths |
+| `PUT /admin/sources/{id}/rule` | allow / deny / clear a path; a block is immediate and reports its consequences |
+| `GET /admin/sources/{id}/folders` | folder tree (the server's notes folder only) |
+| `GET /admin/sources/{id}/files` | stored files with state and version, paginated (100) |
+| `POST /admin/sources/{id}/sync/plan` | manifest (path, sha256, size) in, plan and confirmation out; nothing is stored |
+| `POST /admin/sources/{id}/sync/apply` | files of one pass in; one transaction, one audit entry `source_synced` |
+
+The plan stays on the server with the confirmation, so the apply step cannot add files, change a hash or remove more than planned. A pass takes at most 40 files and 8 MB; larger plans run in several passes with the same confirmation, removals happen in the last pass. Integrity, permission, quota and state violations undo the whole pass; a file whose content is unacceptable (too large, not text, secret found) is skipped and reported. Any change to the source between plan and apply (a rule, a removal, another upload) invalidates the confirmation. Failure and repeat semantics: a successful pass keeps the confirmation valid for the next pass (the answer carries the new `confirmation_id`). A failed pass voids the rest of the plan; passes already stored stay, and the next plan lists them as unchanged, so nothing is uploaded twice, and removals stay deferred. If an answer is lost (network drop after the server finished), the app repeats the identical request (same `confirmation_id`, same files): within 15 minutes, for the same session and source, it gets the remembered answer with `replayed: true`, and nothing is applied or audited a second time. A request that differs in any file gets 409. A duplicate that arrives while the first is still running gets 409 and can be repeated shortly after. If in doubt, plan again: the plan shows the real outcome. The apply route accepts bodies up to 16 MB, all other routes 16 KB. HTTP mapping: unknown or removed source 404, quota or conflict 409, everything else 400.
 

@@ -118,9 +118,11 @@ def call(mcp, name, arguments):
 def test_claude_can_suggest_and_look_but_has_no_admin_tool(svc):
     tools = {t.name: t for t in asyncio.run(build_server(svc).list_tools())}
     assert set(tools) == {"list_recipients", "prepare_email", "send_email", "cancel_draft",
-                          "suggest_recipient", "list_suggestions"}
+                          "suggest_recipient", "list_suggestions", "list_attachments"}
     assert tools["suggest_recipient"].annotations.destructiveHint is False
     assert tools["list_suggestions"].annotations.readOnlyHint is True
+    assert tools["list_attachments"].annotations.readOnlyHint is True
+    assert tools["list_attachments"].annotations.destructiveHint in (None, False)
     text = tools["suggest_recipient"].description
     assert "told you" in text and "letter by letter" in text
 
