@@ -60,6 +60,13 @@ class OutboxService:
                 config.attachment_root, config.attachment_allowed_folders,
                 config.attachment_denied_folders, config.max_attachments,
                 config.max_attachment_bytes, config.max_attachments_total_bytes,
+                rules=lambda: db.rule_lists("attach", config.attachment_root),
+            )
+            # The folder lists in the configuration are only a starting point: they are taken over
+            # once per root folder, then the database decides.
+            db.import_env_rules_once(
+                config.attachment_root, config.attachment_allowed_folders,
+                config.attachment_denied_folders, clock(),
             )
 
     def _load_attachments(self, attachments) -> List:
@@ -171,14 +178,18 @@ class OutboxService:
         cfg = self.config
         now = self.clock()
         draft = self.db.get_draft(draft_id, owner)
-        if draft.status == "pending" and not self.recipients.is_allowed_address(draft.recipient_address):
-            raise RecipientNotAllowed(
-                "This recipient is no longer on the allowed list. The draft was not sent."
-            )
         stored_attachments = self.db.attachments_of(draft.id)
-        if draft.status == "pending":
+
+        def authorize(current) -> None:
+            # Runs inside the claim transaction: recipient and attachment rules are checked
+            # under the same lock under which the draft is claimed.
+            if not self.recipients.is_allowed_address(current.recipient_address):
+                raise RecipientNotAllowed(
+                    "This recipient is no longer on the allowed list. The draft was not sent."
+                )
             self._recheck_attachments(stored_attachments)
-        draft = self.db.claim_for_sending(draft_id, owner, now, cfg.limits)
+
+        draft = self.db.claim_for_sending(draft_id, owner, now, cfg.limits, authorize)
         try:
             message = build_message(
                 cfg.from_address, cfg.from_name, draft.recipient_address,

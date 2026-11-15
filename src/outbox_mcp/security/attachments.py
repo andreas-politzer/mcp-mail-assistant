@@ -15,7 +15,7 @@ import stat
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from ..errors import AttachmentRejected, ConfigError
 
@@ -83,6 +83,16 @@ def _starts_with(parts: Tuple[str, ...], prefix: Tuple[str, ...]) -> bool:
     return bool(prefix) and parts[: len(prefix)] == prefix
 
 
+def path_key(path: str) -> str:
+    """The normalised form of a relative path (NFC, case-folded, parts joined with '/'), used to
+    compare paths and to store rules. The comparison is component by component."""
+    return "/".join(_parts(path))
+
+
+def key_parts(key: str) -> Tuple[str, ...]:
+    return tuple(p for p in key.split("/") if p)
+
+
 class AttachmentPolicy:
     def __init__(
         self,
@@ -92,6 +102,7 @@ class AttachmentPolicy:
         max_files: int = 3,
         max_file_bytes: int = 200_000,
         max_total_bytes: int = 500_000,
+        rules: Optional[Callable[[], Tuple[Sequence[Tuple[str, ...]], Sequence[Tuple[str, ...]]]]] = None,
     ) -> None:
         if not (hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY") and os.open in os.supports_dir_fd):
             raise ConfigError(
@@ -99,11 +110,22 @@ class AttachmentPolicy:
                 "support (Linux, macOS). They are refused here instead of running less safely."
             )
         self.root = Path(root)
-        self.allowed = [_parts(f) for f in allowed_folders if _parts(f)]
-        self.denied = [_parts(f) for f in denied_folders if _parts(f)]
+        self._static_allowed = [_parts(f) for f in allowed_folders if _parts(f)]
+        self._static_denied = [_parts(f) for f in denied_folders if _parts(f)]
+        # With a rules source the lists are read again for every check, so a change made in the
+        # database applies at once. Each entry is already normalised (see path_key).
+        self._rules = rules
         self.max_files = max_files
         self.max_file_bytes = max_file_bytes
         self.max_total_bytes = max_total_bytes
+
+    @property
+    def allowed(self) -> List[Tuple[str, ...]]:
+        return list(self._rules()[0]) if self._rules else self._static_allowed
+
+    @property
+    def denied(self) -> List[Tuple[str, ...]]:
+        return list(self._rules()[1]) if self._rules else self._static_denied
 
     # -- public -----------------------------------------------------------------
 
@@ -157,9 +179,10 @@ class AttachmentPolicy:
         if any(p.startswith(".") for p in parts):
             raise refuse("hidden files and folders are excluded")
         normalised = tuple(_norm(p) for p in parts)
-        if not any(_starts_with(normalised, a) for a in self.allowed):
+        allowed, denied = (self._rules() if self._rules else (self._static_allowed, self._static_denied))
+        if not any(_starts_with(normalised, a) for a in allowed):
             raise refuse("it is not in an allowed folder")
-        if any(_starts_with(normalised, d) for d in self.denied):
+        if any(_starts_with(normalised, d) for d in denied):
             raise refuse("it is in a blocked folder")
         if any(bad in part for part in normalised for bad in _SENSITIVE_NAME_PARTS):
             raise refuse("the name looks sensitive")

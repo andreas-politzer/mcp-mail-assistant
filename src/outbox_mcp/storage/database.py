@@ -15,10 +15,10 @@ import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List, Optional, Sequence
+from typing import Callable, Iterator, List, Optional, Sequence, Tuple
 
 from ..errors import ConfigError, DraftNotFound, DraftNotSendable, RateLimitExceeded
-from ..security.attachments import Attachment
+from ..security.attachments import Attachment, key_parts, path_key
 from ..security.rate_limiter import DAY, HOUR, RateLimits, prepare_limit_reached, send_limit_reason
 
 _FINAL = ("sent", "failed", "unknown", "expired", "cancelled")
@@ -139,6 +139,31 @@ BEGIN
     SELECT RAISE(ABORT, 'recipient history is kept');
 END;
 
+CREATE TABLE IF NOT EXISTS file_access_rules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL CHECK (scope IN ('attach','read')),
+    root_path TEXT NOT NULL,
+    path_key TEXT NOT NULL,
+    path_display TEXT NOT NULL,
+    effect TEXT NOT NULL CHECK (effect IN ('allow','deny','cleared')),
+    changed_at REAL NOT NULL,
+    changed_by TEXT NOT NULL,
+    UNIQUE (scope, root_path, path_key)
+);
+
+CREATE TRIGGER IF NOT EXISTS file_access_rules_no_delete
+BEFORE DELETE ON file_access_rules
+BEGIN
+    SELECT RAISE(ABORT, 'rule history is kept');
+END;
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    changed_at REAL NOT NULL,
+    changed_by TEXT NOT NULL
+);
+
 CREATE TRIGGER IF NOT EXISTS audit_no_update
 BEFORE UPDATE ON audit_log
 BEGIN
@@ -189,9 +214,9 @@ def body_hash(subject: str, body: str, address: str, attachments: Sequence[Attac
 
 class Database:
     # Version 1: drafts, audit log and draft_attachments. Version 2: the recipient registry. Version 3: the origin path of
-    # an attachment (checked again when sending). The schema script only creates what is missing, so opening an older
-    # database upgrades it without touching existing rows.
-    SCHEMA_VERSION = 3
+    # an attachment (checked again when sending). Version 4: file_access_rules and settings. The schema script only
+    # creates what is missing, so opening an older database upgrades it without touching existing rows.
+    SCHEMA_VERSION = 4
 
     def __init__(self, path: Path) -> None:
         self.path = str(path)
@@ -380,8 +405,16 @@ class Database:
             raise DraftNotSendable("expired")
         return self.get_draft(draft_id, owner)
 
-    def claim_for_sending(self, draft_id: str, owner: str, now: float, limits: RateLimits) -> Draft:
-        """Atomically move pending -> sending. Only one caller can ever succeed per draft."""
+    def claim_for_sending(
+        self, draft_id: str, owner: str, now: float, limits: RateLimits,
+        authorize: Optional[Callable[[Draft], None]] = None,
+    ) -> Draft:
+        """Atomically move pending -> sending. Only one caller can ever succeed per draft.
+
+        `authorize` (recipient and attachment rules) runs inside the same write transaction, after
+        the draft is known to be pending and before it is claimed. While it runs, no other writer
+        (for example a rule change by the admin side) can commit, so the rules it sees are the rules
+        under which the draft is claimed. If it raises, nothing is claimed."""
         expired = False
         limited: Optional[str] = None
         with self._tx() as conn:
@@ -393,6 +426,8 @@ class Database:
                 self._audit(conn, now, "expired", draft)
                 expired = True
             else:
+                if authorize is not None:
+                    authorize(draft)
                 reason = send_limit_reason(
                     self._count(conn, "claimed", now - HOUR),
                     self._count(conn, "claimed", now - DAY),
@@ -448,6 +483,119 @@ class Database:
             )
             cur = conn.execute(f"DELETE FROM drafts WHERE {old}", (cutoff,))
             return cur.rowcount
+
+    # -- file access rules ----------------------------------------------------------
+
+    @staticmethod
+    def _root_key(root) -> str:
+        return os.path.normpath(str(root))
+
+    @staticmethod
+    def _rule_path(path: str) -> Tuple[str, str]:
+        """Check a relative path for a rule. Returns (display, key)."""
+        text = path.strip() if isinstance(path, str) else ""
+        parts = text.split("/") if text else []
+        if (
+            not text or text.startswith(("/", "~")) or text.endswith("/") or "\\" in text
+            or any(ord(c) < 32 or ord(c) == 127 for c in text)
+            or any(p in ("", ".", "..") for p in parts)
+        ):
+            raise ValueError("A rule needs a clean relative path below the root folder.")
+        return text, path_key(text)
+
+    def set_file_rule(
+        self, scope: str, root, path: str, effect: str, now: float, changed_by: str
+    ) -> None:
+        """Set, change or clear (effect 'cleared') the rule for one path below a root folder.
+        The rule and its audit entry are stored in one transaction. Rows are never deleted.
+        Only a folder can be allowed: a single .md file can only be blocked."""
+        if scope not in ("attach", "read"):
+            raise ValueError("unknown scope")
+        if effect not in ("allow", "deny", "cleared"):
+            raise ValueError("unknown effect")
+        display, key = self._rule_path(path)
+        if effect == "allow" and key.endswith(".md"):
+            raise ValueError("A single file cannot be allowed, only blocked. Allow its folder instead.")
+        root_key = self._root_key(root)
+        with self._tx() as conn:
+            row = conn.execute(
+                "SELECT effect FROM file_access_rules WHERE scope=? AND root_path=? AND path_key=?",
+                (scope, root_key, key),
+            ).fetchone()
+            before = row["effect"] if row else "none"
+            if row is None:
+                conn.execute(
+                    "INSERT INTO file_access_rules(scope,root_path,path_key,path_display,effect,changed_at,changed_by)"
+                    " VALUES (?,?,?,?,?,?,?)",
+                    (scope, root_key, key, display, effect, now, changed_by),
+                )
+            else:
+                conn.execute(
+                    "UPDATE file_access_rules SET effect=?, path_display=?, changed_at=?, changed_by=?"
+                    " WHERE scope=? AND root_path=? AND path_key=?",
+                    (effect, display, now, changed_by, scope, root_key, key),
+                )
+            self._audit(
+                conn, now, "file_rule_set", owner=changed_by,
+                detail=f"scope={scope} path={display} {before} -> {effect}",
+            )
+
+    def file_rules(self, scope: str, root) -> List[sqlite3.Row]:
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT * FROM file_access_rules WHERE scope=? AND root_path=? ORDER BY path_key",
+                (scope, self._root_key(root)),
+            ).fetchall()
+
+    def rule_lists(self, scope: str, root) -> Tuple[List[Tuple[str, ...]], List[Tuple[str, ...]]]:
+        """(allowed, denied) path parts for one root folder. Rules of other root folders are
+        never used, and cleared rules do not count."""
+        allowed: List[Tuple[str, ...]] = []
+        denied: List[Tuple[str, ...]] = []
+        for row in self.file_rules(scope, root):
+            if row["effect"] == "allow":
+                allowed.append(key_parts(row["path_key"]))
+            elif row["effect"] == "deny":
+                denied.append(key_parts(row["path_key"]))
+        return allowed, denied
+
+    def import_env_rules_once(
+        self, root, allowed: Sequence[str], denied: Sequence[str], now: float
+    ) -> int:
+        """Take over the folder lists from the configuration the first time this root folder is
+        seen. After that the database decides and the configuration lines are ignored, so a rule
+        cleared later does not come back. Returns the number of rules taken over."""
+        root_key = self._root_key(root)
+        marker = f"file_rules_imported:attach:{root_key}"
+        count = 0
+        with self._tx() as conn:
+            if conn.execute("SELECT 1 FROM settings WHERE key=?", (marker,)).fetchone():
+                return 0
+            for effect, folders in (("deny", denied), ("allow", allowed)):
+                for folder in folders:
+                    try:
+                        display, key = self._rule_path(folder)
+                    except ValueError:
+                        continue
+                    if effect == "allow" and key.endswith(".md"):
+                        continue
+                    cur = conn.execute(
+                        "INSERT OR IGNORE INTO file_access_rules"
+                        "(scope,root_path,path_key,path_display,effect,changed_at,changed_by)"
+                        " VALUES ('attach',?,?,?,?,?,'system')",
+                        (root_key, key, display, effect, now),
+                    )
+                    if cur.rowcount:
+                        count += 1
+                        self._audit(
+                            conn, now, "file_rule_set", owner="system",
+                            detail=f"scope=attach path={display} none -> {effect} (from configuration)",
+                        )
+            conn.execute(
+                "INSERT INTO settings(key,value,changed_at,changed_by) VALUES (?,?,?,'system')",
+                (marker, "1", now),
+            )
+        return count
 
     # -- reading helpers (also used by tests) -------------------------------------
 

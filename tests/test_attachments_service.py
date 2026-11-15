@@ -247,21 +247,29 @@ def test_the_origin_path_is_stored_with_the_attachment(svc, db):
     assert db.attachments_of(d["draft_id"])[0].source == "Projects/note.md"
 
 
-def test_send_is_refused_when_the_folder_is_no_longer_allowed(svc, att_config, recipients, db, sender, clock):
+def test_send_is_refused_when_the_folder_is_no_longer_allowed(svc, att_config, db, sender, clock):
     d = prep(svc, ["Projects/note.md"])
-    later = other_service(att_config, recipients, db, sender, clock, attachment_allowed_folders=("Elsewhere",))
+    db.set_file_rule("attach", att_config.attachment_root, "Projects", "cleared", clock(), "admin:test")
     with pytest.raises(AttachmentRejected, match="no longer allowed"):
-        later.send_email("o", d["draft_id"])
+        svc.send_email("o", d["draft_id"])
     assert sender.sent == []
     assert db.get_draft(d["draft_id"], "o").status == "pending"
 
 
-def test_send_is_refused_when_the_folder_is_now_blocked(svc, att_config, recipients, db, sender, clock):
+def test_send_is_refused_when_the_folder_is_now_blocked(svc, att_config, db, sender, clock):
     d = prep(svc, ["Projects/note.md"])
-    later = other_service(att_config, recipients, db, sender, clock, attachment_denied_folders=("Projects",))
+    db.set_file_rule("attach", att_config.attachment_root, "Projects", "deny", clock(), "admin:test")
     with pytest.raises(AttachmentRejected, match="no longer allowed"):
-        later.send_email("o", d["draft_id"])
+        svc.send_email("o", d["draft_id"])
     assert sender.sent == []
+
+
+def test_configuration_lines_changed_later_are_ignored(svc, att_config, recipients, db, sender, clock):
+    """The folder lists in the configuration are only taken over once per root folder."""
+    d = prep(svc, ["Projects/note.md"])
+    later = other_service(att_config, recipients, db, sender, clock, attachment_allowed_folders=("Elsewhere",),
+                          attachment_denied_folders=("Projects",))
+    assert later.send_email("o", d["draft_id"])["status"] == "sent"
 
 
 def test_send_is_refused_when_attachments_are_switched_off(svc, att_config, recipients, db, sender, clock):
@@ -316,7 +324,7 @@ def test_version_2_database_gets_the_origin_column(tmp_path):
     old = db.attachments_of("drf_old")
     assert [(a.name, a.source) for a in old] == [("old.md", "")]
     with sqlite3.connect(path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION == 3
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION == 4
         columns = [r[1] for r in conn.execute("PRAGMA table_info(draft_attachments)")]
     assert columns.count("source_path") == 1
     Database(path)  # a second open is harmless

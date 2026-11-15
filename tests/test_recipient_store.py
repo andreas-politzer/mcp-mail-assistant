@@ -292,7 +292,7 @@ def test_version_1_database_gets_the_recipient_tables(tmp_path):
     db = Database(path)
     assert db.get_draft("drf_old", "o").body == "Alter Text"
     with sqlite3.connect(path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION == 3
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION == 4
     store = RecipientStore(db)
     assert store.add("Anna", "anna@example.org", [], 1000.0, "admin:test").status == "active"
     Database(path)  # second open is harmless
