@@ -19,7 +19,7 @@ export function Taskbar({ items, onToggle, onCommand, onLogout }: { items: Taskb
     <>
       <div className="absolute top-0 left-0 right-0 h-7 flex items-center px-3 text-xs select-none" style={{ background: 'var(--face)', borderBottom: '2px solid var(--bevel-dark)' }}>
         <span className="text-[13px]">Mail Assistant</span>
-        <span className="ml-3 px-2 py-0.5 rounded bg-amber-200 text-amber-900">Prototyp · simulierte Daten</span>
+        <span className="ml-3 px-2 py-0.5 rounded bg-amber-200 text-amber-900">Empfänger und Dateien noch mit Testdaten</span>
         {onLogout && <button className="bevel ml-auto" onClick={onLogout}>Abmelden</button>}
       </div>
       <div className="absolute bottom-0 left-0 right-0 h-9 flex items-center gap-2 px-2 select-none" style={{ background: 'var(--face)', borderTop: '2px solid var(--bevel-light)' }}>

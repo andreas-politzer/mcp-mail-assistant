@@ -127,3 +127,22 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .boot-move { animation: none !important }
 }
+
+/* Inputs inside glass tiles. */
+.ginput {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  outline: none;
+}
+.ginput:focus { border-color: #fff; background: rgba(255, 255, 255, 0.22); }
+.ginput:disabled { opacity: 0.5; }
+.gbtn.on { background: rgba(120, 200, 255, 0.4); border-color: #fff; }
+.gbtn:disabled { opacity: 0.45; cursor: default; }
+
+/* Collapsible blocks in tiles. */
+.settings-details > summary::-webkit-details-marker { display: none; }
+.settings-details[open] > summary .arrow { transform: rotate(90deg); }

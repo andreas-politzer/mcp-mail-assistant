@@ -197,8 +197,8 @@ export function Boot({ resume, onDone }: { resume: boolean; onDone: () => void }
     const id = ++run.current
     if (!resume) {
       const stored = localStorage.length + sessionStorage.length
-      put(id, { id: 'window', label: 'Fenster', detail: inTauri ? `Tauri · ${window.location.origin}` : `Browser · ${window.location.origin} (ohne Dateizugriff)`, mark: inTauri ? 'ok' : 'warn' })
-      put(id, { id: 'storage', label: 'Speicher leer', detail: stored === 0 ? 'es wird nichts abgelegt' : `${stored} Einträge (diese App legt nichts ab)`, mark: stored === 0 ? 'ok' : 'warn' })
+      put(id, { id: 'window', label: 'Fenster', detail: inTauri ? `Tauri · ${window.location.origin}` : `Browser ohne Dateizugriff · ${window.location.origin}`, mark: inTauri ? 'ok' : 'warn' })
+      put(id, { id: 'storage', label: 'Speicher leer', detail: stored === 0 ? 'es wird nichts abgelegt' : `${stored} Einträge vorhanden`, mark: stored === 0 ? 'ok' : 'warn' })
     }
     void checkTunnel(id)
     return () => {
@@ -288,18 +288,18 @@ export function Boot({ resume, onDone }: { resume: boolean; onDone: () => void }
     <div className="absolute left-1/2 -translate-x-1/2 p-4 text-[13px] leading-6" style={{ bottom: '7vh', width: 'min(640px, 92vw)', zIndex: 30, ...FRAME }} role="alert">
       {block === 'tunnel' ? (
         <>
-          <div className="font-bold mb-1" style={{ color: '#a01020' }}>Die Verwaltungs-Schnittstelle ist nicht erreichbar ({blockWhy}).</div>
+          <div className="font-bold mb-1" style={{ color: '#a01020' }}>Die Verwaltung ist nicht erreichbar: {blockWhy}.</div>
           <p className="mb-2">Meistens fehlt der SSH-Tunnel. Öffne ein Terminal und starte ihn. Das Terminal bleibt danach offen und still, das ist richtig:</p>
           <pre className="p-2 mb-2 overflow-x-auto select-all text-[12px]" style={{ background: '#15151c', color: '#e8e8e8', fontFamily: MONO }}>{TUNNEL_COMMAND}</pre>
           <p className="mb-3 text-[12px]" style={{ color: '#4a4a5a' }}>
-            Läuft der Tunnel und es klappt trotzdem nicht, muss diese Herkunft auf dem Server erlaubt sein: <b>{window.location.origin}</b> (OUTBOX_ADMIN_ALLOWED_ORIGINS).
+            Läuft der Tunnel und es klappt trotzdem nicht, muss der Server diese Herkunft erlauben: <b>{window.location.origin}</b>. Die Einstellung dafür heißt OUTBOX_ADMIN_ALLOWED_ORIGINS.
           </p>
         </>
       ) : (
         <p className="mb-3" style={{ color: '#a01020' }}>Die Anmeldung hat geklappt, aber der Status der Datenbank ließ sich nicht lesen.</p>
       )}
       <div className="flex gap-3">
-        <button className="bevel" onClick={retry}>Erneut prüfen (Enter)</button>
+        <button className="bevel" onClick={retry}>Erneut prüfen</button>
         {block === 'tunnel' && <button className="bevel" onClick={copy}>{copied ? 'Kopiert' : 'Befehl kopieren'}</button>}
       </div>
     </div>

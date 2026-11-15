@@ -16,6 +16,8 @@ import {
 } from './components/PixelSprite'
 import { RecipientsTile } from './tiles/RecipientsTile'
 import { FilesTile } from './tiles/FilesTile'
+import { SettingsTile } from './tiles/SettingsTile'
+import { ActivityTile } from './tiles/ActivityTile'
 import type { ConfirmRequest } from './core/types'
 import { Boot } from './boot/Boot'
 import { admin } from './api/admin'
@@ -92,12 +94,16 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
   const [pending, setPending] = useState<ConfirmRequest | null>(null)
   const [showRecipients, setShowRecipients] = useState(true)
   const [showFiles, setShowFiles] = useState(true)
+  const [showSettings, setShowSettings] = useState(false)
+  const [showActivity, setShowActivity] = useState(false)
   const [selectedIcon, setSelectedIcon] = useState<string | null>(null)
   const [cells, setCells] = useState<Record<string, Cell>>(defaultCells)
   const [wallpaper, setWallpaper] = useState<Wallpaper>({ kind: 'teal', tiled: true })
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const recipientsRef = useRef<HTMLDivElement>(null)
   const filesRef = useRef<HTMLDivElement>(null)
+  const settingsRef = useRef<HTMLDivElement>(null)
+  const activityRef = useRef<HTMLDivElement>(null)
     const timers = useRef<number[]>([])
 
   const [wins, setWins] = useState<Win[]>(defaultWins)
@@ -201,8 +207,15 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
         items={[
           { id: 'recipients', label: 'Empfänger', open: showRecipients },
           { id: 'files', label: 'Dateien', open: showFiles },
+          { id: 'settings', label: 'Einstellungen', open: showSettings },
+          { id: 'activity', label: 'Aktivität', open: showActivity },
         ]}
-        onToggle={(id) => (id === 'recipients' ? setShowRecipients((v) => !v) : setShowFiles((v) => !v))}
+        onToggle={(id) =>
+          id === 'recipients' ? setShowRecipients((v) => !v)
+          : id === 'files' ? setShowFiles((v) => !v)
+          : id === 'settings' ? setShowSettings((v) => !v)
+          : setShowActivity((v) => !v)
+        }
         onCommand={runStart}
         onLogout={onLogout}
       />
@@ -252,6 +265,36 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
           onClose={() => setShowFiles(false)}
         >
           <FilesTile ask={setPending} />
+        </DraggableGlass>
+      )}
+
+      {showSettings && (
+        <DraggableGlass
+          containerRef={settingsRef}
+          title="Einstellungen"
+          className="rounded-3xl"
+          initialPosition={{ x: startX + 40, y: 72 }}
+          initialSize={{ width: tileW, height: 640 }}
+          minSize={{ width: 340, height: 260 }}
+          collapsible
+          onClose={() => setShowSettings(false)}
+        >
+          <SettingsTile ask={setPending} />
+        </DraggableGlass>
+      )}
+
+      {showActivity && (
+        <DraggableGlass
+          containerRef={activityRef}
+          title="Aktivität"
+          className="rounded-3xl"
+          initialPosition={{ x: startX + 80, y: 100 }}
+          initialSize={{ width: tileW + 40, height: 620 }}
+          minSize={{ width: 360, height: 260 }}
+          collapsible
+          onClose={() => setShowActivity(false)}
+        >
+          <ActivityTile />
         </DraggableGlass>
       )}
 

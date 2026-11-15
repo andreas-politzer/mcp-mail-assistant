@@ -11,6 +11,7 @@ export const TUNNEL_COMMAND: string =
 export const EXPECTED_SCHEMA = 5
 
 let token: string | null = null
+let session: { since: number; idleSeconds: number; maxSeconds: number } | null = null
 const listeners = new Set<() => void>()
 
 export interface Reply {
@@ -35,6 +36,7 @@ async function request(method: string, path: string, body?: unknown): Promise<Re
 
 function endSession() {
   token = null
+  session = null
   listeners.forEach((fn) => fn())
 }
 
@@ -56,7 +58,10 @@ export const admin = {
 
   async login(passphrase: string): Promise<Reply> {
     const reply = await request('POST', '/admin/login', { passphrase })
-    if (reply.status === 200 && typeof reply.data?.token === 'string') token = reply.data.token
+    if (reply.status === 200 && typeof reply.data?.token === 'string') {
+      token = reply.data.token
+      session = { since: Date.now(), idleSeconds: Number(reply.data.idle_seconds) || 0, maxSeconds: Number(reply.data.max_seconds) || 0 }
+    }
     return reply
   },
 
@@ -67,7 +72,12 @@ export const admin = {
       /* the server forgets the session by itself */
     }
     token = null
+    session = null
   },
+
+  // Any call to the admin API (after sign-in). Network errors are thrown; HTTP errors come back as a Reply.
+  call: (method: string, path: string, body?: unknown) => request(method, path, body),
+  sessionInfo: () => session,
 
   status: () => request('GET', '/admin/status'),
 
