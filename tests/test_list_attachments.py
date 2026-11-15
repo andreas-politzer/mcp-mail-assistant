@@ -159,3 +159,39 @@ def test_a_rule_written_behind_the_back_of_the_purge_still_hides_the_file(svc, d
         )
     assert svc.list_attachments(source="Mac")["items"] == []
 
+
+
+CONFLICT_NAMES = [
+    "a.sync-conflict-20260919-164020-5VYKA5Z.md",   # the usual shape
+    "a.SYNC-CONFLICT-20260919-164020-5VYKA5Z.md",   # case does not matter
+    "b.sync-conflict-20260919-164020-5VYKA5Z.txt",  # the extension does not matter
+    "c.sync-conflict-20260919-164020-5VYKA5Z",      # no extension at all
+]
+
+
+def test_syncthing_conflict_files_are_not_listed_in_any_source(svc, vault, db, mac):
+    for name in CONFLICT_NAMES:
+        (vault / "Projects" / name).write_text("alt", encoding="utf-8")
+    with pytest.raises(src_rules.SourceRejected):  # an upload source refuses them already when storing
+        upload(db, mac, "Projekte/x.sync-conflict-20260919-164020-5VYKA5Z.md")
+    upload(db, mac, "Projekte/ok.md")
+    listed = paths(svc.list_attachments())
+    assert ("notes", "Projects/a.md") in listed and ("Mac", "Projekte/ok.md") in listed
+    assert not [p for _, p in listed if "sync-conflict" in p.lower()]
+
+
+def test_syncthing_conflict_files_are_refused_when_asked_for_directly(svc, vault):
+    for name in CONFLICT_NAMES:
+        (vault / "Projects" / name).write_text("alt", encoding="utf-8")
+    for name in CONFLICT_NAMES:
+        with pytest.raises(AttachmentRejected):
+            svc.prepare_email("o", "Ferdinand", "Betreff", "Text", [f"notes:Projects/{name}"])
+        with pytest.raises(AttachmentRejected):
+            svc.prepare_email("o", "Ferdinand", "Betreff", "Text", [f"Projects/{name}"])
+
+
+def test_the_fixed_name_protection_covers_conflict_copies_for_every_extension():
+    from outbox_mcp.security.attachments import is_sensitive_name
+    for name in CONFLICT_NAMES:
+        assert is_sensitive_name(name)
+    assert not is_sensitive_name("Quiche Lorraine.md")

@@ -22,6 +22,9 @@ from ..errors import AttachmentRejected, ConfigError
 _SENSITIVE_NAME_PARTS = (
     "passw", "kennwort", "secret", "geheim", "token", "credential", "api_key", "api-key", "apikey",
     "private key", ".env", ".pem",
+    # Syncthing keeps the losing side of an edit conflict as "<name>.sync-conflict-<date>-<id>.<ext>".
+    # These are stale copies, never something to attach, whatever the extension.
+    ".sync-conflict-",
 )
 
 _SECRET_PATTERNS = (
