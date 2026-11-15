@@ -19,9 +19,9 @@ Working end to end for the author, built in stages. Be clear about what is and i
 | Remote access (HTTP transport with the sign-in wired to the mail tools) | Runs on the author's own server behind a Cloudflare Tunnel and is reachable from the internet; without a token every request is refused (checked from outside: HTTP 401). Covered by automated tests with a fake sender: drafts belong to the token's owner, a slow mail server does not block the sign-in page. See [docs/operations.md](docs/operations.md). |
 | Connection to a real assistant app (Claude custom connector) | **Used for real** on Claude desktop, on mobile in a text chat and in a live voice chat: draft, read-out, spoken confirmation, send, test mails arrived with correct umlauts. Reconnecting after a restart worked without a new sign-in. What was observed and what is still open: [docs/oauth-security.md](docs/oauth-security.md#verified-with-a-real-claude-connector-14-november-2026). |
 | Backup and restore | Hourly encrypted backup of the data directory (databases via SQLite snapshots, configuration). The first automatic run of the timer was verified, and a restore was tested once (databases open and pass `integrity_check`, config files identical). See [docs/operations.md](docs/operations.md#backup). |
-| Markdown attachments from an allowed notes folder | Built and tested locally, not yet deployed (see [docs/architecture.md](docs/architecture.md)). |
-| New recipients: the AI suggests, you approve outside the chat (admin command line) | Built and tested locally, not yet deployed. |
-| Admin API and desktop/web app, contact import | Planned. |
+| Markdown attachments from an allowed notes folder | **Used for real**: a note was attached and sent from a voice chat, and later a recipe note from another allowed folder arrived intact (see [docs/architecture.md](docs/architecture.md)). |
+| New recipients: the AI suggests, you approve outside the chat (admin command line) | **Used for real**: a suggestion made in the chat was approved on the server, then a mail with an attachment went to the new address. Reviewed by a second model; two small findings fixed. |
+| Admin API and desktop/web app, contact import | Planned (see [decisions](docs/decisions/README.md)). |
 
 Tested with: Infomaniak (STARTTLS). Other providers that offer standard SMTP with STARTTLS or SSL should work, but have not been tested.
 
@@ -137,11 +137,12 @@ The tests use a fake sender and a local test SMTP server; no real mail is sent.
 ```
 src/outbox_mcp/
   server.py          MCP tools (thin shell, stdio)
+  admin_cli.py       `outbox-admin`: approve, add, block recipients (outside the chat)
   http_server.py     HTTP entry point: sign-in plus the mail tools
   service.py         prepare / send / cancel logic
   config.py          settings from environment
-  security/          validation, recipient allow-list, limits
-  storage/           SQLite drafts + audit log
+  security/          validation, attachment policy, recipient list, limits
+  storage/           SQLite drafts, attachments, audit log, recipient registry
   mail/              message building, SMTP client
   auth/              OAuth authorization server and token check (not mail-related)
 scripts/               manual SMTP check for your real account
@@ -150,7 +151,10 @@ tests/
 docs/architecture.md     design decisions, stages, open questions
 docs/oauth-security.md  sign-in security model, limits, tests, known gaps
 docs/operations.md      running it for real: layout, tunnel, limits, backup and restore test
+docs/decisions/         short records of decisions (who may decide what, permission model, look)
 ```
+
+Planned, not started: `frontend/` for the admin interface (see [decision 0001](docs/decisions/0001-monorepo-with-separate-frontend.md)).
 
 ## Who built this
 

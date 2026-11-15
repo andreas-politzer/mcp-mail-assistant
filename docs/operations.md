@@ -64,4 +64,4 @@ uv run outbox-admin list
 address against the real contact. The first start after the upgrade to schema version 2 imports
 the old `recipients.json` once; afterwards the database is the truth and the file is ignored.
 If the old file is empty, nothing is imported and the registry stays empty, so the next start looks at the file again; this is harmless, and once any recipient exists in the database the file is never read again.
-Back up before the first start with a new version.
+Back up before the first start with a new version. After an update that adds or removes tools, disconnect and reconnect the connector in the assistant app; otherwise the app keeps showing the old tool list.
