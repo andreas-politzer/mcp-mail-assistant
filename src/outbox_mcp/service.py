@@ -68,6 +68,8 @@ class OutboxService:
                 config.attachment_root, config.attachment_allowed_folders,
                 config.attachment_denied_folders, clock(),
             )
+        # Tell the admin side which starting values this process really runs with (information only).
+        db.report_start_limits(config.limits, clock())
 
     def _load_attachments(self, attachments) -> List:
         if attachments is None:

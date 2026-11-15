@@ -27,6 +27,7 @@ from starlette.routing import Route
 from ..auth.passwords import verify_password
 from ..errors import OutboxError, RecipientNotAllowed, ValidationError
 from ..security.attachments import key_parts, path_key
+from ..security.rate_limiter import HARD_MAX_SENDS_PER_DAY, HARD_MAX_SENDS_PER_HOUR
 from ..storage.database import Database
 from ..storage.recipient_store import RecipientRecord, RecipientStore
 from .config import AdminConfig
@@ -326,6 +327,55 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
         done = await run_in_threadpool(store.unblock, rid, clock(), SOURCE)
         return reply(request, 200, {"status": "done", "recipient": _recipient(done)})
 
+    # -- send limits -------------------------------------------------------------------
+
+    def limits_view() -> Dict[str, Any]:
+        """The values that really apply, and where they come from. `source` is 'stored' (set here),
+        'mail_service_settings' (the mail service's own settings file, as that process reported it)
+        or 'unknown' (nothing stored, mail service has not reported yet; the values are then null).
+        The starting values are shown separately and labelled as such."""
+        effective, source, reported = db.admin_limits()
+        used_hour, used_day = db.send_counts(clock())
+        return {
+            "per_hour": effective[0] if effective else None, "per_day": effective[1] if effective else None,
+            "source": source,
+            "starting_values": {"per_hour": reported[0], "per_day": reported[1]} if reported else None,
+            "ceiling": {"per_hour": HARD_MAX_SENDS_PER_HOUR, "per_day": HARD_MAX_SENDS_PER_DAY},
+            "used": {"last_hour": used_hour, "last_day": used_day},
+        }
+
+    async def get_limits(request: Request) -> Response:
+        return reply(request, 200, await run_in_threadpool(limits_view))
+
+    async def put_limits(request: Request) -> Response:
+        data = await read_json(request)
+        new_hour, new_day = data.get("per_hour"), data.get("per_day")
+        for value, ceiling, name in ((new_hour, HARD_MAX_SENDS_PER_HOUR, "per_hour"), (new_day, HARD_MAX_SENDS_PER_DAY, "per_day")):
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= ceiling:
+                raise ValidationError(f"'{name}' must be a whole number from 0 to {ceiling}.")
+        current, source, _ = await run_in_threadpool(db.admin_limits)
+        if source == "stored" and current == (new_hour, new_day):
+            return reply(request, 200, {"status": "unchanged", **(await run_in_threadpool(limits_view))})
+        # With no known current value, anything above "stopped" counts as loosening.
+        loosening = (new_hour > 0 or new_day > 0) if current is None else (new_hour > current[0] or new_day > current[1])
+        if loosening:
+            token = bearer(request) or ""
+            action = f"limits:{new_hour}:{new_day}"
+            shown = ("unknown", "unknown") if current is None else (str(current[0]), str(current[1]))
+            state = hashlib.sha256(f"{shown[0]}:{shown[1]}:{source}".encode()).hexdigest()
+            given = data.get("confirmation_id")
+            if given is None:
+                cid = confirmations.issue(token, action, state)
+                return reply(request, 200, {
+                    "status": "confirmation_required", "confirmation_id": cid, "expires_in": config.confirmation_seconds,
+                    "preview": {"per_hour": f"{shown[0]} -> {new_hour}", "per_day": f"{shown[1]} -> {new_day}"},
+                })
+            if not confirmations.consume(given, token, action, state):
+                return fail(request, 409, "confirmation_invalid",
+                            "The confirmation is invalid, used up, expired, or the limits changed in the meantime. Ask again.")
+        await run_in_threadpool(db.set_send_limits, new_hour, new_day, clock(), SOURCE)
+        return reply(request, 200, {"status": "done", **(await run_in_threadpool(limits_view))})
+
     async def audit(request: Request) -> Response:
         def number(name: str, default: Optional[int]) -> Optional[int]:
             raw = request.query_params.get(name)
@@ -356,6 +406,8 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
         Route("/admin/folders", endpoint(folders), methods=["GET"]),
         Route("/admin/folders/rule", endpoint(put_rule), methods=["PUT"]),
         Route("/admin/audit", endpoint(audit), methods=["GET"]),
+        Route("/admin/limits", endpoint(get_limits), methods=["GET"]),
+        Route("/admin/limits", endpoint(put_limits), methods=["PUT"]),
     ]
     for action in ("approve", "reject", "block", "remove"):
         routes.append(Route("/admin/recipients/{rid:int}/" + action, endpoint(transition(action)), methods=["POST"]))

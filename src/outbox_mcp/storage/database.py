@@ -17,9 +17,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterator, List, Optional, Sequence, Tuple
 
-from ..errors import ConfigError, DraftNotFound, DraftNotSendable, RateLimitExceeded
+from ..errors import ConfigError, DraftNotFound, DraftNotSendable, RateLimitExceeded, ValidationError
 from ..security.attachments import Attachment, key_parts, path_key
-from ..security.rate_limiter import DAY, HOUR, RateLimits, prepare_limit_reached, send_limit_reason
+from ..security.rate_limiter import (
+    DAY, HARD_MAX_SENDS_PER_DAY, HARD_MAX_SENDS_PER_HOUR, HOUR, RateLimits, clamp,
+    prepare_limit_reached, send_limit_reason,
+)
 
 _FINAL = ("sent", "failed", "unknown", "expired", "cancelled")
 
@@ -431,7 +434,7 @@ class Database:
                 reason = send_limit_reason(
                     self._count(conn, "claimed", now - HOUR),
                     self._count(conn, "claimed", now - DAY),
-                    limits,
+                    self._effective_limits(conn, limits),
                 )
                 if reason:
                     self._audit(conn, now, "rate_limited", draft, detail=reason)
@@ -483,6 +486,121 @@ class Database:
             )
             cur = conn.execute(f"DELETE FROM drafts WHERE {old}", (cutoff,))
             return cur.rowcount
+
+    # -- send limits ----------------------------------------------------------------
+
+    _LIMIT_KEYS = {"hour": "send_limit_per_hour", "day": "send_limit_per_day"}
+
+    def _effective_limits(self, conn, base: RateLimits) -> RateLimits:
+        """The limits that apply right now: the stored values where there are any, otherwise the
+        starting values from the settings file, always cut down to the hard ceilings. A stored value
+        that cannot be read falls back to the starting value. Read inside the claim transaction, so
+        a change made by the admin side is either fully in or fully out for a given send."""
+        values = {}
+        for name, key in self._LIMIT_KEYS.items():
+            row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            try:
+                number = int(row["value"]) if row is not None else None
+            except ValueError:
+                number = None
+            values[name] = number
+        return clamp(RateLimits(
+            max_prepares_per_hour=base.max_prepares_per_hour,
+            max_sends_per_hour=base.max_sends_per_hour if values["hour"] is None else values["hour"],
+            max_sends_per_day=base.max_sends_per_day if values["day"] is None else values["day"],
+        ))
+
+    def send_limits(self, base: RateLimits) -> RateLimits:
+        """What the mail service applies: `base` is its own starting value from its settings file."""
+        with self._connect() as conn:
+            return self._effective_limits(conn, base)
+
+    def limits_are_stored(self) -> bool:
+        """True once limits have been set through the admin side."""
+        with self._connect() as conn:
+            return any(
+                conn.execute("SELECT 1 FROM settings WHERE key=?", (k,)).fetchone() for k in self._LIMIT_KEYS.values()
+            )
+
+    _REPORTED = "send_limits_start"
+
+    def report_start_limits(self, base: RateLimits, now: float) -> None:
+        """The mail service writes down the starting values it runs with (after the ceilings), so the
+        admin side can show what really applies instead of guessing from its own settings file. This is
+        information only: it is never used to decide a send."""
+        eff = clamp(base)
+        value = f"{eff.max_sends_per_hour}:{eff.max_sends_per_day}"
+        with self._tx() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key=?", (self._REPORTED,)).fetchone()
+            if row is not None and row["value"] == value:
+                return
+            conn.execute(
+                "INSERT INTO settings(key,value,changed_at,changed_by) VALUES (?,?,?,'mail-service')"
+                " ON CONFLICT(key) DO UPDATE SET value=excluded.value, changed_at=excluded.changed_at,"
+                " changed_by=excluded.changed_by",
+                (self._REPORTED, value, now),
+            )
+
+    def _admin_effective(self, conn) -> Tuple[Optional[Tuple[int, int]], str, Optional[Tuple[int, int]]]:
+        """(effective (hour, day) or None, source, reported starting values or None).
+        source: 'stored' (set through the admin side), 'mail_service_settings' (the mail service's own
+        settings file, as it reported it) or 'unknown' (nothing stored and no report yet)."""
+        reported = None
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (self._REPORTED,)).fetchone()
+        if row is not None:
+            try:
+                h, _, d = row["value"].partition(":")
+                reported = (int(h), int(d))
+            except ValueError:
+                reported = None
+        found = []
+        for key in self._LIMIT_KEYS.values():
+            r = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            try:
+                found.append(int(r["value"]) if r is not None else None)
+            except ValueError:
+                found.append(None)
+        any_stored = any(v is not None for v in found)
+        hour = found[0] if found[0] is not None else (reported[0] if reported else None)
+        day = found[1] if found[1] is not None else (reported[1] if reported else None)
+        if hour is None or day is None:
+            return None, "unknown", reported
+        eff = clamp(RateLimits(0, hour, day))
+        return (eff.max_sends_per_hour, eff.max_sends_per_day), ("stored" if any_stored else "mail_service_settings"), reported
+
+    def admin_limits(self) -> Tuple[Optional[Tuple[int, int]], str, Optional[Tuple[int, int]]]:
+        with self._connect() as conn:
+            return self._admin_effective(conn)
+
+    def send_counts(self, now: float) -> Tuple[int, int]:
+        """(claims in the last hour, claims in the last day). Every claim counts, whatever became of
+        it afterwards: sent, failed, unknown or still sending. Refused attempts do not count."""
+        with self._connect() as conn:
+            return self._count(conn, "claimed", now - HOUR), self._count(conn, "claimed", now - DAY)
+
+    def set_send_limits(self, per_hour: int, per_day: int, now: float, changed_by: str) -> Tuple[int, int]:
+        """Store new send limits (0 stops sending). Both must be whole numbers from 0 up to the hard
+        ceilings. The change and its audit entry are one transaction."""
+        for value, ceiling, name in (
+            (per_hour, HARD_MAX_SENDS_PER_HOUR, "per hour"), (per_day, HARD_MAX_SENDS_PER_DAY, "per day"),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= ceiling:
+                raise ValidationError(f"The limit {name} must be a whole number from 0 to {ceiling}.")
+        with self._tx() as conn:
+            before, _, _ = self._admin_effective(conn)
+            was_hour, was_day = (str(before[0]), str(before[1])) if before else ("unknown", "unknown")
+            for key, value in (("send_limit_per_hour", per_hour), ("send_limit_per_day", per_day)):
+                conn.execute(
+                    "INSERT INTO settings(key,value,changed_at,changed_by) VALUES (?,?,?,?)"
+                    " ON CONFLICT(key) DO UPDATE SET value=excluded.value, changed_at=excluded.changed_at,"
+                    " changed_by=excluded.changed_by",
+                    (key, str(value), now, changed_by),
+                )
+            self._audit(
+                conn, now, "send_limits_set", owner=changed_by,
+                detail=f"hour {was_hour} -> {per_hour}, day {was_day} -> {per_day}",
+            )
+            return self._admin_effective(conn)[0] or (per_hour, per_day)
 
     def log_event(self, event: str, owner: str, detail: Optional[str], now: float) -> None:
         """Write one entry to the audit log (used by the admin side for sign-ins and similar)."""
