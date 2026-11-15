@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { admin, ADMIN_BASE, EXPECTED_SCHEMA, TUNNEL_COMMAND } from '../api/admin'
+import { admin, ADMIN_BASE, EXPECTED_SCHEMA, GENERIC_TUNNEL_COMMAND, TUNNEL_COMMAND } from '../api/admin'
 import { ENVELOPE, PixelSprite } from '../components/PixelSprite'
 import { LoginDialog } from './LoginDialog'
 
@@ -290,7 +290,10 @@ export function Boot({ resume, onDone }: { resume: boolean; onDone: () => void }
         <>
           <div className="font-bold mb-1" style={{ color: '#a01020' }}>Die Verwaltung ist nicht erreichbar: {blockWhy}.</div>
           <p className="mb-2">Meistens fehlt der SSH-Tunnel. Öffne ein Terminal und starte ihn. Das Terminal bleibt danach offen und still, das ist richtig:</p>
-          <pre className="p-2 mb-2 overflow-x-auto select-all text-[12px]" style={{ background: '#15151c', color: '#e8e8e8', fontFamily: MONO }}>{TUNNEL_COMMAND}</pre>
+          <pre className="p-2 mb-2 overflow-x-auto select-all text-[12px]" style={{ background: '#15151c', color: '#e8e8e8', fontFamily: MONO }}>{GENERIC_TUNNEL_COMMAND}</pre>
+          <p className="mb-2 text-[12px]" style={{ color: '#4a4a5a' }}>
+            Ersetze BENUTZER und SERVER durch deine Angaben. Mit Befehl kopieren legst du den Befehl in die Zwischenablage, den du in der Datei frontend/.env.local eingetragen hast.
+          </p>
           <p className="mb-3 text-[12px]" style={{ color: '#4a4a5a' }}>
             Läuft der Tunnel und es klappt trotzdem nicht, muss der Server diese Herkunft erlauben: <b>{window.location.origin}</b>. Die Einstellung dafür heißt OUTBOX_ADMIN_ALLOWED_ORIGINS.
           </p>

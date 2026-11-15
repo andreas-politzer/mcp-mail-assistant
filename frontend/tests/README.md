@@ -7,4 +7,4 @@ stand-in for the Rust side (`tests/support/fakeTauri.ts`) that follows the same 
 
 Needs `uv` (it provides the project's Python environment plus `uvicorn` for the run), or set
 `ADMIN_PYTHON` to a Python that has the project and `uvicorn` installed.
-Nothing here touches the real server (georgie) or the real database.
+Nothing here touches your real server or your real database.

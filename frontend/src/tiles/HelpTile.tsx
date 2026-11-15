@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 // Help and instructions. Short, in plain sentences, and only about what the app does today.
 // The tunnel command here is always the generic form. A person's own server address never appears in the help.
-const GENERIC_TUNNEL_COMMAND = '/usr/bin/ssh -N -L 8431:127.0.0.1:8431 BENUTZER@SERVER'
+import { GENERIC_TUNNEL_COMMAND } from '../api/admin'
 
 function Part({ title, open, children }: { title: string; open?: boolean; children: ReactNode }) {
   return (

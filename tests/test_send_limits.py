@@ -359,7 +359,7 @@ def test_with_unknown_values_any_increase_needs_confirmation_but_stopping_does_n
 
 
 def test_the_service_reports_what_it_really_runs_with(admin_config, clock, tmp_path, sender):
-    """georgie case: the mail service starts with 10 per hour and 200 per day; the admin side shows exactly that."""
+    """Home server case: the mail service starts with 10 per hour and 200 per day; the admin side shows exactly that."""
     import dataclasses
     from outbox_mcp.config import Config
 

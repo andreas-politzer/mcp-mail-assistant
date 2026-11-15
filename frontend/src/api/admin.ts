@@ -5,8 +5,10 @@
 export const ADMIN_BASE: string = import.meta.env.VITE_ADMIN_BASE ?? 'http://localhost:8431'
 // Shown when the tunnel is missing. Put the real command into frontend/.env.local (not committed):
 // VITE_TUNNEL_COMMAND=/usr/bin/ssh -N -L 8431:127.0.0.1:8431 user@server
-export const TUNNEL_COMMAND: string =
-  import.meta.env.VITE_TUNNEL_COMMAND ?? '/usr/bin/ssh -N -L 8431:127.0.0.1:8431 BENUTZER@SERVER'
+// What windows and help texts show: always the generic form, never a person's own server address.
+export const GENERIC_TUNNEL_COMMAND = '/usr/bin/ssh -N -L 8431:127.0.0.1:8431 BENUTZER@SERVER'
+// What the copy button puts on the clipboard: the configured command, or the generic one if none is configured.
+export const TUNNEL_COMMAND: string = import.meta.env.VITE_TUNNEL_COMMAND ?? GENERIC_TUNNEL_COMMAND
 // The database schema this app was written for.
 export const EXPECTED_SCHEMA = 5
 

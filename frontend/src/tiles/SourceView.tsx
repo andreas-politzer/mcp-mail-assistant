@@ -302,7 +302,7 @@ export function SourceView({
                   <span className="opacity-80">
                     {' '}
                     {source.root_rule === undefined
-                      ? 'lässt sich erst freigeben, wenn der Server auf georgie aktualisiert ist'
+                      ? 'lässt sich erst freigeben, wenn der Server aktualisiert ist'
                       : source.root_rule === 'allow'
                       ? '✓ erlaubt, auch die Dateien direkt im Hauptordner'
                       : source.root_rule === 'deny'
