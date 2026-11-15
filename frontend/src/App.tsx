@@ -14,6 +14,7 @@ import type { StartCommand } from './components/StartMenu'
 import {
   BIN, CELLS, CHAT, COMPUTER, ENVELOPE, FLOPPY, FOLDER, GLOBE, HEART_CARD, MINE, NOTEPAD, PAINT, PAWN, SHEET, SPADE_CARD, PixelSprite,
 } from './components/PixelSprite'
+import { HelpTile } from './tiles/HelpTile'
 import { RecipientsTile } from './tiles/RecipientsTile'
 import { FilesTile } from './tiles/FilesTile'
 import { SettingsTile } from './tiles/SettingsTile'
@@ -96,6 +97,7 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
   const [showFiles, setShowFiles] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
   const [showActivity, setShowActivity] = useState(false)
+  const [showHelp, setShowHelp] = useState(false)
   const [selectedIcon, setSelectedIcon] = useState<string | null>(null)
   const [cells, setCells] = useState<Record<string, Cell>>(defaultCells)
   const [wallpaper, setWallpaper] = useState<Wallpaper>({ kind: 'teal', tiled: true })
@@ -104,6 +106,7 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
   const filesRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
   const activityRef = useRef<HTMLDivElement>(null)
+  const helpRef = useRef<HTMLDivElement>(null)
     const timers = useRef<number[]>([])
 
   const [wins, setWins] = useState<Win[]>(defaultWins)
@@ -209,11 +212,13 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
           { id: 'files', label: 'Dateien', open: showFiles },
           { id: 'settings', label: 'Einstellungen', open: showSettings },
           { id: 'activity', label: 'Aktivität', open: showActivity },
+          { id: 'help', label: 'Hilfe & Anleitung', open: showHelp },
         ]}
         onToggle={(id) =>
           id === 'recipients' ? setShowRecipients((v) => !v)
           : id === 'files' ? setShowFiles((v) => !v)
           : id === 'settings' ? setShowSettings((v) => !v)
+          : id === 'help' ? setShowHelp((v) => !v)
           : setShowActivity((v) => !v)
         }
         onCommand={runStart}
@@ -295,6 +300,21 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
           onClose={() => setShowActivity(false)}
         >
           <ActivityTile />
+        </DraggableGlass>
+      )}
+
+      {showHelp && (
+        <DraggableGlass
+          containerRef={helpRef}
+          title="Hilfe und Anleitung"
+          className="rounded-3xl"
+          initialPosition={{ x: startX + 120, y: 128 }}
+          initialSize={{ width: tileW + 20, height: 600 }}
+          minSize={{ width: 340, height: 260 }}
+          collapsible
+          onClose={() => setShowHelp(false)}
+        >
+          <HelpTile />
         </DraggableGlass>
       )}
 
