@@ -54,6 +54,7 @@ These are deliberate. They are listed so nobody has to discover them.
 - **Refresh rotation is strict.** If the same refresh token arrives twice (a retry after a lost response, or two parallel requests), the whole token family is revoked and the owner signs in again. This is the safest choice. It is covered by a test that documents the behaviour (`test_documented_strict_behaviour_parallel_refresh_ends_the_session`). Whether a short grace window is needed will be decided after watching how Claude actually refreshes.
 - **Revoking an already expired access token does not revoke its refresh token.** Revoke the refresh token, or use `revoke-all`.
 - **No automatic cleanup of expired codes, tokens and token families yet.** They are small and harmless but accumulate. Planned for a maintenance step.
+- **A blocked address gets an honest refusal, not a pretended acceptance.** When the AI suggests an address that was blocked, it is told the address cannot be suggested. Pretending the suggestion arrived would tell nobody anything: the person would hear "suggested", nothing would appear in the approval list, and the confusion would hide a real decision. The cost is that the AI can learn that one particular address does not work. The message does not say "blocked", and the AI gains no additional sending capability: it still cannot send to that address, and it cannot approve anything. We chose honest feedback over secrecy.
 - **The password is the single factor.** Choose a long passphrase. The server stores only a scrypt hash.
 
 ## Connection to the mail tools

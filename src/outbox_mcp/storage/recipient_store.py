@@ -157,6 +157,8 @@ class RecipientStore:
         self, name: str, address: str, aliases: Sequence[str], now: float, source: str
     ) -> RecipientRecord:
         name = validate_display_name(name)
+        if not name:
+            raise ValidationError("A recipient needs a name.")
         address = validate_address(address)
         with self._db._tx() as conn:
             row = self._by_address(conn, address)
@@ -164,7 +166,7 @@ class RecipientStore:
                 cur = conn.execute(
                     "INSERT INTO recipients(name,address,address_key,status,created_at)"
                     " VALUES (?,?,?,?,?)",
-                    (name or "?", address, _key(address), "removed", now),
+                    (name, address, _key(address), "removed", now),
                 )
                 row = conn.execute("SELECT * FROM recipients WHERE id=?", (cur.lastrowid,)).fetchone()
             elif row["status"] == "active":

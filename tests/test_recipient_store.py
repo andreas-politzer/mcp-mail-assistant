@@ -158,6 +158,13 @@ def test_add_activates_directly(store):
     assert r.status == "active" and store.active()[0].aliases == ("Annchen",)
 
 
+def test_add_refuses_an_empty_name(store):
+    for name in ("", "   "):
+        with pytest.raises(ValidationError, match="needs a name"):
+            store.add(name, "anna@example.org", [], 1000.0, "admin:test")
+    assert store.all_records() == []
+
+
 def test_add_refuses_blocked_and_duplicates(store):
     store.add("Anna", "anna@example.org", [], 1000.0, "admin:test")
     with pytest.raises(ValidationError):
