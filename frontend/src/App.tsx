@@ -17,6 +17,8 @@ import {
 import { RecipientsTile } from './tiles/RecipientsTile'
 import { FilesTile } from './tiles/FilesTile'
 import type { ConfirmRequest } from './core/types'
+import { Boot } from './boot/Boot'
+import { admin } from './api/admin'
 
 type WinKind = JokeKind | 'clock' | 'sticky' | 'display' | 'run'
 interface Win {
@@ -86,7 +88,7 @@ function defaultCells(): Record<string, Cell> {
   return out
 }
 
-export default function App() {
+function DesktopApp({ onLogout }: { onLogout: () => void }) {
   const [pending, setPending] = useState<ConfirmRequest | null>(null)
   const [showRecipients, setShowRecipients] = useState(true)
   const [showFiles, setShowFiles] = useState(true)
@@ -202,6 +204,7 @@ export default function App() {
         ]}
         onToggle={(id) => (id === 'recipients' ? setShowRecipients((v) => !v) : setShowFiles((v) => !v))}
         onCommand={runStart}
+        onLogout={onLogout}
       />
 
       {ICONS.map((i) => {
@@ -304,5 +307,44 @@ export default function App() {
         </ConfirmDialog>
       )}
     </Desktop>
+  )
+}
+
+// Start screen first; the desktop only appears after sign-in. If the server ends the session (idle time) or the
+// person signs out, the sign-in comes back on top of the desktop, which stays as it was.
+export default function App() {
+  const [started, setStarted] = useState(false)
+  const [booting, setBooting] = useState(true)
+  const [resume, setResume] = useState(false)
+
+  useEffect(
+    () =>
+      admin.onSessionEnd(() => {
+        setResume(true)
+        setBooting(true)
+      }),
+    [],
+  )
+
+  const logout = async () => {
+    await admin.logout()
+    setResume(true)
+    setBooting(true)
+  }
+
+  return (
+    <>
+      {started && <DesktopApp onLogout={logout} />}
+      {booting && (
+        <Boot
+          key={resume ? 'resume' : 'first'}
+          resume={resume}
+          onDone={() => {
+            setStarted(true)
+            setBooting(false)
+          }}
+        />
+      )}
+    </>
   )
 }

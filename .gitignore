@@ -10,3 +10,9 @@ recipients.json
 *.db
 *.db-wal
 *.db-shm
+
+# Desktop app
+frontend/.env.local
+frontend/src-tauri/target
+frontend/src-tauri/gen
+*.local

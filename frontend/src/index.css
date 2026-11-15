@@ -111,3 +111,19 @@ body {
   3% { transform: rotate(4deg); }
   4.5% { transform: rotate(-2deg); }
 }
+
+/* Start sequence (own sky, flying envelopes, logo entrance). Reduced motion turns the movement off. */
+@keyframes boot-fade { from { opacity: 0 } to { opacity: 1 } }
+@keyframes boot-line { from { opacity: 0; transform: translateX(-6px) } to { opacity: 1; transform: none } }
+@keyframes boot-pop {
+  0% { transform: scale(0.2) translateY(-40px); opacity: 0 }
+  60% { transform: scale(1.12) translateY(0); opacity: 1 }
+  100% { transform: scale(1); opacity: 1 }
+}
+@keyframes boot-rise { from { opacity: 0; transform: translateY(18px) } to { opacity: 1; transform: none } }
+@keyframes boot-drift { from { transform: translateX(-340px) } to { transform: translateX(100vw) } }
+@keyframes boot-fly { from { transform: translateX(-90px) } to { transform: translateX(calc(100vw + 90px)) } }
+@keyframes boot-bob { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-9px) } }
+@media (prefers-reduced-motion: reduce) {
+  .boot-move { animation: none !important }
+}
