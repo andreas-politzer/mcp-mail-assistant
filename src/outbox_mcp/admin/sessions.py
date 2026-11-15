@@ -98,3 +98,42 @@ class LoginThrottle:
     def succeeded(self) -> None:
         with self._lock:
             self._failed = 0
+
+
+class ConfirmationStore:
+    """One-time confirmations for loosening changes. A confirmation is bound to the session, the
+    action and the state it was issued for, valid for a short time and used up by the first try.
+    It protects against slips and repeated requests. It is not a second sign-in."""
+
+    MAX_OPEN = 50
+
+    def __init__(self, ttl_seconds: int, clock: Callable[[], float]) -> None:
+        self._ttl, self._clock = ttl_seconds, clock
+        self._items: Dict[str, tuple] = {}
+        self._lock = threading.Lock()
+
+    def issue(self, session_token: str, action: str, fingerprint: str) -> str:
+        now = self._clock()
+        cid = secrets.token_urlsafe(18)
+        with self._lock:
+            for key in [k for k, v in self._items.items() if v[3] <= now]:
+                del self._items[key]
+            while len(self._items) >= self.MAX_OPEN:
+                del self._items[min(self._items, key=lambda k: self._items[k][3])]
+            self._items[cid] = (SessionStore._key(session_token), action, fingerprint, now + self._ttl)
+        return cid
+
+    def consume(self, cid: object, session_token: str, action: str, fingerprint: str) -> bool:
+        if not isinstance(cid, str):
+            return False
+        with self._lock:
+            item = self._items.pop(cid, None)  # used up by the first try, right or wrong
+        if item is None:
+            return False
+        key, issued_action, issued_fp, expires = item
+        return (
+            self._clock() < expires
+            and secrets.compare_digest(key, SessionStore._key(session_token))
+            and issued_action == action
+            and secrets.compare_digest(issued_fp, fingerprint)
+        )

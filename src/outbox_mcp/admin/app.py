@@ -11,8 +11,11 @@ as a cookie, and request bodies are small.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import time
+from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from starlette.applications import Starlette
@@ -23,10 +26,15 @@ from starlette.routing import Route
 
 from ..auth.passwords import verify_password
 from ..errors import OutboxError, RecipientNotAllowed, ValidationError
+from ..security.attachments import key_parts, path_key
 from ..storage.database import Database
 from ..storage.recipient_store import RecipientRecord, RecipientStore
 from .config import AdminConfig
-from .sessions import LoginThrottle, SessionStore
+from .folders import (
+    apply_change, attachable_files, clean_relative, count_attachable, describe, fingerprint,
+    is_ambiguous, list_folder, load_rules, real_entry,
+)
+from .sessions import ConfirmationStore, LoginThrottle, SessionStore
 
 SOURCE = "admin:web"
 _STATUSES = ("suggested", "active", "rejected", "removed", "expired", "blocked")
@@ -44,6 +52,8 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
     store = RecipientStore(db)
     sessions = SessionStore(config.idle_seconds, config.max_session_seconds, clock)
     throttle = LoginThrottle(config.max_failed_logins, config.lockout_seconds, clock)
+    confirmations = ConfirmationStore(config.confirmation_seconds, clock)
+    root = config.attachment_root
 
     # -- helpers --------------------------------------------------------------------
 
@@ -109,6 +119,9 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
                 return fail(request, 409, "conflict", str(exc))
             except OutboxError as exc:
                 return fail(request, 400, "invalid", str(exc))
+            except Exception:  # never leak details; the database transaction has been rolled back
+                logging.getLogger("outbox_mcp.admin").exception("admin request failed")
+                return fail(request, 500, "internal", "Something went wrong. Nothing was changed.")
 
         return run
 
@@ -121,7 +134,7 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
             headers={
                 "Access-Control-Allow-Origin": origin,
                 "Vary": "Origin",
-                "Access-Control-Allow-Methods": "GET, POST",
+                "Access-Control-Allow-Methods": "GET, POST, PUT",
                 "Access-Control-Allow-Headers": "Authorization, Content-Type",
                 "Access-Control-Max-Age": "600",
             },
@@ -174,7 +187,10 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
         counts = {s: 0 for s in _STATUSES}
         for r in records:
             counts[r.status] += 1
-        return reply(request, 200, {"schema_version": db.schema_version(), "recipients": counts})
+        return reply(request, 200, {
+            "schema_version": db.schema_version(), "recipients": counts,
+            "attachment_root": str(root) if root is not None else None,
+        })
 
     async def list_recipients(request: Request) -> Response:
         wanted = request.query_params.get("status")
@@ -208,14 +224,138 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
 
         return handler
 
-    # `unblock` is deliberately not routed yet: lifting a block loosens a rule and comes with the
-    # confirmation step.
+
+    # -- folders, rules and the confirmation step -------------------------------------
+
+    def need_root() -> Path:
+        if root is None or not root.is_dir():
+            raise ValidationError("Attachment folders are not set up (OUTBOX_ADMIN_ATTACHMENT_ROOT).")
+        return root
+
+    async def folders(request: Request) -> Response:
+        base = need_root()
+        rules = await run_in_threadpool(load_rules, db, base)
+        data = await run_in_threadpool(list_folder, base, request.query_params.get("path", ""), rules)
+        return reply(request, 200, data)
+
+    def plan_rule(path: str, effect: str) -> Dict[str, Any]:
+        base = need_root()
+        if effect not in ("allow", "deny", "clear"):
+            raise ValidationError("'effect' must be allow, deny or clear.")
+        rel = clean_relative(path)
+        rules = load_rules(db, base)
+        old = next((r.effect for r in rules if r.parts == key_parts(path_key(rel))), None)
+        kind = None
+        if effect != "clear":
+            kind = real_entry(base, rel)  # exists, no symbolic link on the way
+            if effect == "allow" and kind == "file":
+                raise ValidationError("A single file can only be blocked. Allow its folder instead.")
+            if effect == "allow" and is_ambiguous(base, rel):
+                raise ValidationError(
+                    "Two entries here differ only in case or Unicode form. Blocking is possible, allowing is not."
+                )
+        unchanged = (old is None) if effect == "clear" else (old == effect)
+        loosening = effect == "allow" or (effect == "clear" and old == "deny")
+        return {"rel": rel, "effect": effect, "old": old, "kind": kind, "rules": rules, "base": base,
+                "unchanged": unchanged, "loosening": loosening}
+
+    def preview_of(plan: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            files, truncated = attachable_files(plan["base"], plan["rel"])
+        except OutboxError:
+            files, truncated = [], False  # the folder is gone; clearing its rule gains nothing
+        after = apply_change(plan["rules"], plan["rel"], plan["effect"])
+        return {
+            "path": plan["rel"], "change": f"{plan['old'] or 'none'} -> {plan['effect']}",
+            "files_attachable_before": count_attachable(files, plan["rules"]),
+            "files_attachable_after": count_attachable(files, after),
+            "count_is_partial": truncated,
+        }
+
+    async def put_rule(request: Request) -> Response:
+        data = await read_json(request)
+        plan = await run_in_threadpool(plan_rule, text(data, "path"), text(data, "effect"))
+        rel, effect = plan["rel"], plan["effect"]
+        if plan["unchanged"]:
+            rules = await run_in_threadpool(load_rules, db, plan["base"])
+            return reply(request, 200, {"status": "unchanged", "effective": describe(rel, plan["kind"] or "folder", rules)})
+        token = bearer(request) or ""
+        action = f"rule:{path_key(rel)}:{effect}"
+        state = fingerprint(plan["rules"])
+        if plan["loosening"]:
+            given = data.get("confirmation_id")
+            if given is None:
+                cid = confirmations.issue(token, action, state)
+                preview = await run_in_threadpool(preview_of, plan)
+                return reply(request, 200, {
+                    "status": "confirmation_required", "confirmation_id": cid,
+                    "expires_in": config.confirmation_seconds, "preview": preview,
+                })
+            if not confirmations.consume(given, token, action, state):
+                return fail(request, 409, "confirmation_invalid",
+                            "The confirmation is invalid, used up, expired, or the rules changed in the meantime. Ask again.")
+        await run_in_threadpool(
+            db.set_file_rule, "attach", plan["base"], rel, "cleared" if effect == "clear" else effect, clock(), SOURCE
+        )
+        rules = await run_in_threadpool(load_rules, db, plan["base"])
+        return reply(request, 200, {"status": "done", "effective": describe(rel, plan["kind"] or "folder", rules)})
+
+    async def unblock(request: Request) -> Response:
+        rid = int(request.path_params["rid"])
+        data = await read_json(request)
+        record = await run_in_threadpool(store.find, rid)
+        if record.status != "blocked":
+            raise ValidationError("This address is not blocked.")
+        token = bearer(request) or ""
+        action = f"unblock:{rid}"
+        state = hashlib.sha256(f"{record.status}:{record.decided_at}:{record.address}".encode()).hexdigest()
+        given = data.get("confirmation_id")
+        if given is None:
+            cid = confirmations.issue(token, action, state)
+            return reply(request, 200, {
+                "status": "confirmation_required", "confirmation_id": cid,
+                "expires_in": config.confirmation_seconds,
+                "preview": {
+                    "name": record.name, "address": record.address,
+                    "effect": "The address comes off the block list. It does not become active; add or approve it again to allow mail.",
+                },
+            })
+        if not confirmations.consume(given, token, action, state):
+            return fail(request, 409, "confirmation_invalid",
+                        "The confirmation is invalid, used up, expired, or the address changed in the meantime. Ask again.")
+        done = await run_in_threadpool(store.unblock, rid, clock(), SOURCE)
+        return reply(request, 200, {"status": "done", "recipient": _recipient(done)})
+
+    async def audit(request: Request) -> Response:
+        def number(name: str, default: Optional[int]) -> Optional[int]:
+            raw = request.query_params.get(name)
+            if raw is None:
+                return default
+            if not raw.isdigit():
+                raise ValidationError(f"'{name}' must be a number.")
+            return int(raw)
+
+        limit = min(max(number("limit", 50) or 50, 1), 200)
+        rows = await run_in_threadpool(db.audit_page, limit, number("before", None))
+        items = [
+            {"seq": r["seq"], "ts": r["ts"], "event": r["event"], "draft_id": r["draft_id"], "by": r["owner"],
+             "address": r["recipient_address"], "detail": r["detail"]}
+            for r in rows
+        ]
+        return reply(request, 200, {"entries": items, "next_before": items[-1]["seq"] if len(items) == limit else None})
+
     routes = [
         Route("/admin/login", endpoint(login, auth=False), methods=["POST"]),
         Route("/admin/logout", endpoint(logout), methods=["POST"]),
         Route("/admin/status", endpoint(status), methods=["GET"]),
         Route("/admin/recipients", endpoint(list_recipients), methods=["GET"]),
         Route("/admin/recipients", endpoint(add_recipient), methods=["POST"]),
+    ]
+    routes += [
+        Route("/admin/recipients/{rid:int}/unblock", endpoint(unblock), methods=["POST"]),
+        Route("/admin/folders", endpoint(folders), methods=["GET"]),
+        Route("/admin/folders/rule", endpoint(put_rule), methods=["PUT"]),
+        Route("/admin/audit", endpoint(audit), methods=["GET"]),
     ]
     for action in ("approve", "reject", "block", "remove"):
         routes.append(Route("/admin/recipients/{rid:int}/" + action, endpoint(transition(action)), methods=["POST"]))

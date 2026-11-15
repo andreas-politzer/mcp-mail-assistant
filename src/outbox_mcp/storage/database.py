@@ -489,6 +489,15 @@ class Database:
         with self._tx() as conn:
             self._audit(conn, now, event, owner=owner, detail=detail)
 
+    def audit_page(self, limit: int, before_seq: Optional[int] = None) -> List[sqlite3.Row]:
+        """Newest entries first, without subjects and body hashes (no mail content)."""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT seq,ts,event,draft_id,owner,recipient_address,detail FROM audit_log"
+                " WHERE (? IS NULL OR seq < ?) ORDER BY seq DESC LIMIT ?",
+                (before_seq, before_seq, limit),
+            ).fetchall()
+
     def schema_version(self) -> int:
         with self._connect() as conn:
             return conn.execute("PRAGMA user_version").fetchone()[0]

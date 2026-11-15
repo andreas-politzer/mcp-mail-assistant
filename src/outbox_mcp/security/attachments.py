@@ -83,6 +83,12 @@ def _starts_with(parts: Tuple[str, ...], prefix: Tuple[str, ...]) -> bool:
     return bool(prefix) and parts[: len(prefix)] == prefix
 
 
+def is_sensitive_name(name: str) -> bool:
+    """True if a file or folder name looks sensitive (a fixed protection that no rule can lift)."""
+    normalised = _norm(name)
+    return any(bad in normalised for bad in _SENSITIVE_NAME_PARTS)
+
+
 def path_key(path: str) -> str:
     """The normalised form of a relative path (NFC, case-folded, parts joined with '/'), used to
     compare paths and to store rules. The comparison is component by component."""
@@ -184,7 +190,7 @@ class AttachmentPolicy:
             raise refuse("it is not in an allowed folder")
         if any(_starts_with(normalised, d) for d in denied):
             raise refuse("it is in a blocked folder")
-        if any(bad in part for part in normalised for bad in _SENSITIVE_NAME_PARTS):
+        if any(is_sensitive_name(part) for part in parts):
             raise refuse("the name looks sensitive")
         if not parts[-1].lower().endswith(".md"):
             raise refuse("only .md (Markdown) files can be attached")

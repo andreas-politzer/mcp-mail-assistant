@@ -263,12 +263,6 @@ def test_a_blocked_address_cannot_be_added_again(client, auth):
     assert post(client, auth, "/admin/recipients", {"name": "Dora", "address": "dora@example.org"}).status_code == 409
 
 
-def test_unblocking_is_not_available_yet(client, auth):
-    c = post(client, auth, "/admin/recipients", {"name": "Dora", "address": "dora@example.org"}).json()["recipient"]["id"]
-    post(client, auth, f"/admin/recipients/{c}/block")
-    assert post(client, auth, f"/admin/recipients/{c}/unblock").status_code in (404, 405)
-
-
 def test_recipient_changes_are_logged_as_admin_web(client, auth, admin_config):
     post(client, auth, "/admin/recipients", {"name": "Dora", "address": "dora@example.org"})
     rows = [e for e in Database(admin_config.db_path).audit_events() if e["event"] == "recipient_added"]

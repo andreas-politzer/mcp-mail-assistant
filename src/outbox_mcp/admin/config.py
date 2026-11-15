@@ -25,6 +25,8 @@ class AdminConfig:
     max_failed_logins: int = 5
     lockout_seconds: int = 15 * 60
     max_body_bytes: int = 16 * 1024
+    attachment_root: Optional[Path] = None
+    confirmation_seconds: int = 120
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "AdminConfig":
@@ -48,7 +50,11 @@ class AdminConfig:
         for origin in origins:
             if "*" in origin or origin.endswith("/"):
                 raise ConfigError("OUTBOX_ADMIN_ALLOWED_ORIGINS needs exact origins (no wildcard, no trailing slash).")
+        root = e.get("OUTBOX_ADMIN_ATTACHMENT_ROOT", "").strip()
+        if root and not Path(root).is_absolute():
+            raise ConfigError("OUTBOX_ADMIN_ATTACHMENT_ROOT must be an absolute path.")
         return cls(
+            attachment_root=Path(root) if root else None,
             db_path=Path(db),
             passphrase_hash=stored,
             allowed_hosts=tuple(h.lower() for h in items("OUTBOX_ADMIN_ALLOWED_HOSTS", DEFAULT_HOSTS)),
