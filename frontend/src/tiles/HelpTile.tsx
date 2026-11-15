@@ -33,7 +33,7 @@ export function HelpTile() {
           <p>Unter Freigegeben stehen die Adressen, an die Claude Mails vorbereiten darf. Entfernen nimmt eine Adresse wieder heraus.</p>
           <p>Eine gesperrte Adresse kommt nie wieder, auch nicht über eine Kontaktdatei. Du kannst die Sperre aufheben. Freigegeben ist die Adresse dann noch nicht.</p>
           <p>Mit CSV importieren liest du eine Kontaktdatei ein. Du siehst zuerst eine Vorschau. Danach werden die neuen Adressen nur Kandidaten, nichts wird automatisch freigegeben. Eine Datei darf höchstens 2000 Zeilen haben.</p>
-          <p>Kandidaten, über die du nicht entscheidest, verfallen nach 30 Tagen. Abgelehnte Kandidaten kommen nie wieder. Solange Kandidaten offen sind, pausieren Claudes eigene Vorschläge.</p>
+          <p>Kandidaten, über die du nicht entscheidest, verfallen nach einer Frist. Die Frist stellst du unter Einstellungen ein, die Vorgabe sind 30 Tage. Abgelehnte Kandidaten kommen nie wieder. Sind zu viele Vorschläge offen, macht Claude keine weiteren. Die Vorgabe sind fünf.</p>
         </Part>
 
         <Part title="Dateien und Anhänge">
@@ -41,7 +41,7 @@ export function HelpTile() {
           <p>Mit Öffnen siehst du den Baum einer Quelle. Gib einen Ordner frei oder den ganzen Ordner. Einzelne Dateien lassen sich nur sperren.</p>
           <p>Dateien von diesem Mac kommen erst beim Abgleich auf den Server. Der Abgleich zeigt dir vorher, was neu ist, was sich geändert hat und was vom Server gelöscht wird. Erst nach deinem Klick passiert etwas.</p>
           <p>Stimmt etwas nicht, bricht der Abgleich ab und löscht nichts. Das gilt, wenn der Ordner fehlt, ersetzt wurde oder nicht vollständig gelesen werden konnte.</p>
-          <p>Es gehen nur Dateien mit der Endung .md oder .txt. Dateien mit Namen, die nach Passwörtern oder Zugangsdaten klingen, werden nie übertragen.</p>
+          <p>Es gehen nur Dateien mit der Endung .md oder .txt. Versteckte Dateien und Dateien mit Namen, die nach Passwörtern oder Zugangsdaten klingen, werden nie übertragen.</p>
           <p>Wo ein Ordner auf deinem Mac liegt, bleibt auf diesem Mac. Der Server und das Protokoll erfahren es nicht.</p>
         </Part>
 
@@ -54,7 +54,7 @@ export function HelpTile() {
         </Part>
 
         <Part title="Sitzung und Abmelden">
-          <p>Nach 20 Minuten ohne Eingabe meldet der Server dich ab, spätestens nach 4 Stunden. Die Passphrase liegt nur im Arbeitsspeicher. Mit Herunterfahren im Startmenü endet die Sitzung sofort, und das Fenster schließt sich.</p>
+          <p>Der Server meldet dich ab, wenn 20 Minuten lang nichts passiert, und spätestens nach 4 Stunden. Das sind die Vorgaben des Servers. Die Passphrase liegt nur im Arbeitsspeicher. Mit Herunterfahren im Startmenü endet die Sitzung sofort, und das Fenster schließt sich.</p>
         </Part>
 
         <Part title="Wenn etwas nicht klappt">

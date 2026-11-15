@@ -58,7 +58,7 @@ describe('help and instructions', () => {
     const { container } = render(<HelpTile />)
     const text = container.textContent ?? ''
     expect(text).toContain('2000 Zeilen')
-    expect(text).toContain('30 Tagen')
+    expect(text).toContain('30 Tage')
     expect(text).toContain('20 Minuten')
     expect(text).toContain('4 Stunden')
   })
