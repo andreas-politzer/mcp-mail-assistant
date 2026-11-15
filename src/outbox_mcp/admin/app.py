@@ -51,7 +51,8 @@ _STATUSES = ("suggested", "active", "rejected", "removed", "expired", "blocked")
 def _recipient(r: RecipientRecord) -> Dict[str, Any]:
     return {
         "id": r.id, "name": r.name, "address": r.address, "aliases": list(r.aliases),
-        "status": r.status, "note": r.note, "created_at": r.created_at, "decided_at": r.decided_at,
+        "status": r.status, "note": r.note, "suggested_by": r.suggested_by,
+        "created_at": r.created_at, "decided_at": r.decided_at,
     }
 
 

@@ -13,7 +13,6 @@ export interface ParseResult {
 }
 
 const MAX_BYTES = 1_000_000
-const MAX_ROWS = 5000
 const EMAIL = /^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/
 
 function splitLine(line: string, delim: string): string[] {
@@ -34,7 +33,7 @@ function splitLine(line: string, delim: string): string[] {
   return out
 }
 
-export function parseContacts(text: string, known: Set<string>): ParseResult {
+export function parseContacts(text: string, known: Set<string>, maxRows: number): ParseResult {
   if (text.length > MAX_BYTES) return { rows: [], invalid: 0, known: 0, note: 'Die Datei ist größer als 1 MB und wurde nicht gelesen.' }
   const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim() !== '')
   if (lines.length === 0) return { rows: [], invalid: 0, known: 0, note: 'Die Datei ist leer.' }
@@ -54,7 +53,7 @@ export function parseContacts(text: string, known: Set<string>): ParseResult {
   let knownCount = 0
   let truncated = false
   for (const line of lines.slice(hasHeader ? 1 : 0)) {
-    if (rows.length >= MAX_ROWS) { truncated = true; break }
+    if (rows.length >= maxRows) { truncated = true; break }
     const cells = splitLine(line, delim)
     const address = (mailCol >= 0 ? cells[mailCol] : cells.find((c) => EMAIL.test(c))) ?? ''
     if (!EMAIL.test(address)) { invalid++; continue }
@@ -68,19 +67,5 @@ export function parseContacts(text: string, known: Set<string>): ParseResult {
     if (!name) name = address.split('@')[0]
     rows.push({ name, address })
   }
-  return { rows, invalid, known: knownCount, note: truncated ? `Es wurden nur die ersten ${MAX_ROWS} Zeilen gelesen.` : undefined }
-}
-
-const FIRST = ['Anna', 'Ben', 'Clara', 'David', 'Emma', 'Felix', 'Greta', 'Hannes', 'Ida', 'Jonas', 'Klara', 'Lukas']
-const LAST = ['Beispiel', 'Muster', 'Probst', 'Nord', 'Siebert', 'Wolff', 'Kramer', 'Jansen', 'Brandt']
-
-// Demo data for the prototype (fake people, reserved example domain).
-export function sampleCsv(): string {
-  const lines = ['Name,E-Mail,Telefon']
-  for (let i = 0; i < 60; i++) {
-    const first = FIRST[i % FIRST.length]
-    const last = LAST[(i * 5) % LAST.length]
-    lines.push(`${first} ${last},${first.toLowerCase()}.${last.toLowerCase()}${i}@example.org,040 123${i}`)
-  }
-  return lines.join('\n')
+  return { rows, invalid, known: knownCount, note: truncated ? `Die Datei hat mehr als ${maxRows} gültige Zeilen. Gelesen wurden nur die ersten ${maxRows}. Teile die Datei, wenn du den Rest brauchst.` : undefined }
 }

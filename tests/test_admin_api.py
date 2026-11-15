@@ -329,3 +329,14 @@ def test_rules_are_checked_at_every_send_whatever_the_admin_session(config, mail
     with pytest.raises(RecipientNotAllowed):
         mail_service.send_email("o", draft)
     assert sender.sent == []
+
+
+def test_a_recipient_shows_who_suggested_it(client, auth, admin_config):
+    from outbox_mcp.storage.database import Database
+    from outbox_mcp.storage.recipient_store import RecipientStore
+
+    store = RecipientStore(Database(admin_config.db_path))
+    store.suggest("claude-session", "Anna", "anna@example.org", "", 1.0)
+    rows = client.get("/admin/recipients", headers=auth).json()["recipients"]
+    anna = next(r for r in rows if r["address"] == "anna@example.org")
+    assert anna["status"] == "suggested" and anna["suggested_by"] == "claude-session"
