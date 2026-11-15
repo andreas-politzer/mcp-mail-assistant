@@ -31,7 +31,7 @@ const OTHERS = [
 
 // The little helper: a chunky first-generation mobile phone with a face.
 // Own drawing. Click it to hear something; click again to send it away.
-export function Assistant({ right = 124 }: { right?: number }) {
+export function Assistant({ right = 124, zIndex, onFocus }: { right?: number; zIndex?: number; onFocus?: () => void }) {
   const [text, setText] = useState<string | null>(null)
   const [opened, setOpened] = useState(0)
   const [mouthOpen, setMouthOpen] = useState(false)
@@ -57,7 +57,7 @@ export function Assistant({ right = 124 }: { right?: number }) {
   }
 
   return (
-    <div className="absolute flex items-end gap-2 select-none" style={{ right, bottom: 48 }}>
+    <div className="absolute flex items-end gap-2 select-none" data-stack="funki" onPointerDownCapture={onFocus} style={{ right, bottom: 48, zIndex }}>
       {text !== null && (
         <div className="relative mb-12 max-w-[220px] px-3 py-2 text-[12px] leading-snug" style={{ background: '#ffffe1', color: '#000', border: '1px solid #000', boxShadow: '2px 2px 0 rgba(0,0,0,0.35)' }}>
           {text}

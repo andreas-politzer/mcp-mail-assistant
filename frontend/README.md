@@ -34,6 +34,6 @@ tests/          vitest tests with a stand-in for the Rust side
 
 ## Rules for working on it
 
-- Application tiles never get a `z-index`: it breaks the glass blur. Playful pieces that must lie under the tiles are drawn before them in `src/App.tsx`.
+- Stacking: every clickable desktop element (tiles, clock, sticky note, Funki, icons) has a level from the one list in `src/core/stacking.ts`; clicking an element moves it to the end of the list. All levels stay below the task bars at 70. Tiles do carry a `z-index` now, which an earlier prototype avoided because it broke the glass blur in some browsers. If the blur ever disappears after a change here, look at this first.
 - Nothing private in windows, help texts, tests or examples: no real server names, addresses or paths. `tests/test_repo_hygiene.py` in the main test suite checks this.
 - A local folder's path stays on the computer. The interface gets display texts and ids, never a path to read.

@@ -21,7 +21,7 @@ function load(): string {
 
 // Flat yellow sticky note in the plain style of the time: hard edge, system font,
 // small title bar. Draggable, editable, remembers what you wrote.
-export function Sticky({ onClose, onFocus, initial }: { onClose: () => void; onFocus?: () => void; initial?: { x: number; y: number } }) {
+export function Sticky({ onClose, onFocus, initial, zIndex = 90 }: { onClose: () => void; onFocus?: () => void; initial?: { x: number; y: number }; zIndex?: number }) {
   const [text, setText] = useState(load)
   const [tip, setTip] = useState(0)
   const { position, dragHandlers } = useDraggable(initial ?? { x: 300, y: 300 }, undefined, { width: 160, height: 150 })
@@ -43,7 +43,7 @@ export function Sticky({ onClose, onFocus, initial }: { onClose: () => void; onF
     <div
       className="fixed"
       onPointerDownCapture={onFocus}
-      style={{ left: position.x, top: position.y, width: 160, background: '#ffff99', border: '1px solid #000', color: '#000', fontFamily: 'var(--retro-font)' }}
+      style={{ left: position.x, top: position.y, width: 160, zIndex, background: '#ffff99', border: '1px solid #000', color: '#000', fontFamily: 'var(--retro-font)' }}
     >
       <div
         className="flex items-center px-1 text-[11px] select-none cursor-grab touch-none"

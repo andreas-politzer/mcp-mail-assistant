@@ -9,6 +9,7 @@ export function DesktopIcon({
   selected,
   x,
   y,
+  zIndex,
   onSelect,
   onOpen,
   onDrop,
@@ -18,6 +19,7 @@ export function DesktopIcon({
   selected: boolean
   x: number
   y: number
+  zIndex?: number
   onSelect: () => void
   onOpen: () => void
   onDrop: (x: number, y: number) => void
@@ -30,7 +32,7 @@ export function DesktopIcon({
       type="button"
       title="Doppelklick zum Öffnen, ziehen zum Verschieben"
       className="absolute flex flex-col items-center gap-1 w-24 py-1 select-none outline-none touch-none"
-      style={{ left: x, top: y, transform: delta ? `translate(${delta.dx}px, ${delta.dy}px)` : undefined, cursor: delta ? 'grabbing' : 'default' }}
+      style={{ left: x, top: y, zIndex, transform: delta ? `translate(${delta.dx}px, ${delta.dy}px)` : undefined, cursor: delta ? 'grabbing' : 'default' }}
       onPointerDown={(e) => {
         e.stopPropagation()
         onSelect()

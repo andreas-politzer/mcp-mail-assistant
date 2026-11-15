@@ -15,6 +15,7 @@ import {
   BIN, CELLS, CHAT, COMPUTER, ENVELOPE, FLOPPY, FOLDER, GLOBE, HEART_CARD, MINE, NOTEPAD, PAINT, PAWN, SHEET, SPADE_CARD, PixelSprite,
 } from './components/PixelSprite'
 import { HelpTile } from './tiles/HelpTile'
+import { levelOf, raised } from './core/stacking'
 import { RecipientsTile } from './tiles/RecipientsTile'
 import { FilesTile } from './tiles/FilesTile'
 import { SettingsTile } from './tiles/SettingsTile'
@@ -60,9 +61,9 @@ function defaultWins(): Win[] {
 }
 let nextWinId = 1
 
-// Clock and sticky note lie under the application tiles. This works by their place in the page
-// (they are drawn before the tiles), not by z-index values: tiles must not get a z-index.
-const UNDER_TILES = new Set<WinKind>(['clock', 'sticky'])
+// Order of the clickable desktop elements, back to front, when the desktop opens: the playful pieces
+// at the back, the application tiles in front. Clicking an element brings it to the front (see core/stacking.ts).
+const INITIAL_STACK = ['funki', 'clock', 'sticky', 'recipients', 'files', 'settings', 'activity', 'help']
 
 const CHAOS: JokeKind[] = ['chaos-text', 'chaos-sheet', 'chaos-net', 'chaos-note', 'chaos-404']
 
@@ -103,7 +104,7 @@ function defaultCells(): Record<string, Cell> {
   return out
 }
 
-function DesktopApp() {
+export function DesktopApp() {
   const [pending, setPending] = useState<ConfirmRequest | null>(null)
   const [showRecipients, setShowRecipients] = useState(true)
   const [showFiles, setShowFiles] = useState(true)
@@ -111,6 +112,8 @@ function DesktopApp() {
   const [showActivity, setShowActivity] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
   const [selectedIcon, setSelectedIcon] = useState<string | null>(null)
+  const [stack, setStack] = useState<string[]>(INITIAL_STACK)
+  const front = (id: string) => setStack((prev) => raised(prev, id))
   const [cells, setCells] = useState<Record<string, Cell>>(defaultCells)
   const [wallpaper, setWallpaper] = useState<Wallpaper>({ kind: 'teal', tiled: true })
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
@@ -151,16 +154,16 @@ function DesktopApp() {
   }
 
   const runIcon = (a: IconAction) => {
-    if (a === 'recipients') setShowRecipients(true)
-    else if (a === 'files') setShowFiles(true)
+    if (a === 'recipients') { setShowRecipients(true); front('recipients') }
+    else if (a === 'files') { setShowFiles(true); front('files') }
     else if (a === 'bin')
       setPending({ title: 'Papierkorb', body: 'Der Papierkorb ist leer. (Später landen hier zum Beispiel gelöschte Kontakt-Kandidaten.)', confirmLabel: 'Okay', info: true, run: () => {} })
     else open(a)
   }
 
   const runStart = (c: StartCommand) => {
-    if (c === 'recipients') setShowRecipients(true)
-    else if (c === 'files') setShowFiles(true)
+    if (c === 'recipients') { setShowRecipients(true); front('recipients') }
+    else if (c === 'files') { setShowFiles(true); front('files') }
     else if (c === 'chaos') startChaos()
     else if (c === 'tidy') tidy()
     else open(c)
@@ -184,10 +187,20 @@ function DesktopApp() {
 
   const w = typeof window === 'undefined' ? 1400 : window.innerWidth
   const startX = w >= 1150 ? 232 : 40
-  const tileW = Math.min(520, Math.max(380, Math.floor((w - startX - 64) / 2)))
+  // The right-hand column (clock, sticky note) stays free, so everything is visible at the start.
+  const tileW = Math.min(520, Math.max(380, Math.floor((w - startX - 64 - 190) / 2)))
 
   const renderWin = (win: Win) => {
-    const common = { onClose: () => close(win.id), onFocus: () => raise(win.id), initial: win.initial }
+    const stacked = win.kind === 'clock' || win.kind === 'sticky'
+    const common = {
+      onClose: () => close(win.id),
+      onFocus: () => {
+        raise(win.id)
+        if (stacked) front(win.kind)
+      },
+      initial: win.initial,
+      zIndex: stacked ? levelOf(stack, win.kind) : undefined,
+    }
     switch (win.kind) {
       case 'clock':
         return <Clock key={win.id} c={common} />
@@ -226,13 +239,14 @@ function DesktopApp() {
           { id: 'activity', label: 'Aktivität', open: showActivity },
           { id: 'help', label: 'Hilfe & Anleitung', open: showHelp },
         ]}
-        onToggle={(id) =>
-          id === 'recipients' ? setShowRecipients((v) => !v)
-          : id === 'files' ? setShowFiles((v) => !v)
-          : id === 'settings' ? setShowSettings((v) => !v)
-          : id === 'help' ? setShowHelp((v) => !v)
-          : setShowActivity((v) => !v)
-        }
+        onToggle={(id) => {
+          front(id)
+          if (id === 'recipients') setShowRecipients((v) => !v)
+          else if (id === 'files') setShowFiles((v) => !v)
+          else if (id === 'settings') setShowSettings((v) => !v)
+          else if (id === 'help') setShowHelp((v) => !v)
+          else setShowActivity((v) => !v)
+        }}
         onCommand={runStart}
       />
 
@@ -245,7 +259,11 @@ function DesktopApp() {
             selected={selectedIcon === i.id}
             x={OX + cell.c * CW}
             y={OY + cell.r * CH}
-            onSelect={() => setSelectedIcon(i.id)}
+            zIndex={levelOf(stack, `icon:${i.id}`)}
+            onSelect={() => {
+              setSelectedIcon(i.id)
+              front(`icon:${i.id}`)
+            }}
             onOpen={() => runIcon(i.action)}
             onDrop={(x, y) => dropIcon(i.id, x, y)}
           >
@@ -254,13 +272,11 @@ function DesktopApp() {
         )
       })}
 
-      {/* Playful pieces come first in the page, so the application tiles paint over them. No tile gets a z-index: that would break the glass blur. */}
-      <Assistant right={funkiRight(w)} />
-      {wins.filter((x) => UNDER_TILES.has(x.kind)).map(renderWin)}
-
       {showRecipients && (
         <DraggableGlass
           containerRef={recipientsRef}
+          zIndex={levelOf(stack, 'recipients')}
+          onFocus={() => front('recipients')}
           title="Empfänger"
           className="rounded-3xl"
           initialPosition={{ x: startX, y: 44 }}
@@ -276,6 +292,8 @@ function DesktopApp() {
       {showFiles && (
         <DraggableGlass
           containerRef={filesRef}
+          zIndex={levelOf(stack, 'files')}
+          onFocus={() => front('files')}
           title="Dateien und Anhänge"
           className="rounded-3xl"
           initialPosition={{ x: startX + tileW + 24, y: 44 }}
@@ -291,6 +309,8 @@ function DesktopApp() {
       {showSettings && (
         <DraggableGlass
           containerRef={settingsRef}
+          zIndex={levelOf(stack, 'settings')}
+          onFocus={() => front('settings')}
           title="Einstellungen"
           className="rounded-3xl"
           initialPosition={{ x: startX + 40, y: 72 }}
@@ -306,6 +326,8 @@ function DesktopApp() {
       {showActivity && (
         <DraggableGlass
           containerRef={activityRef}
+          zIndex={levelOf(stack, 'activity')}
+          onFocus={() => front('activity')}
           title="Aktivität"
           className="rounded-3xl"
           initialPosition={{ x: startX + 80, y: 100 }}
@@ -321,6 +343,8 @@ function DesktopApp() {
       {showHelp && (
         <DraggableGlass
           containerRef={helpRef}
+          zIndex={levelOf(stack, 'help')}
+          onFocus={() => front('help')}
           title="Hilfe und Anleitung"
           className="rounded-3xl"
           initialPosition={{ x: startX + 120, y: 128 }}
@@ -333,7 +357,9 @@ function DesktopApp() {
         </DraggableGlass>
       )}
 
-      {wins.filter((x) => !UNDER_TILES.has(x.kind)).map(renderWin)}
+      <Assistant right={funkiRight(w)} zIndex={levelOf(stack, 'funki')} onFocus={() => front('funki')} />
+
+      {wins.map(renderWin)}
 
       {menu && (
         <>

@@ -25,6 +25,7 @@ export function DraggableGlass({
   onClose,
   containerRef,
   zIndex,
+  onFocus,
   dark = false,
 }: {
   initialPosition: ModulePosition
@@ -43,6 +44,7 @@ export function DraggableGlass({
   onClose?: () => void
   containerRef?: React.RefObject<HTMLDivElement | null>
   zIndex?: number
+  onFocus?: () => void
   dark?: boolean
 }) {
   const { size, resizeHandlers, setSize } = useResizable(initialSize, minSize)
@@ -93,6 +95,8 @@ export function DraggableGlass({
   return (
     <div
       ref={containerRef}
+      data-tile={title}
+      onPointerDownCapture={onFocus}
       className="absolute transition-[height] duration-500 ease-[cubic-bezier(0.4,0,0.2,1)]"
       style={{ left: position.x, top: position.y, width: collapsible && !isOpen ? 'max-content' : size.width, height: outerHeight, zIndex }}
     >
