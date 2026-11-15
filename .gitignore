@@ -16,3 +16,15 @@ frontend/.env.local
 frontend/src-tauri/target
 frontend/src-tauri/gen
 *.local
+
+# Build output and dependencies, anywhere in the tree
+node_modules/
+target/
+dist/
+*.tsbuildinfo
+
+# Local working folders that are not part of the project
+# desktop-spike: build leftovers of the Tauri technical test, which lives only on its own branch
+desktop-spike/
+# Claude outputs: review notes, patches and archives from the working sessions
+Claude outputs/
