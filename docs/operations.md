@@ -27,13 +27,13 @@ The transport is stateless and the sign-in state lives in SQLite. A restart ends
 
 ## Backup
 
-What must survive a disk failure: the two databases, `.env`, `recipients.json`, and the unit and tunnel files. What is deliberately not backed up: the deploy key (create a new one).
+What must survive a disk failure: the two databases, `.env`, `admin.env` (the hash of the admin passphrase, if the admin API runs), `recipients.json`, and the unit and tunnel files (including `outbox-admin-api.service`). What is deliberately not backed up: the deploy key (create a new one).
 
 Design:
 
 - A **second backup unit** next to any existing backup, same restic repository, its own tag (`outbox`), its own timer at minute 30 of every hour. A separate unit leaves an existing backup untouched, and the offset keeps the two from fighting over the repository lock.
 - **SQLite is not copied as a file.** A live database, especially in WAL mode, can be copied in a broken state. [`deploy/snapshot.py`](../deploy/snapshot.py) uses SQLite's backup API to write a consistent snapshot into a staging directory (mode `700`), checks it with `integrity_check` and swaps it in atomically; it needs only Python, not the `sqlite3` program. Journal mode is switched to `delete` in the copy so each snapshot is a single file.
-- `.env` and `recipients.json` are backed up directly from the data directory, so no second plaintext copy of the SMTP password lies around.
+- `.env`, `admin.env` and `recipients.json` are backed up directly from the data directory, so no second plaintext copy of the SMTP password lies around. `admin.env` holds only the hash of the admin passphrase, not the passphrase. After adding a file to the unit, run the backup once and check the snapshot: `restic ls -l latest --tag outbox` shows the file with its mode (`-rw-------`), and `restic dump latest <path> --tag outbox | cmp - <path>` compares content with the original without printing it.
 - The restic repository is encrypted; the repository password is a file readable only by the service user.
 
 **Test the restore, not just the backup.** Restore the latest snapshot into an empty private directory, open every database read-only, run `pragma integrity_check`, compare table row counts with what you expect, compare `.env` and `recipients.json` with the originals using `cmp`, and delete the test directory (it holds a copy of `.env`). The author's run: both databases `ok`, drafts and audit entries present, both files identical.
@@ -80,7 +80,18 @@ The admin API is its own small service (`outbox-admin-api`, example unit in `dep
 - `GET /admin/audit` returns the audit log, newest first, without subjects, bodies or hashes.
 - **Send limits** (`GET`/`PUT /admin/limits`): the limits per hour and per day live in the database and apply to the very next send, no restart. Hard ceilings of 100 per hour and 1000 per day are part of the code; nothing stored, configured or requested can exceed them, and anything above is cut down when used. `0` stops all sending. Lowering is immediate; raising (either value) needs the confirmation step. Until a value is stored, the mail service's own settings file (`OUTBOX_MAX_SENDS_PER_HOUR`/`_DAY`) provides the starting value. The mail service writes the starting values it runs with into the database when it starts, and the admin side shows exactly those as the effective values (`source: mail_service_settings`), never a value from its own file; the admin settings file has no limit settings at all. Before the mail service has ever started and while nothing is stored, the values are `null` (`source: unknown`) and any increase needs confirmation. After the first change through the API, `source` is `stored`. The prepare limit stays in the settings file.
 - **How sends are counted:** a send counts from the moment it is claimed, whatever becomes of it: sent, failed, unknown or interrupted by a crash. A failed send therefore uses up a slot, which stops a failing loop from flooding the mailbox. Refused attempts, expired drafts and cancelled drafts do not count. Counting and the decision happen inside the same write transaction as the claim, so parallel sends cannot get past the limit.
-- Not available yet: contact import.
+- Contact import: see "Admin functions" below.
+
+### Installing the admin API on the server
+
+Nothing here touches the mail service or the tunnel. Run on the server, in the code folder:
+
+1. **Hash:** `python -m outbox_mcp.admin.passphrase` asks twice for a new passphrase (typed hidden, at least 12 characters, a different one from the connector and mailbox passwords) and prints one line `OUTBOX_ADMIN_PASSPHRASE_HASH=...`. The passphrase itself is never an argument, never printed, never stored; keep it in a password manager. If you ever pasted it into a command line by mistake, remove that line from the shell history (`history -d <number> && history -w`).
+2. **Settings file** `admin.env` next to `.env`, mode `600`: `OUTBOX_DB_PATH` (the same database as the mail service), `OUTBOX_ADMIN_ATTACHMENT_ROOT` (the same folder as `OUTBOX_ATTACHMENT_ROOT`), `OUTBOX_ADMIN_PORT` (default 8431) and the hash line. No mail credentials. Browser origins stay empty (no origin allowed) until an app needs one.
+3. **Unit:** copy `deploy/outbox-admin-api.service`, replace the user and paths, `systemctl daemon-reload`, `systemctl enable --now outbox-admin-api`. It needs the database at schema 5, which the mail service creates at its first start with this version.
+4. **Check:** `ss -ltn` must show port 8431 on `127.0.0.1` only; `curl http://127.0.0.1:8431/admin/status` answers 401, and 400 with a wrong `Host` header. Then sign in with the passphrase (typed hidden, for example from a short script that posts it as JSON) and read `/admin/status`, `/admin/security` and `/admin/sources`; sign out; the old token must answer 401.
+5. **Back up** `admin.env` and the unit file (see Backup below).
+6. **Reach it from another machine only through an SSH tunnel:** `ssh -N -L 8431:127.0.0.1:8431 user@server`, then use `http://localhost:8431`. There is no public route. Some terminals replace `ssh` with a wrapper that ignores options such as `-O exit`; call `/usr/bin/ssh` if a control socket does not behave.
 
 ## File sources (schema 5)
 
