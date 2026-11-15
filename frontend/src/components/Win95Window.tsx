@@ -16,7 +16,7 @@ export function Win95Window({
 }: {
   title: string
   width?: number
-  zIndex?: number
+  zIndex?: number | 'auto'
   initial?: { x: number; y: number }
   onFocus?: () => void
   onClose: () => void

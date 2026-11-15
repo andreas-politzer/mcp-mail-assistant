@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { AskConfirm } from '../core/types'
 import { asText, countText, kb, local, problem, server, type ScanOut, type SentFile, type Source } from './filesApi'
 
-// The manual synchronisation of one source from this Mac, in the order that keeps the server safe:
+// The manual synchronisation of one source from this computer, in the order that keeps the server safe:
 // read everything (any problem aborts), ask the server for a plan, show it, and only after a clear
 // yes send the files in passes. The server removes copies only in the last pass.
 
@@ -115,13 +115,13 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
           </div>
         )}
         {phase.name === 'error' && <div data-testid="sync-error" className="mb-2 px-2 py-1.5 rounded text-[12px]" style={{ background: 'rgba(255,120,130,0.3)' }}>{phase.text}</div>}
-        <button className="gbtn primary" onClick={() => void start()}>Mit diesem Mac abgleichen</button>
+        <button className="gbtn primary" onClick={() => void start()}>Mit diesem Computer abgleichen</button>
         <span className="text-[11px] opacity-70 ml-2">Du siehst vorher, was passiert.</span>
       </div>
     )
   }
 
-  if (phase.name === 'scanning') return <div className="mb-4 text-[12px] opacity-85">Lese die Quelle auf diesem Mac und frage den Server nach einem Plan …</div>
+  if (phase.name === 'scanning') return <div className="mb-4 text-[12px] opacity-85">Lese die Quelle auf diesem Computer und frage den Server nach einem Plan …</div>
 
   if (phase.name === 'applying') {
     return (
@@ -181,7 +181,7 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
         </details>
       )}
       {scan.skipped.length > 0 && (
-        <div className="mt-1 text-[11px] opacity-70">{scan.skipped.length} {scan.skipped.length === 1 ? 'Eintrag' : 'Einträge'} auf dem Mac {scan.skipped.length === 1 ? 'wurde' : 'wurden'} übersprungen, zum Beispiel Verknüpfungen.</div>
+        <div className="mt-1 text-[11px] opacity-70">{scan.skipped.length} {scan.skipped.length === 1 ? 'Eintrag' : 'Einträge'} auf dem Computer {scan.skipped.length === 1 ? 'wurde' : 'wurden'} übersprungen, zum Beispiel Verknüpfungen.</div>
       )}
 
       {needsAck && (
@@ -189,7 +189,7 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
           <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="mt-0.5" />
           <span>
             {emptyRead
-              ? <>Auf diesem Mac wurde keine einzige Textdatei gefunden, auf dem Server liegen aber <b>{serverFiles}</b>. Dieser Abgleich würde <b>alle</b> Kopien löschen. Stimmt das?</>
+              ? <>Auf diesem Computer wurde keine einzige Textdatei gefunden, auf dem Server liegen aber <b>{serverFiles}</b>. Dieser Abgleich würde <b>alle</b> Kopien löschen. Stimmt das?</>
               : <>Dieser Abgleich löscht <b>{s.removed}</b> von <b>{serverFiles}</b> Kopien auf dem Server. Stimmt das?</>}
             {' '}Ja, diese Kopien sollen gelöscht werden.
           </span>

@@ -1,4 +1,4 @@
-//! Everything the app does with files on this Mac.
+//! Everything the app does with files on this computer.
 //!
 //! The rules of this module:
 //! - Local paths live only here and in one small file in the app's data folder. They are never
@@ -128,15 +128,18 @@ fn is_text_name(name: &str) -> bool {
 }
 
 fn home_short(path: &Path) -> String {
-    if let Ok(home) = std::env::var("HOME") {
-        if let Ok(rest) = path.strip_prefix(&home) {
-            return format!("~/{}", rest.display());
+    // HOME on macOS and Linux, USERPROFILE on Windows.
+    for var in ["HOME", "USERPROFILE"] {
+        if let Ok(home) = std::env::var(var) {
+            if let Ok(rest) = path.strip_prefix(&home) {
+                return format!("~/{}", rest.display());
+            }
         }
     }
     path.display().to_string()
 }
 
-/// What the interface may show about a link. It is shown on this Mac only.
+/// What the interface may show about a link. It is shown on this computer only.
 pub fn display_of(link: &Link) -> String {
     home_short(Path::new(&link.path))
 }
@@ -253,7 +256,7 @@ fn walk(
 /// Reads the whole source. Any error returns Err and no partial result.
 pub fn scan_link(link: &Link) -> Result<ScanResult, String> {
     if !reachable(link) {
-        return Err("Die Quelle ist auf diesem Mac nicht erreichbar. Es wurde nichts verändert.".into());
+        return Err("Die Quelle ist auf diesem Computer nicht erreichbar. Es wurde nichts verändert.".into());
     }
     let base = PathBuf::from(&link.path);
     let mut entries = Vec::new();
@@ -311,7 +314,7 @@ pub struct TreeItem {
 
 pub fn list_level(link: &Link, rel: &str) -> Result<Vec<TreeItem>, String> {
     if link.kind != "folder" || !reachable(link) {
-        return Err("Die Quelle ist auf diesem Mac nicht erreichbar.".into());
+        return Err("Die Quelle ist auf diesem Computer nicht erreichbar.".into());
     }
     let dir = Path::new(&link.path).join(safe_rel(rel)?);
     let canon_base = fs::canonicalize(&link.path).map_err(|e| e.to_string())?;

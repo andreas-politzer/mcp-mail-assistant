@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { admin } from '../api/admin'
 
 // Shared helpers of the Files area: server calls, the commands of the Rust side, small texts.
-// Local paths exist only on this Mac; the window gets display texts and ids, never a path to read.
+// Local paths exist only on this computer; the window gets display texts and ids, never a path to read.
 
 export interface Source {
   id: string

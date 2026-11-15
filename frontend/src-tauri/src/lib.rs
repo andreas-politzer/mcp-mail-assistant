@@ -42,7 +42,7 @@ fn find_link(app: &AppHandle, server_id: &str) -> Result<Link, String> {
     local::load_links(&data_dir(app)?)?
         .into_iter()
         .find(|l| l.server_id == server_id)
-        .ok_or_else(|| "Für diese Quelle ist auf diesem Mac kein Ordner und keine Datei hinterlegt.".to_string())
+        .ok_or_else(|| "Für diese Quelle ist auf diesem Computer kein Ordner und keine Datei hinterlegt.".to_string())
 }
 
 #[derive(Serialize)]
@@ -53,7 +53,7 @@ struct LinkView {
     reachable: bool,
 }
 
-/// The places stored on this Mac, with a display text for this window only.
+/// The places stored on this computer, with a display text for this window only.
 #[tauri::command]
 fn local_list(app: AppHandle) -> Result<Vec<LinkView>, String> {
     Ok(local::load_links(&data_dir(&app)?)?
@@ -119,7 +119,7 @@ fn local_link(app: AppHandle, state: State<'_, Shared>, token: String, server_id
     Ok(())
 }
 
-/// Forgets the place of a source. Nothing on the Mac is touched.
+/// Forgets the place of a source. Nothing on the computer is touched.
 #[tauri::command]
 fn local_unlink(app: AppHandle, state: State<'_, Shared>, server_id: String) -> Result<(), String> {
     let _guard = state.store.lock().unwrap();

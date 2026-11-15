@@ -32,7 +32,7 @@ const text = (el: HTMLElement) => (el.textContent ?? '').replace(/\s+/g, ' ').tr
 async function allowAndSync(dirLabel: string, folder = 'Projekte') {
   await clickRow(folder, 'Freigeben')
   await confirmLast()
-  fireEvent.click(await screen.findByText('Mit diesem Mac abgleichen'))
+  fireEvent.click(await screen.findByText('Mit diesem Computer abgleichen'))
   await screen.findByText('Vorschau des Abgleichs')
   return folder
 }
@@ -41,7 +41,7 @@ const runSync = async () => {
   return await screen.findByTestId('sync-done', undefined, { timeout: 30000 })
 }
 const startSync = async () => {
-  fireEvent.click(await screen.findByText('Mit diesem Mac abgleichen'))
+  fireEvent.click(await screen.findByText('Mit diesem Computer abgleichen'))
   await waitFor(() => expect(screen.queryByText('Vorschau des Abgleichs') ?? screen.queryByTestId('sync-error')).toBeTruthy(), { timeout: 20000 })
 }
 
@@ -52,7 +52,7 @@ describe('sources and the tree', () => {
     fireEvent.click(await screen.findByText('Öffnen'))
     await screen.findByText('← Alle Quellen')
     expect(await node('Projekte')).toBeTruthy()
-    expect(screen.queryByText('Mit diesem Mac abgleichen')).toBeNull()
+    expect(screen.queryByText('Mit diesem Computer abgleichen')).toBeNull()
     expect(screen.queryByText('Entfernen')).toBeNull()
   })
 
@@ -64,7 +64,7 @@ describe('sources and the tree', () => {
     expect(await node('root.md')).toBeTruthy()
     expect(screen.queryByTestId('node-notizen.pdf')).toBeNull()
     expect(screen.queryByTestId('node-.versteckt.md')).toBeNull()
-    // no path of this Mac reaches the server
+    // no path of this computer reaches the server
     const src = await sourceByLabel('Testquelle')
     const audit = await api('GET', '/admin/audit?limit=50')
     const dump = JSON.stringify([src, audit.data])
@@ -133,7 +133,7 @@ describe('synchronisation', () => {
     // version and identifier are shown
     expect((await screen.findAllByText(/Version 1 · Kennung/)).length).toBe(2)
 
-    // a change and a deletion on the Mac
+    // a change and a deletion on the computer
     writeFileSync(join(dir, 'Projekte/a.md'), 'alpha changed')
     rmSync(join(dir, 'Projekte/Sub/b.md'))
     await startSync()
@@ -156,7 +156,7 @@ describe('synchronisation', () => {
     expect(screen.queryByText('Abgleich ausführen')).toBeNull()
   })
 
-  it('aborts and deletes nothing when the folder on the Mac is gone', async () => {
+  it('aborts and deletes nothing when the folder on the computer is gone', async () => {
     const dir = await setUp('Weg')
     const src = (await sourceByLabel('Weg'))!
     await allowAndSync('Weg')
@@ -164,7 +164,7 @@ describe('synchronisation', () => {
     const before = await currentPaths(src.id)
     expect(before.length).toBe(2)
     rmSync(dir, { recursive: true })
-    const button = screen.queryByText('Mit diesem Mac abgleichen')
+    const button = screen.queryByText('Mit diesem Computer abgleichen')
     if (button) fireEvent.click(button)
     await waitFor(() => expect(text(document.body)).toContain('nicht erreichbar'))
     expect(await currentPaths(src.id)).toEqual(before)
@@ -180,7 +180,7 @@ describe('synchronisation', () => {
     rmSync(dir, { recursive: true })
     symlinkSync(other, dir)
     // either the window already noticed and took the sync button away, or the scan refuses
-    const button = screen.queryByText('Mit diesem Mac abgleichen')
+    const button = screen.queryByText('Mit diesem Computer abgleichen')
     if (button) fireEvent.click(button)
     await waitFor(() => expect(text(document.body)).toContain('nicht erreichbar'))
     expect(await currentPaths(src.id)).toEqual(before)
@@ -232,7 +232,7 @@ describe('synchronisation', () => {
     await confirmLast()
     await waitFor(() => expect(text(screen.getByTestId('root-rule'))).toContain('erlaubt'))
     expect(text(await node('MOC.md'))).toContain('erlaubt')
-    fireEvent.click(await screen.findByText('Mit diesem Mac abgleichen'))
+    fireEvent.click(await screen.findByText('Mit diesem Computer abgleichen'))
     await screen.findByText('Vorschau des Abgleichs')
     await runSync()
     // the protected name is still never sent, and everything else arrives
@@ -330,7 +330,7 @@ describe('synchronisation', () => {
     await screen.findByText(/ist angelegt/)
     await openSource('Einzel')
     expect(within(await node('Plan.md')).queryByText('Freigeben')).toBeNull()
-    fireEvent.click(await screen.findByText('Mit diesem Mac abgleichen'))
+    fireEvent.click(await screen.findByText('Mit diesem Computer abgleichen'))
     await screen.findByText('Vorschau des Abgleichs')
     await runSync()
     const src = (await sourceByLabel('Einzel'))!

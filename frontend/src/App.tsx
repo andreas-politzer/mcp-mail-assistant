@@ -60,8 +60,9 @@ function defaultWins(): Win[] {
 }
 let nextWinId = 1
 
-// Application tiles lie above the playful desktop pieces: clock and sticky note use level 50, Funki none.
-const TILE_Z = 60
+// Clock and sticky note lie under the application tiles. This works by their place in the page
+// (they are drawn before the tiles), not by z-index values: tiles must not get a z-index.
+const UNDER_TILES = new Set<WinKind>(['clock', 'sticky'])
 
 const CHAOS: JokeKind[] = ['chaos-text', 'chaos-sheet', 'chaos-net', 'chaos-note', 'chaos-404']
 
@@ -253,12 +254,15 @@ function DesktopApp() {
         )
       })}
 
+      {/* Playful pieces come first in the page, so the application tiles paint over them. No tile gets a z-index: that would break the glass blur. */}
+      <Assistant right={funkiRight(w)} />
+      {wins.filter((x) => UNDER_TILES.has(x.kind)).map(renderWin)}
+
       {showRecipients && (
         <DraggableGlass
           containerRef={recipientsRef}
           title="Empfänger"
           className="rounded-3xl"
-          zIndex={TILE_Z}
           initialPosition={{ x: startX, y: 44 }}
           initialSize={{ width: tileW, height: 600 }}
           minSize={{ width: 340, height: 260 }}
@@ -274,7 +278,6 @@ function DesktopApp() {
           containerRef={filesRef}
           title="Dateien und Anhänge"
           className="rounded-3xl"
-          zIndex={TILE_Z}
           initialPosition={{ x: startX + tileW + 24, y: 44 }}
           initialSize={{ width: tileW, height: 600 }}
           minSize={{ width: 340, height: 260 }}
@@ -290,7 +293,6 @@ function DesktopApp() {
           containerRef={settingsRef}
           title="Einstellungen"
           className="rounded-3xl"
-          zIndex={TILE_Z}
           initialPosition={{ x: startX + 40, y: 72 }}
           initialSize={{ width: tileW, height: 640 }}
           minSize={{ width: 340, height: 260 }}
@@ -306,7 +308,6 @@ function DesktopApp() {
           containerRef={activityRef}
           title="Aktivität"
           className="rounded-3xl"
-          zIndex={TILE_Z}
           initialPosition={{ x: startX + 80, y: 100 }}
           initialSize={{ width: tileW + 40, height: 620 }}
           minSize={{ width: 360, height: 260 }}
@@ -322,7 +323,6 @@ function DesktopApp() {
           containerRef={helpRef}
           title="Hilfe und Anleitung"
           className="rounded-3xl"
-          zIndex={TILE_Z}
           initialPosition={{ x: startX + 120, y: 128 }}
           initialSize={{ width: tileW + 20, height: 600 }}
           minSize={{ width: 340, height: 260 }}
@@ -333,9 +333,7 @@ function DesktopApp() {
         </DraggableGlass>
       )}
 
-      <Assistant right={funkiRight(w)} />
-
-      {wins.map(renderWin)}
+      {wins.filter((x) => !UNDER_TILES.has(x.kind)).map(renderWin)}
 
       {menu && (
         <>

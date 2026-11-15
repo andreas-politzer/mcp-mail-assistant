@@ -4,7 +4,7 @@ import type { AskConfirm } from '../core/types'
 import { asText, countText, inApp, kb, local, problem, server, type LocalView, type Source } from './filesApi'
 import { SyncPanel } from './SyncPanel'
 
-// One source in detail: its folders and files with the permissions, and for a source from this Mac
+// One source in detail: its folders and files with the permissions, and for a source from this computer
 // the copies on the server and the synchronisation.
 
 interface Node {
@@ -33,7 +33,7 @@ interface StoredFile {
 
 const REASON: Record<string, string> = {
   blocked: 'wegen einer Sperre gelöscht',
-  removed_local: 'auf dem Mac nicht mehr vorhanden',
+  removed_local: 'auf dem Computer nicht mehr vorhanden',
   source_removed: 'Quelle entfernt',
 }
 
@@ -186,7 +186,7 @@ export function SourceView({
       const p = r.data.preview ?? {}
       const gain =
         'stored_files_allowed_after' in p ? (
-          <>Danach darf Claude <b>{p.stored_files_allowed_after}</b> der gespeicherten Kopien anhängen, bisher {p.stored_files_allowed_before}. Dateien von diesem Mac kommen erst nach dem nächsten Abgleich dazu.</>
+          <>Danach darf Claude <b>{p.stored_files_allowed_after}</b> der gespeicherten Kopien anhängen, bisher {p.stored_files_allowed_before}. Dateien von diesem Computer kommen erst nach dem nächsten Abgleich dazu.</>
         ) : 'files_attachable_after' in p ? (
           <>Danach darf Claude <b>{p.files_attachable_after}</b> Dateien anhängen, bisher {p.files_attachable_before}.{p.count_is_partial ? ' Die Zählung ist unvollständig, es können mehr sein.' : ''}</>
         ) : null
@@ -277,8 +277,8 @@ export function SourceView({
         {isServer
           ? 'Dieser Ordner liegt auf dem Server. Claude liest dort direkt, es gibt nichts abzugleichen.'
           : single
-            ? 'Eine einzelne Datei von diesem Mac. Sie ist mit dem Anlegen freigegeben und lässt sich nur sperren.'
-            : 'Ein Ordner von diesem Mac. Kopien kommen erst beim Abgleich auf den Server. Dateien lassen sich nur über ihren Ordner freigeben, einzelne Dateien nur sperren.'}
+            ? 'Eine einzelne Datei von diesem Computer. Sie ist mit dem Anlegen freigegeben und lässt sich nur sperren.'
+            : 'Ein Ordner von diesem Computer. Kopien kommen erst beim Abgleich auf den Server. Dateien lassen sich nur über ihren Ordner freigeben, einzelne Dateien nur sperren.'}
       </div>
 
       <div className="scroll-glass flex-1 min-h-0 px-6 pb-5 border-t border-white/30 pt-3">
@@ -289,7 +289,7 @@ export function SourceView({
         {!isServer && placeOk && <SyncPanel source={source} ask={ask} onSynced={async () => { await loadStored(null); await refreshTree(); await onChanged() }} />}
         {!isServer && !placeOk && (
           <div className="mb-4 px-2 py-1.5 rounded text-[12px]" style={{ background: 'rgba(255,120,130,0.3)' }}>
-            {inApp ? 'Der Ort dieser Quelle auf diesem Mac ist nicht erreichbar. Ordne ihn in der Liste neu zu, dann sind Baum und Abgleich wieder da.' : 'Baum und Abgleich gibt es nur in der App.'}
+            {inApp ? 'Der Ort dieser Quelle auf diesem Computer ist nicht erreichbar. Ordne ihn in der Liste neu zu, dann sind Baum und Abgleich wieder da.' : 'Baum und Abgleich gibt es nur in der App.'}
           </div>
         )}
 

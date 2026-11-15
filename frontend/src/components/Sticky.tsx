@@ -43,7 +43,7 @@ export function Sticky({ onClose, onFocus, initial }: { onClose: () => void; onF
     <div
       className="fixed"
       onPointerDownCapture={onFocus}
-      style={{ left: position.x, top: position.y, width: 160, zIndex: 50, background: '#ffff99', border: '1px solid #000', color: '#000', fontFamily: 'var(--retro-font)' }}
+      style={{ left: position.x, top: position.y, width: 160, background: '#ffff99', border: '1px solid #000', color: '#000', fontFamily: 'var(--retro-font)' }}
     >
       <div
         className="flex items-center px-1 text-[11px] select-none cursor-grab touch-none"

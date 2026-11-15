@@ -83,8 +83,8 @@ export class FakeTauri {
         return
       case 'local_scan': {
         const l = this.links.get(args.serverId)
-        if (!l) throw 'Für diese Quelle ist auf diesem Mac kein Ordner und keine Datei hinterlegt.'
-        if (!reachable(l)) throw 'Die Quelle ist auf diesem Mac nicht erreichbar. Es wurde nichts verändert.'
+        if (!l) throw 'Für diese Quelle ist auf diesem Computer kein Ordner und keine Datei hinterlegt.'
+        if (!reachable(l)) throw 'Die Quelle ist auf diesem Computer nicht erreichbar. Es wurde nichts verändert.'
         const entries: { path: string; size: number; sha256: string }[] = []
         const skipped: unknown[] = []
         if (l.kind === 'file') {
@@ -111,7 +111,7 @@ export class FakeTauri {
       }
       case 'local_tree': {
         const l = this.links.get(args.serverId)
-        if (!l || l.kind !== 'folder' || !reachable(l)) throw 'Die Quelle ist auf diesem Mac nicht erreichbar.'
+        if (!l || l.kind !== 'folder' || !reachable(l)) throw 'Die Quelle ist auf diesem Computer nicht erreichbar.'
         const dir = args.rel ? join(l.path, args.rel) : l.path
         if (!existsSync(dir)) throw 'Der Ordner ist nicht lesbar.'
         const out: { name: string; kind: 'dir' | 'file'; size: number | null }[] = []

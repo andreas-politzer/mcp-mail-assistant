@@ -37,12 +37,12 @@ export function HelpTile() {
         </Part>
 
         <Part title="Dateien und Anhänge">
-          <p>Eine Quelle ist ein Ordner oder eine einzelne Datei auf diesem Mac, oder der Notizordner auf dem Server. Claude sieht nur, was du ausdrücklich freigibst. Eine Sperre gewinnt immer.</p>
+          <p>Eine Quelle ist ein Ordner oder eine einzelne Datei auf diesem Computer, oder der Notizordner auf dem Server. Claude sieht nur, was du ausdrücklich freigibst. Eine Sperre gewinnt immer.</p>
           <p>Mit Öffnen siehst du den Baum einer Quelle. Gib einen Ordner frei oder den ganzen Ordner. Einzelne Dateien lassen sich nur sperren.</p>
-          <p>Dateien von diesem Mac kommen erst beim Abgleich auf den Server. Der Abgleich zeigt dir vorher, was neu ist, was sich geändert hat und was vom Server gelöscht wird. Erst nach deinem Klick passiert etwas.</p>
+          <p>Dateien von diesem Computer kommen erst beim Abgleich auf den Server. Der Abgleich zeigt dir vorher, was neu ist, was sich geändert hat und was vom Server gelöscht wird. Erst nach deinem Klick passiert etwas.</p>
           <p>Stimmt etwas nicht, bricht der Abgleich ab und löscht nichts. Das gilt, wenn der Ordner fehlt, ersetzt wurde oder nicht vollständig gelesen werden konnte.</p>
           <p>Es gehen nur Dateien mit der Endung .md oder .txt. Versteckte Dateien und Dateien mit Namen, die nach Passwörtern oder Zugangsdaten klingen, werden nie übertragen.</p>
-          <p>Wo ein Ordner auf deinem Mac liegt, bleibt auf diesem Mac. Der Server und das Protokoll erfahren es nicht.</p>
+          <p>Wo ein Ordner auf deinem Computer liegt, bleibt auf diesem Computer. Der Server und das Protokoll erfahren es nicht.</p>
         </Part>
 
         <Part title="Einstellungen">

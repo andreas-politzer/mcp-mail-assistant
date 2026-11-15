@@ -24,15 +24,15 @@ describe('desktop layout', () => {
     expect((container.firstChild as HTMLElement).style.right).toBe('200px')
   })
 
-  it('has a smaller clock and sticky note that sit below the application tiles', () => {
+  it('has a smaller clock and sticky note without z-index, so tiles can stay without one', () => {
     const clock = render(<Clock c={common} />).container
     const clockWin = clock.querySelector('.fixed') as HTMLElement
     expect(parseInt(clockWin.style.width)).toBeLessThanOrEqual(190 * 0.8)
-    expect(parseInt(clockWin.style.zIndex)).toBeLessThan(60)
+    expect(['', 'auto']).toContain(clockWin.style.zIndex)
     cleanup()
     const note = render(<Sticky {...common} />).container.querySelector('.fixed') as HTMLElement
     expect(parseInt(note.style.width)).toBeLessThanOrEqual(200 * 0.8)
-    expect(parseInt(note.style.zIndex)).toBeLessThan(60)
+    expect(['', 'auto']).toContain(note.style.zIndex)
   })
 
   it('has no separate sign-out button any more', () => {

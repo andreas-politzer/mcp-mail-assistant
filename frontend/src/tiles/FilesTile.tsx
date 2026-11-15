@@ -9,7 +9,7 @@ import {
 import { SourceView } from './SourceView'
 
 // Files: the sources Claude may attach files from. A source is a folder or a single file on this
-// Mac (copied to the server only when you synchronise) or the notes folder on the server.
+// computer (copied to the server only when you synchronise) or the notes folder on the server.
 
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -114,7 +114,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
     if (picked) setDialog({ type: 'add', picked })
   }
 
-  // Creates the source on the server, then links this Mac's place to it. If linking fails the new,
+  // Creates the source on the server, then links this computer's place to it. If linking fails the new,
   // empty source is removed again, so nothing is left half-done.
   const create = async (picked: Picked, label: string): Promise<string | null> => {
     const r = await server('POST', '/admin/sources', {
@@ -163,7 +163,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
       title: 'Quelle entfernen?',
       body: (
         <>
-          Die Quelle <b>{source.label}</b> wird entfernt. Alle Kopien davon auf dem Server werden gelöscht, offene Entwürfe mit Dateien aus dieser Quelle werden verworfen. Dateien auf diesem Mac bleiben unberührt.
+          Die Quelle <b>{source.label}</b> wird entfernt. Alle Kopien davon auf dem Server werden gelöscht, offene Entwürfe mit Dateien aus dieser Quelle werden verworfen. Dateien auf diesem Computer bleiben unberührt.
         </>
       ),
       confirmLabel: 'Quelle entfernen',
@@ -207,7 +207,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
         {isMac && inApp && (
           <div className="text-[11px] mt-0.5" style={{ color: place && place.reachable ? undefined : '#ffc9cd' }}>
             {!place
-              ? 'Auf diesem Mac ist kein Ort für diese Quelle hinterlegt.'
+              ? 'Auf diesem Computer ist kein Ort für diese Quelle hinterlegt.'
               : !place.reachable
                 ? `Nicht erreichbar: ${place.display}`
                 : <span className="opacity-80">{place.display}</span>}
@@ -262,9 +262,9 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
             {serverFolders.length > 0 && (
               <Group title="Ordner auf dem Server">{serverFolders.map(card)}</Group>
             )}
-            <Group title="Von diesem Mac">
+            <Group title="Von diesem Computer">
               {macSources.length === 0 && (
-                <div className="text-[12px] opacity-80 mb-2">Noch keine Quelle von diesem Mac. Wähle einen Ordner oder eine einzelne Datei.</div>
+                <div className="text-[12px] opacity-80 mb-2">Noch keine Quelle von diesem Computer. Wähle einen Ordner oder eine einzelne Datei.</div>
               )}
               {macSources.map(card)}
               {inApp ? (
@@ -273,7 +273,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
                   <button className="gbtn" disabled={full} onClick={() => void startAdd('file')}>Einzelne Datei hinzufügen</button>
                 </div>
               ) : (
-                <div className="text-[12px] opacity-80 mt-2">Ordner und Dateien von diesem Mac lassen sich nur in der App auswählen, nicht im Browser.</div>
+                <div className="text-[12px] opacity-80 mt-2">Ordner und Dateien von diesem Computer lassen sich nur in der App auswählen, nicht im Browser.</div>
               )}
               {quota && (
                 <div className="text-[11px] opacity-65 mt-2">
@@ -290,7 +290,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
           title={dialog.picked.kind === 'folder' ? 'Ordner als Quelle anlegen' : 'Datei als Quelle anlegen'}
           intro={
             <>
-              Unter diesem Namen sieht Claude die Quelle. Gewählt: <b>{dialog.picked.name}</b>. Der Ort auf deinem Mac bleibt hier gespeichert und geht nie an den Server. Angelegt wird nur der Name, freigegeben wird noch nichts.
+              Unter diesem Namen sieht Claude die Quelle. Gewählt: <b>{dialog.picked.name}</b>. Der Ort auf deinem Computer bleibt hier gespeichert und geht nie an den Server. Angelegt wird nur der Name, freigegeben wird noch nichts.
             </>
           }
           initial={dialog.picked.name.replace(/\.(md|txt)$/i, '')}

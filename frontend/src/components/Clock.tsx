@@ -21,7 +21,7 @@ export function Clock({ c }: { c: Common }) {
     <line x1={0} y1={0} x2={0} y2={-len} stroke={color} strokeWidth={w} strokeLinecap="round" transform={`rotate(${deg})`} />
   )
   return (
-    <Win95Window title="Uhr" width={136} zIndex={50} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
+    <Win95Window title="Uhr" width={136} zIndex="auto" onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
       <svg viewBox="-60 -60 120 120" width={104} height={104} className="block mx-auto" aria-label="Uhr">
         <circle r={56} fill="#fff" stroke="#3a3a4a" strokeWidth={3} />
         {Array.from({ length: 12 }, (_, i) => (
