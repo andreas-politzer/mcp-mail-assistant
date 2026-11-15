@@ -22,7 +22,7 @@ The admin tool is a small definition tool: what may the assistant read, what may
 - The file source is a plain folder. It is not tied to any particular notes application.
 - Every change to rules is written to the audit log.
 
-**Check at use time.** A draft keeps a fixed copy of its attachments. Before sending, the recipient is checked again (built). The attachment's origin path is to be checked against the current folder rules again too (planned), so that withdrawing a folder also stops drafts already prepared.
+**Check at use time.** A draft keeps a fixed copy of its attachments. Before sending, the recipient is checked again, and so is the origin path of every attachment against the folder rules as they are at that moment (both built). Withdrawing a folder therefore also stops drafts that were already prepared. The check looks at the path text only; the stored copy is not read from disk again. A draft made before the origin path was recorded (older than schema version 3) is refused and has to be prepared again.
 
 ## Consequences
 

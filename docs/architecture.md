@@ -59,6 +59,8 @@ Plan: test the simplest variant with self-only sending first, decide before allo
   and files that contain secret patterns (a warning layer, not proof) are refused. One refused file refuses
   the whole draft. The file is opened once, checked on the open handle and stored as an immutable copy with
   the draft; the audit log records name, size and SHA-256, never the content.
+  The origin path is stored with the copy (schema version 3) and checked against the folder rules again right
+  before sending, so withdrawing a folder also stops drafts that are already prepared.
 
 ## Kill switch
 

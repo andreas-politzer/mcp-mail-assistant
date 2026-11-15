@@ -292,7 +292,7 @@ def test_version_1_database_gets_the_recipient_tables(tmp_path):
     db = Database(path)
     assert db.get_draft("drf_old", "o").body == "Alter Text"
     with sqlite3.connect(path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION == 2
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION == 3
     store = RecipientStore(db)
     assert store.add("Anna", "anna@example.org", [], 1000.0, "admin:test").status == "active"
     Database(path)  # second open is harmless
@@ -303,6 +303,6 @@ def test_database_from_the_future_is_still_refused(tmp_path):
     path = tmp_path / "future.db"
     Database(path)
     with sqlite3.connect(path) as conn:
-        conn.execute("PRAGMA user_version = 3")
+        conn.execute(f"PRAGMA user_version = {Database.SCHEMA_VERSION + 1}")
     with pytest.raises(ConfigError, match="newer"):
         Database(path)

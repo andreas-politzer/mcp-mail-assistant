@@ -188,9 +188,10 @@ def body_hash(subject: str, body: str, address: str, attachments: Sequence[Attac
 
 
 class Database:
-    # Version 1: drafts, audit log and draft_attachments. Version 2: the recipient registry. The schema script only creates what
-    # is missing, so opening an older database upgrades it without touching existing rows.
-    SCHEMA_VERSION = 2
+    # Version 1: drafts, audit log and draft_attachments. Version 2: the recipient registry. Version 3: the origin path of
+    # an attachment (checked again when sending). The schema script only creates what is missing, so opening an older
+    # database upgrades it without touching existing rows.
+    SCHEMA_VERSION = 3
 
     def __init__(self, path: Path) -> None:
         self.path = str(path)
@@ -204,6 +205,9 @@ class Database:
                     "Update the program instead of opening it with this one."
                 )
             conn.executescript(_SCHEMA)
+            columns = [r[1] for r in conn.execute("PRAGMA table_info(draft_attachments)")]
+            if "source_path" not in columns:  # version 3: remember where an attachment came from
+                conn.execute("ALTER TABLE draft_attachments ADD COLUMN source_path TEXT")
             if version < self.SCHEMA_VERSION:
                 conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
 
@@ -317,9 +321,12 @@ class Database:
             )
             for position, attachment in enumerate(attachments):
                 conn.execute(
-                    "INSERT INTO draft_attachments(draft_id,position,name,data,size_bytes,sha256)"
-                    " VALUES (?,?,?,?,?,?)",
-                    (draft.id, position, attachment.name, attachment.data, attachment.size, attachment.sha256),
+                    "INSERT INTO draft_attachments(draft_id,position,name,data,size_bytes,sha256,source_path)"
+                    " VALUES (?,?,?,?,?,?,?)",
+                    (
+                        draft.id, position, attachment.name, attachment.data, attachment.size,
+                        attachment.sha256, attachment.source,
+                    ),
                 )
             detail = None
             if attachments:
@@ -332,10 +339,15 @@ class Database:
     def attachments_of(self, draft_id: str) -> List[Attachment]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT name,data,sha256 FROM draft_attachments WHERE draft_id=? ORDER BY position",
+                "SELECT name,data,sha256,source_path FROM draft_attachments WHERE draft_id=? ORDER BY position",
                 (draft_id,),
             ).fetchall()
-        return [Attachment(name=r["name"], data=bytes(r["data"]), sha256=r["sha256"]) for r in rows]
+        return [
+            Attachment(
+                name=r["name"], data=bytes(r["data"]), sha256=r["sha256"], source=r["source_path"] or ""
+            )
+            for r in rows
+        ]
 
     def get_draft(self, draft_id: str, owner: str) -> Draft:
         with self._connect() as conn:

@@ -73,6 +73,26 @@ class OutboxService:
             raise AttachmentRejected("Attachments are not enabled on this server.")
         return self.attachment_policy.load(attachments)
 
+    def _recheck_attachments(self, stored) -> None:
+        """The attachments are fixed copies, but the rules may have changed since the draft was
+        made. Check the origin of every copy against the rules as they are now."""
+        for attachment in stored:
+            if not attachment.source:
+                raise AttachmentRejected(
+                    "This draft does not record where its attachment came from. "
+                    "The draft was not sent; prepare the mail again."
+                )
+            if self.attachment_policy is None:
+                raise AttachmentRejected(
+                    "Attachments are no longer allowed on this server. The draft was not sent."
+                )
+            try:
+                self.attachment_policy.still_allowed(attachment.source)
+            except AttachmentRejected:
+                raise AttachmentRejected(
+                    f"Attachment '{attachment.name}' is no longer allowed. The draft was not sent."
+                ) from None
+
     def _housekeeping(self) -> None:
         now = self.clock()
         self.db.expire_stale(now)
@@ -156,6 +176,8 @@ class OutboxService:
                 "This recipient is no longer on the allowed list. The draft was not sent."
             )
         stored_attachments = self.db.attachments_of(draft.id)
+        if draft.status == "pending":
+            self._recheck_attachments(stored_attachments)
         draft = self.db.claim_for_sending(draft_id, owner, now, cfg.limits)
         try:
             message = build_message(

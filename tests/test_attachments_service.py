@@ -234,3 +234,91 @@ def test_root_without_allowed_folders_is_a_config_error():
 def test_relative_attachment_root_is_a_config_error():
     with pytest.raises(ConfigError, match="absolute"):
         Config.from_env({**BASE, "OUTBOX_ATTACHMENT_ROOT": "vault", "OUTBOX_ATTACHMENT_ALLOWED_FOLDERS": "Projects"})
+
+
+# -- the rules are checked again when the mail is sent -------------------------------------
+
+def other_service(att_config, recipients, db, sender, clock, **changes):
+    return OutboxService(dataclasses.replace(att_config, **changes), recipients, db, sender, clock)
+
+
+def test_the_origin_path_is_stored_with_the_attachment(svc, db):
+    d = prep(svc, ["Projects/note.md"])
+    assert db.attachments_of(d["draft_id"])[0].source == "Projects/note.md"
+
+
+def test_send_is_refused_when_the_folder_is_no_longer_allowed(svc, att_config, recipients, db, sender, clock):
+    d = prep(svc, ["Projects/note.md"])
+    later = other_service(att_config, recipients, db, sender, clock, attachment_allowed_folders=("Elsewhere",))
+    with pytest.raises(AttachmentRejected, match="no longer allowed"):
+        later.send_email("o", d["draft_id"])
+    assert sender.sent == []
+    assert db.get_draft(d["draft_id"], "o").status == "pending"
+
+
+def test_send_is_refused_when_the_folder_is_now_blocked(svc, att_config, recipients, db, sender, clock):
+    d = prep(svc, ["Projects/note.md"])
+    later = other_service(att_config, recipients, db, sender, clock, attachment_denied_folders=("Projects",))
+    with pytest.raises(AttachmentRejected, match="no longer allowed"):
+        later.send_email("o", d["draft_id"])
+    assert sender.sent == []
+
+
+def test_send_is_refused_when_attachments_are_switched_off(svc, att_config, recipients, db, sender, clock):
+    d = prep(svc, ["Projects/note.md"])
+    later = other_service(att_config, recipients, db, sender, clock, attachment_root=None)
+    with pytest.raises(AttachmentRejected, match="no longer allowed"):
+        later.send_email("o", d["draft_id"])
+    assert sender.sent == []
+
+
+def test_a_draft_without_a_stored_origin_is_not_sent(svc, db, sender):
+    d = prep(svc)  # a draft that was prepared before the origin was recorded
+    with sqlite3.connect(db.path) as conn:
+        conn.execute(
+            "INSERT INTO draft_attachments(draft_id,position,name,data,size_bytes,sha256)"
+            " VALUES (?,?,?,?,?,?)", (d["draft_id"], 0, "old.md", b"alt", 3, "0" * 64))
+    with pytest.raises(AttachmentRejected, match="prepare the mail again"):
+        svc.send_email("o", d["draft_id"])
+    assert sender.sent == []
+
+
+def test_a_draft_without_attachments_does_not_depend_on_the_rules(svc, att_config, recipients, db, sender, clock):
+    d = prep(svc)
+    later = other_service(att_config, recipients, db, sender, clock, attachment_root=None)
+    assert later.send_email("o", d["draft_id"])["status"] == "sent"
+
+
+OLD_V2 = """
+CREATE TABLE drafts (
+    id TEXT PRIMARY KEY, owner TEXT NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending','sending','sent','failed','unknown','expired','cancelled')),
+    recipient_name TEXT NOT NULL, recipient_address TEXT NOT NULL, subject TEXT NOT NULL, body TEXT NOT NULL,
+    body_sha256 TEXT NOT NULL, sending_at REAL, finished_at REAL, detail TEXT);
+CREATE TABLE audit_log (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL NOT NULL, event TEXT NOT NULL, draft_id TEXT, owner TEXT,
+    recipient_address TEXT, subject TEXT, body_sha256 TEXT, detail TEXT);
+CREATE TABLE draft_attachments (
+    draft_id TEXT NOT NULL, position INTEGER NOT NULL, name TEXT NOT NULL, data BLOB NOT NULL,
+    size_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL, PRIMARY KEY (draft_id, position));
+INSERT INTO drafts VALUES ('drf_old','o',1.0,9999999999.0,'pending','Ferdinand','ferdinand@example.org',
+    'Alt','Alter Text','abc',NULL,NULL,NULL);
+INSERT INTO draft_attachments VALUES ('drf_old',0,'old.md',x'616c74',3,'abc');
+PRAGMA user_version = 2;
+"""
+
+
+def test_version_2_database_gets_the_origin_column(tmp_path):
+    path = tmp_path / "v2.db"
+    with sqlite3.connect(path) as conn:
+        conn.executescript(OLD_V2)
+    db = Database(path)
+    old = db.attachments_of("drf_old")
+    assert [(a.name, a.source) for a in old] == [("old.md", "")]
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION == 3
+        columns = [r[1] for r in conn.execute("PRAGMA table_info(draft_attachments)")]
+    assert columns.count("source_path") == 1
+    Database(path)  # a second open is harmless
+    with sqlite3.connect(path) as conn:
+        assert [r[1] for r in conn.execute("PRAGMA table_info(draft_attachments)")].count("source_path") == 1

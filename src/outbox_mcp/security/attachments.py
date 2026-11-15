@@ -54,6 +54,7 @@ class Attachment:
     name: str
     data: bytes
     sha256: str
+    source: str = ""  # the path it was read from, to check the rules again when sending
 
     @property
     def size(self) -> int:
@@ -131,6 +132,11 @@ class AttachmentPolicy:
             result.append(attachment)
         return result
 
+    def still_allowed(self, path: str) -> None:
+        """Check a path again against the rules as they are now. Looks at the path text only and
+        touches nothing on disk, so it can run right before sending. Raises AttachmentRejected."""
+        self._check_path(path)
+
     # -- checks on the path text (nothing touched on disk yet) --------------------
 
     @staticmethod
@@ -205,7 +211,8 @@ class AttachmentPolicy:
         if _LABELLED_VALUE.search(text) or any(pattern.search(text) for pattern in _SECRET_PATTERNS):
             raise refuse("it looks like it contains a secret (a password, key or token)")
         return Attachment(
-            name=safe_filename(parts[-1]), data=data, sha256=hashlib.sha256(data).hexdigest()
+            name=safe_filename(parts[-1]), data=data, sha256=hashlib.sha256(data).hexdigest(),
+            source=path,
         )
 
 
