@@ -292,7 +292,7 @@ export function Boot({ resume, onDone }: { resume: boolean; onDone: () => void }
           <p className="mb-2">Meistens fehlt der SSH-Tunnel. Öffne ein Terminal und starte ihn. Das Terminal bleibt danach offen und still, das ist richtig:</p>
           <pre className="p-2 mb-2 overflow-x-auto select-all text-[12px]" style={{ background: '#15151c', color: '#e8e8e8', fontFamily: MONO }}>{GENERIC_TUNNEL_COMMAND}</pre>
           <p className="mb-2 text-[12px]" style={{ color: '#4a4a5a' }}>
-            Ersetze BENUTZER und SERVER durch deine Angaben. Mit Befehl kopieren legst du den Befehl in die Zwischenablage, den du in der Datei frontend/.env.local eingetragen hast.
+            Ersetze BENUTZER und SERVER durch deine Angaben. Der Knopf Befehl kopieren legt den Befehl in die Zwischenablage, den du in der Datei frontend/.env.local eingetragen hast.
           </p>
           <p className="mb-3 text-[12px]" style={{ color: '#4a4a5a' }}>
             Läuft der Tunnel und es klappt trotzdem nicht, muss der Server diese Herkunft erlauben: <b>{window.location.origin}</b>. Die Einstellung dafür heißt OUTBOX_ADMIN_ALLOWED_ORIGINS.

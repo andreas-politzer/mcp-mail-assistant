@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-SKIP = {"uv.lock", "frontend/package-lock.json"}
+SKIP = {"uv.lock", "frontend/package-lock.json", "tests/test_repo_hygiene.py"}  # this file names the patterns it looks for
 
 
 def listing(*flags):

@@ -1,6 +1,6 @@
 # 0003 Admin access never goes through the public tunnel
 
-Status: planned (today the admin path is the command line on the server).
+Status: built (the admin API runs locally only; the desktop app reaches it through an SSH tunnel).
 
 ## Context
 

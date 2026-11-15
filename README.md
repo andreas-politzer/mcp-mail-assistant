@@ -21,9 +21,20 @@ Working end to end for the author, built in stages. Be clear about what is and i
 | Backup and restore | Hourly encrypted backup of the data directory (databases via SQLite snapshots, configuration). The first automatic run of the timer was verified, and a restore was tested once (databases open and pass `integrity_check`, config files identical). See [docs/operations.md](docs/operations.md#backup). |
 | Markdown attachments from an allowed notes folder | **Used for real**: a note was attached and sent from a voice chat, and later a recipe note from another allowed folder arrived intact (see [docs/architecture.md](docs/architecture.md)). |
 | New recipients: the AI suggests, you approve outside the chat (admin command line) | **Used for real**: a suggestion made in the chat was approved on the server, then a mail with an attachment went to the new address. Reviewed by a second model; two small findings fixed. |
-| Admin API and desktop/web app, contact import | Planned (see [decisions](docs/decisions/README.md)). |
+| Admin API | Implemented and covered by automated tests: recipients (approve, reject, block, remove, CSV import with preview), file sources and rules, send limits, settings, activity log. It listens locally only and has its own sign-in. Not yet running on the author's server in its latest version. |
+| Desktop app (Tauri 2, React, Rust) | Implemented: sign-in, recipients, files and attachments, settings, activity, help. Frontend tests run against the real admin API; Rust tests cover the local file access. Run in development mode on macOS by the author. Release builds: see [Desktop app](#desktop-app). |
 
 Tested with: Infomaniak (STARTTLS). Other providers that offer standard SMTP with STARTTLS or SSL should work, but have not been tested.
+
+## What is what
+
+This repository holds one product and two optional additions. They do not depend on each other.
+
+1. **Mail Assistant** is the MCP service that lets an AI assistant prepare and, after your explicit yes, send e-mail. Everything in `src/outbox_mcp/` belongs to it.
+2. **Vault Assistant** is a separate service for controlled access to notes and files. It is not part of this repository and Mail Assistant does not need it. Mail Assistant has only its own small, allow-listed notes folder for attachments.
+3. **Remote access** is an optional way to reach the Mail Assistant from your phone, for example through a tunnel. Without it the service runs locally. See [docs/operations.md](docs/operations.md).
+
+The everyday experience is a natural conversation with Claude: you say who gets which message, Claude drafts, you confirm. The desktop app is only for setting things up and keeping them in order: who may receive mail, which files may be attached, how much may be sent. It is an independent desktop with a playful retro look, nothing more.
 
 ## How it works
 
@@ -91,6 +102,47 @@ The service listens on `127.0.0.1:8430` only (override with `OUTBOX_HTTP_PORT`).
 - **Mail work runs in worker threads** (at most four at once), so a slow SMTP server does not block the sign-in page or other requests.
 - **Owner.** Drafts belong to the signed-in owner (the subject of the access token), not to a fixed name.
 
+## Desktop app
+
+The app in `frontend/` manages the Mail Assistant: recipients (including CSV import and approval of candidates), files and attachments, send limits, activity and a built-in help. It talks to the admin API and never touches the mail credentials.
+
+**Connect.** The admin API listens on `127.0.0.1` of the server and has no route through the public tunnel. Reach it from your computer through an SSH tunnel and keep that terminal open:
+
+```bash
+/usr/bin/ssh -N -L 8431:127.0.0.1:8431 BENUTZER@SERVER
+```
+
+Replace BENUTZER and SERVER with your own login and server. To make the app copy your real command, put it in `frontend/.env.local` as `VITE_TUNNEL_COMMAND=...`. That file is ignored by Git and its content is never shown in a window or in the help. The admin API needs `OUTBOX_ADMIN_ALLOWED_ORIGINS` set to the origin of the app: `tauri://localhost` on macOS and Linux, `http://tauri.localhost` on Windows. See `deploy/admin.env.example`.
+
+**Run from source.** You need Node.js 22 or newer and a current stable Rust toolchain (plus the [Tauri system packages](https://tauri.app/start/prerequisites/) for your system).
+
+```bash
+cd frontend
+npm install
+npm run tauri dev      # development window
+npm run tauri build    # installable package for the system you are on
+```
+
+**Operating systems.** What has really been done, and what has not:
+
+| System | Package | State |
+| --- | --- | --- |
+| macOS | `.dmg`, `.app` | Run in development mode by the author, Rust and frontend tests passed there. The release bundle itself has not been built and checked yet. |
+| Windows | `.msi`, `.exe` | Build prepared in the workflow, **not tested**. Differences known so far: hidden files are recognised by a leading dot only, and the private permissions of the settings folder rely on the default protection of the user profile. |
+| Linux | `.deb`, `.AppImage` | Build prepared in the workflow, **not tested**. |
+
+Nothing is called supported until it has been built and used on that system. The workflow `.github/workflows/desktop-build.yml` runs the tests and builds all three packages when you start it by hand in the Actions tab.
+
+**What the app keeps on your computer.** Where a folder lies on your computer is stored in the app's own folder with private permissions and is never sent to the server, the audit log or the help. The server receives file names relative to a source, contents, sizes and hashes of the files you allow. Files are only copied when you start a synchronisation, after a preview. A synchronisation that finds a missing or replaced folder stops and deletes nothing.
+
+## Security model in short
+
+- Claude can only prepare drafts and suggest recipients. Approving a recipient, allowing a file and changing a limit are possible only in the admin API, behind its own passphrase, never through the assistant's connection.
+- A block always wins over an allowance. Names that look like secrets and hidden files are never transferred. Only `.md` and `.txt` files can be attached.
+- The admin session ends after 20 minutes without input and after 4 hours at the latest. These are the server's defaults. Shutting down the app signs you out first.
+- The activity log shows actions, not message texts, subject lines or private paths.
+- Details and open points: [docs/oauth-security.md](docs/oauth-security.md), [decision 0003](docs/decisions/0003-admin-access-never-through-the-public-tunnel.md) and [decision 0004](docs/decisions/0004-permission-model.md).
+
 ## Known limitations
 
 Documented on purpose, to be decided later:
@@ -101,6 +153,9 @@ Documented on purpose, to be decided later:
 - Expiry uses the system clock; a backwards clock jump would extend a draft's lifetime.
 - If building the message fails before anything is sent, the draft is reported as `unknown` rather than `failed` (safe, but imprecise).
 - Not yet tested: real TLS with certificate verification, SSL mode (port 465), failed login.
+- The desktop app is verified on macOS only (see [Desktop app](#desktop-app)). Windows and Linux builds are prepared but untested.
+- The desktop app has no automatic update and no code signing yet, so macOS and Windows will show warnings for downloaded packages.
+- Contact import reads CSV files with a name and an e-mail column, up to 2000 valid rows per file.
 
 ## Testing against your real mail account
 
@@ -136,6 +191,7 @@ The tests use a fake sender and a local test SMTP server; no real mail is sent.
 
 ```
 src/outbox_mcp/
+  admin/             admin API (`outbox-admin-api`): its own sign-in, recipients, sources, settings, activity
   server.py          MCP tools (thin shell, stdio)
   admin_cli.py       `outbox-admin`: approve, add, block recipients (outside the chat)
   http_server.py     HTTP entry point: sign-in plus the mail tools
@@ -154,7 +210,7 @@ docs/operations.md      running it for real: layout, tunnel, limits, backup and 
 docs/decisions/         short records of decisions (who may decide what, permission model, look)
 ```
 
-Planned, not started: `frontend/` for the admin interface (see [decision 0001](docs/decisions/0001-monorepo-with-separate-frontend.md)).
+`frontend/` is the desktop app (see [decision 0001](docs/decisions/0001-monorepo-with-separate-frontend.md) and [frontend/README.md](frontend/README.md)). `.github/workflows/` holds the manual build for three systems.
 
 ## Who built this
 

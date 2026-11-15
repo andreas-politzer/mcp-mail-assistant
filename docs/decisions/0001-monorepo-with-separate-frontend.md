@@ -1,6 +1,6 @@
 # 0001 One repository, backend and frontend kept apart
 
-Status: planned (the frontend has not been started).
+Status: built (the desktop app lives in `frontend/`).
 
 ## Context
 

@@ -4,8 +4,8 @@ Short records of decisions that shape the project, written down so nobody has to
 
 | No. | Decision | Status |
 | --- | --- | --- |
-| [0001](0001-monorepo-with-separate-frontend.md) | One repository, backend and frontend kept apart | planned (frontend not started) |
+| [0001](0001-monorepo-with-separate-frontend.md) | One repository, backend and frontend kept apart | built |
 | [0002](0002-the-assistant-suggests-only-the-user-decides.md) | The assistant suggests, only the user decides | built |
-| [0003](0003-admin-access-never-through-the-public-tunnel.md) | Admin access never goes through the public tunnel | planned |
-| [0004](0004-permission-model.md) | Permission model: recipients, attachments, reading | partly built |
-| [0005](0005-look-and-assets.md) | Look of the admin app: own assets, readable first | planned |
+| [0003](0003-admin-access-never-through-the-public-tunnel.md) | Admin access never goes through the public tunnel | built |
+| [0004](0004-permission-model.md) | Permission model: recipients, attachments, reading | built, reading planned |
+| [0005](0005-look-and-assets.md) | Look of the admin app: own assets, readable first | built |

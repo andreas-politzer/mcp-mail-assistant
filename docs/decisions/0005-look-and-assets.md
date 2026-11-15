@@ -1,6 +1,6 @@
 # 0005 Look of the admin app: own assets, readable first
 
-Status: planned.
+Status: built.
 
 ## Decision
 

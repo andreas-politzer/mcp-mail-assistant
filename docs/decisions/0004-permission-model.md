@@ -1,6 +1,6 @@
 # 0004 Permission model
 
-Status: recipients and attachments built; the attachment rules live in the database (schema 4), the admin interface for them is planned; reading is planned.
+Status: recipients and attachments built, including their rules in the admin API and the desktop app; reading is planned.
 
 ## Context
 
