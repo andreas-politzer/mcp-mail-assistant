@@ -1,0 +1,32 @@
+# Example unit: the admin API (loopback only, NO tunnel route). Replace youruser and the paths.
+# It needs its own env file with the database path and the passphrase hash, and nothing else:
+# no mail credentials, no OAuth data. Install as /etc/systemd/system/outbox-admin-api.service.
+[Unit]
+Description=mcp-mail-assistant admin API (127.0.0.1 only)
+After=network-online.target
+
+[Service]
+Type=simple
+User=youruser
+WorkingDirectory=/home/youruser/outbox-data
+EnvironmentFile=/home/youruser/outbox-data/admin.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/home/youruser/mcp-mail-assistant/.venv/bin/outbox-admin-api
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/youruser/outbox-data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

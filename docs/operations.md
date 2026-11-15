@@ -65,3 +65,14 @@ address against the real contact. The first start after the upgrade to schema ve
 the old `recipients.json` once; afterwards the database is the truth and the file is ignored.
 If the old file is empty, nothing is imported and the registry stays empty, so the next start looks at the file again; this is harmless, and once any recipient exists in the database the file is never read again.
 Back up before the first start with a new version. After an update that adds or removes tools, disconnect and reconnect the connector in the assistant app; otherwise the app keeps showing the old tool list.
+
+## Admin API (separate process)
+
+The admin API is its own small service (`outbox-admin-api`, example unit in `deploy/outbox-admin-api.service`). It listens on 127.0.0.1 only and has **no route through the public tunnel**; the tunnel knows the mail service's port and nothing else.
+
+- It shares the database file with the mail service and nothing more. Its settings (`deploy/admin.env.example`) hold the database path and the hash of the admin passphrase. No mail credentials, no OAuth data.
+- Create the hash with `python -m outbox_mcp.admin.passphrase` (typed hidden, never printed). The passphrase belongs in a password manager.
+- Sign-in gives a random session token that is sent as a `Bearer` header, never as a cookie. Sessions live in memory: 20 minutes without use, 4 hours at most, and a restart signs everybody out. After 5 wrong passphrases every sign-in is refused for 15 minutes, with the same answer as for a wrong passphrase.
+- The `Host` header must be on a list and a browser `Origin` must be on an exact list (`OUTBOX_ADMIN_ALLOWED_ORIGINS`, no wildcard). `X-Forwarded-Host` is not trusted. CORS is not authentication; the token is.
+- **The admin session protects the admin endpoints and nothing else.** Sending mail through Claude needs no admin session, an expired session does not touch the mail service or the tunnel, and the recipient and attachment rules are checked by the mail service itself on every send.
+- Not available yet: lifting a block on an address (it comes with the confirmation step), folder rules, contact import, limits.

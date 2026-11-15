@@ -484,6 +484,15 @@ class Database:
             cur = conn.execute(f"DELETE FROM drafts WHERE {old}", (cutoff,))
             return cur.rowcount
 
+    def log_event(self, event: str, owner: str, detail: Optional[str], now: float) -> None:
+        """Write one entry to the audit log (used by the admin side for sign-ins and similar)."""
+        with self._tx() as conn:
+            self._audit(conn, now, event, owner=owner, detail=detail)
+
+    def schema_version(self) -> int:
+        with self._connect() as conn:
+            return conn.execute("PRAGMA user_version").fetchone()[0]
+
     # -- file access rules ----------------------------------------------------------
 
     @staticmethod
