@@ -197,7 +197,8 @@ class OutboxService:
         if source is not None:
             wanted = self.db.find_source_by_label(source) if isinstance(source, str) else None
             if wanted is None:
-                raise AttachmentRejected("Unknown source name.")
+                names = ", ".join(sorted((r["label"] for r in sources), key=str.casefold)) or "none yet"
+                raise AttachmentRejected(f"Unknown source name. Available sources: {names}.")
             sources = [wanted]
         prefix = ()
         if path_prefix:
@@ -216,7 +217,14 @@ class OutboxService:
                     }))
             elif src["id"] == self.notes_source_id and self.attachment_policy is not None:
                 items.extend(self._notes_listing(src))
-        items = [i for i in items if tuple(i[1].split("/"))[: len(prefix)] == prefix]
+        everything = list(items)
+        if prefix:
+            head, tail = prefix[:-1], prefix[-1]
+
+            def matches(parts):
+                return len(parts) >= len(prefix) and parts[: len(head)] == head and parts[len(head)].startswith(tail)
+
+            items = [i for i in items if matches(tuple(i[1].split("/")))]
         items.sort(key=lambda i: (i[0], i[1]))
         if cursor:
             try:
@@ -229,12 +237,36 @@ class OutboxService:
         for _, _, info in page:
             info["attach_as"] = f"{info['source']}:{info['path']}"
         more = len(items) > limit
-        return {
+        result = {
             "items": [i[2] for i in page],
             "next_cursor": base64.urlsafe_b64encode(f"{page[-1][0]}\x00{page[-1][1]}".encode()).decode() if more else None,
             "note": "Use 'attach_as' as the attachment in prepare_email. This list only shows files the user has "
             "allowed; it does not show contents.",
         }
+        if not page and not cursor:
+            result["hint"] = self._empty_hint(everything)
+        return result
+
+    @staticmethod
+    def _empty_hint(everything: List) -> str:
+        """Why a list can be empty and what to try. It names only folders that hold allowed files."""
+        if not everything:
+            return "No files are allowed as attachments yet. The user allows folders in the admin app."
+        folders: Dict[str, set] = {}
+        for _, _, info in everything:
+            if "/" in info["path"]:
+                folders.setdefault(info["source"], set()).add(info["path"].split("/", 1)[0])
+        parts = []
+        for name in sorted(folders):
+            shown = sorted(folders[name], key=str.casefold)
+            more = ", ..." if len(shown) > 20 else ""
+            parts.append(f"{name}: {', '.join(shown[:20])}{more}")
+        names = ", ".join(sorted({i[2]["source"] for i in everything}, key=str.casefold))
+        return (
+            "No allowed file matches. Sources with allowed files: " + names + ". "
+            + ("Allowed top-level folders: " + "; ".join(parts) + ". " if parts else "")
+            + "path_prefix may be the beginning of a folder or file name (case ignored); source is the source name."
+        )
 
     def _notes_listing(self, src) -> List:
         """Allowed Markdown files of the notes folder (a walk through open descriptors, no links)."""

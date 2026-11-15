@@ -119,7 +119,9 @@ def test_the_limit_is_clamped_and_the_prefix_narrows(svc, db, mac):
     assert len(svc.list_attachments(source="Mac", limit=100000)["items"]) == 4
     assert len(svc.list_attachments(source="Mac", limit="x")["items"]) == 4
     assert [p for s, p in paths(svc.list_attachments(source="Mac", path_prefix="projekte/zwei"))] == ["Projekte/Zwei/g.md"]
-    assert svc.list_attachments(source="Mac", path_prefix="Projekte/Zw")["items"] == []  # whole components only
+    # the last part of a prefix may be the beginning of a name; the parts before it must match exactly
+    assert [p for s, p in paths(svc.list_attachments(source="Mac", path_prefix="Projekte/Zw"))] == ["Projekte/Zwei/g.md"]
+    assert svc.list_attachments(source="Mac", path_prefix="Proj/Zwei")["items"] == []
     with pytest.raises(AttachmentRejected):
         svc.list_attachments(path_prefix="../x")
 
@@ -195,3 +197,43 @@ def test_the_fixed_name_protection_covers_conflict_copies_for_every_extension():
     for name in CONFLICT_NAMES:
         assert is_sensitive_name(name)
     assert not is_sensitive_name("Quiche Lorraine.md")
+
+
+# -- hints that spare Claude the guessing (the rules themselves are unchanged) ------------------------
+
+def test_an_unknown_source_name_lists_the_existing_ones(svc, db, mac):
+    with pytest.raises(AttachmentRejected) as err:
+        svc.list_attachments(source="Vault")
+    message = str(err.value)
+    assert "Available sources:" in message and "notes" in message and "Mac" in message
+
+
+def test_the_last_part_of_a_prefix_may_be_the_beginning_of_a_name(svc, db, mac):
+    db.set_source_rule(mac, "Backen (Kuchen)", "allow", NOW, ADMIN)
+    upload(db, mac, "Backen (Kuchen)/Brot.md")
+    upload(db, mac, "Backen (Kuchen)/Brote/Dinkel.md")
+    assert [p for _, p in paths(svc.list_attachments(path_prefix="Backen"))] == [
+        "Backen (Kuchen)/Brot.md", "Backen (Kuchen)/Brote/Dinkel.md"]
+    assert [p for _, p in paths(svc.list_attachments(path_prefix="backen (kuchen)/brote/din"))] == [
+        "Backen (Kuchen)/Brote/Dinkel.md"]
+    assert svc.list_attachments(path_prefix="Backen/Brot")["items"] == []  # earlier parts stay exact
+    # a prefix only narrows: it never shows what was not allowed
+    assert svc.list_attachments(path_prefix="Banking")["items"] == []
+    assert svc.list_attachments(path_prefix="Projects/Priv")["items"] == []
+
+
+def test_an_empty_answer_names_only_folders_with_allowed_files(svc, db, mac):
+    upload(db, mac, "Projekte/Plan.md")
+    answer = svc.list_attachments(path_prefix="Kochen")
+    assert answer["items"] == []
+    hint = answer["hint"]
+    assert "Projects" in hint and "Projekte" in hint and "notes" in hint and "Mac" in hint
+    for hidden in ("Banking", "Privat", "Passwoerter", "konto"):  # blocked or never allowed
+        assert hidden not in hint
+    assert "hint" not in svc.list_attachments(path_prefix="Proj")  # a hit needs no hint
+    assert "hint" not in svc.list_attachments(path_prefix="Kochen", cursor=base64.urlsafe_b64encode(b"a\x00b").decode())
+
+
+def test_the_hint_says_so_when_nothing_is_allowed_at_all(config, recipients, db, sender, clock):
+    empty = OutboxService(config, recipients, db, sender, clock)
+    assert "No files are allowed" in empty.list_attachments()["hint"]

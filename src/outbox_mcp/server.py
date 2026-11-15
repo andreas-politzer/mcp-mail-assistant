@@ -78,8 +78,10 @@ def register_tools(mcp: FastMCP, service: OutboxService, owner: Callable[[], str
     ) -> dict:
         """List the files the user has allowed as attachments (name, size, version, upload date).
         It shows nothing else: no contents, no blocked files. Narrow it with source (the source
-        name) and path_prefix; at most 50 entries come back, use next_cursor for more. Pass the
-        'attach_as' value of a file to prepare_email."""
+        name) and path_prefix (whole folders, and the last part may be just the beginning of a name, for
+        example "Backen"); at most 50 entries come back, use next_cursor for more. If nothing matches,
+        'hint' tells which sources and folders do have allowed files. Pass the 'attach_as' value of a
+        file to prepare_email."""
         return await run(service.list_attachments, source, path_prefix, cursor, limit)
 
     @mcp.tool(annotations=ToolAnnotations(
