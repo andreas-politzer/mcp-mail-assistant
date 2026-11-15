@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { TUNNEL_COMMAND } from '../api/admin'
-
 // Help and instructions. Short, in plain sentences, and only about what the app does today.
+// The tunnel command here is always the generic form. A person's own server address never appears in the help.
+const GENERIC_TUNNEL_COMMAND = '/usr/bin/ssh -N -L 8431:127.0.0.1:8431 BENUTZER@SERVER'
 
 function Part({ title, open, children }: { title: string; open?: boolean; children: ReactNode }) {
   return (
@@ -23,8 +23,8 @@ export function HelpTile() {
         </Part>
 
         <Part title="Verbindung zum Server">
-          <p>Die Verwaltung erreicht den Server nur über einen SSH-Tunnel. Öffne dafür ein Terminal und gib diesen Befehl ein. Das Terminal bleibt danach offen und still, das ist richtig.</p>
-          <pre className="p-2 rounded text-[11px] overflow-x-auto" style={{ background: 'rgba(0,0,0,0.35)' }}>{TUNNEL_COMMAND}</pre>
+          <p>Die Verwaltung erreicht den Server nur über einen SSH-Tunnel. Öffne dafür ein Terminal und gib diesen Befehl ein. Ersetze BENUTZER durch deinen Benutzernamen auf dem Server und SERVER durch dessen Adresse. Das Terminal bleibt danach offen und still, das ist richtig.</p>
+          <pre className="p-2 rounded text-[11px] overflow-x-auto" style={{ background: 'rgba(0,0,0,0.35)' }}>{GENERIC_TUNNEL_COMMAND}</pre>
           <p>Ist die Verwaltung nicht erreichbar, fehlt fast immer dieser Tunnel.</p>
         </Part>
 
