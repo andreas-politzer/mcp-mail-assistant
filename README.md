@@ -32,7 +32,7 @@ This repository holds one product and two optional additions. They do not depend
 
 1. **Mail Assistant** is the MCP service that lets an AI assistant prepare and, after your explicit yes, send e-mail. Everything in `src/outbox_mcp/` belongs to it.
 2. **Vault Assistant** is a separate service for controlled access to notes and files. It is not part of this repository and Mail Assistant does not need it. Mail Assistant has only its own small, allow-listed notes folder for attachments.
-3. **Remote access** is an optional way to reach the Mail Assistant from your phone, for example through a tunnel. Without it the service runs locally. See [docs/operations.md](docs/operations.md).
+3. **Remote access** is the optional way to reach your services from your phone, away from home: an HTTPS address in front of the server, a sign-in, and a tunnel that only makes outgoing connections. Without it everything runs locally. The Mail Assistant has its own sign-in layer for this (`src/outbox_mcp/auth/`) and a worked example with a Cloudflare Tunnel in [docs/operations.md](docs/operations.md). For notes in an Obsidian vault the author uses a separate third-party project, [obsidian-web-mcp](#credits-and-third-party-projects), which is not part of this repository.
 
 The everyday experience is a natural conversation with Claude: you say who gets which message, Claude drafts, you confirm. The desktop app is only for setting things up and keeping them in order: who may receive mail, which files may be attached, how much may be sent. It is an independent desktop with a playful retro look, nothing more.
 
@@ -214,6 +214,12 @@ docs/decisions/         short records of decisions (who may decide what, permiss
 ```
 
 `frontend/` is the desktop app (see [decision 0001](docs/decisions/0001-monorepo-with-separate-frontend.md) and [frontend/README.md](frontend/README.md)). `.github/workflows/` holds the manual build for three systems.
+
+## Credits and third-party projects
+
+- **obsidian-web-mcp** is the remote access server for Obsidian vaults that the author runs next to the Mail Assistant. It is a separate project by the GitHub user **jimprosser**, published at <https://github.com/jimprosser/obsidian-web-mcp> under the **MIT License** (file `LICENSE` in that repository). It is neither copied into this repository nor required by it. If you want it, take it from its original source and read its license and documentation there. The Vault Assistant mentioned above is a different thing from this project.
+- **Cloudflare Tunnel (`cloudflared`)** and **restic** appear in the operations notes as tools the author uses. They are separate products with their own licenses and are not part of this repository.
+- The desktop app builds on [Tauri](https://tauri.app) (MIT or Apache-2.0) and [React](https://react.dev) (MIT); the full list of dependencies and their licenses is in `frontend/package.json`, `frontend/src-tauri/Cargo.toml` and `uv.lock`.
 
 ## Who built this
 
