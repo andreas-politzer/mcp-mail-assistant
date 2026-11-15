@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Win95Window } from './Win95Window'
+import { invoke } from '@tauri-apps/api/core'
+import { admin } from '../api/admin'
 
 export type JokeKind =
   | 'outbox' | 'internet' | 'coffee' | 'help' | 'about' | 'shutdown'
@@ -70,19 +72,29 @@ function Coffee({ c }: { c: Common }) {
 }
 
 function Shutdown({ c }: { c: Common }) {
-  const [answered, setAnswered] = useState(false)
+  const [closing, setClosing] = useState(false)
+  const quit = async () => {
+    setClosing(true)
+    // Sign out first so the server session ends; the app closes even if the server does not answer.
+    try {
+      await admin.logout()
+    } catch {
+      /* the session ends by itself after the idle time */
+    }
+    try {
+      await invoke('quit_app')
+    } catch {
+      window.close()
+    }
+  }
   return (
-    <Win95Window title="Herunterfahren" width={350} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
-      {!answered ? (
-        <>
-          <div>Bist du sicher? Du hast doch gerade erst angefangen!</div>
-          <Row><button className="bevel" onClick={() => setAnswered(true)}>Ja</button><button className="bevel font-bold" onClick={c.onClose}>Nein</button></Row>
-        </>
-      ) : (
-        <>
-          <div>Ätsch. Das hier ist nur ein Prototyp, bei dem nichts ausgeht.</div>
-          <Row><button className="bevel font-bold" onClick={c.onClose}>Na gut</button></Row>
-        </>
+    <Win95Window title="Herunterfahren" width={350} onClose={closing ? () => {} : c.onClose} onFocus={c.onFocus} initial={c.initial}>
+      <div>{closing ? 'Mail Assistant wird beendet …' : 'Mail Assistant beenden? Du wirst abgemeldet, und das Fenster schließt sich.'}</div>
+      {!closing && (
+        <Row>
+          <button className="bevel" onClick={() => void quit()}>Beenden</button>
+          <button className="bevel font-bold" onClick={c.onClose}>Abbrechen</button>
+        </Row>
       )}
     </Win95Window>
   )

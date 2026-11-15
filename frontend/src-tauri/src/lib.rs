@@ -178,6 +178,14 @@ async fn local_tree(app: AppHandle, server_id: String, rel: String) -> Result<Ve
         .map_err(|_| "Das Lesen wurde unterbrochen.".to_string())?
 }
 
+/// Ends the app: forgets everything held in memory (picked places, scans), then exits.
+#[tauri::command]
+fn quit_app(app: AppHandle, state: State<'_, Shared>) {
+    state.pending.lock().unwrap().clear();
+    state.scans.lock().unwrap().clear();
+    app.exit(0);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -190,7 +198,8 @@ pub fn run() {
             local_unlink,
             local_scan,
             local_read,
-            local_tree
+            local_tree,
+            quit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running the application");

@@ -1,129 +1,337 @@
-import { useState } from 'react'
-import { MOCK_ROOTS, type FileNode, type MockRoot } from '../mock/files'
-import { countAttachable, effective, isSensitiveName, type Rules } from '../logic/fileRules'
+import { useCallback, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
+import { invoke } from '@tauri-apps/api/core'
+import { admin } from '../api/admin'
 import type { AskConfirm } from '../core/types'
 import { Win95Modal } from '../components/Win95Window'
 
-export function FilesTile({ ask }: { ask: AskConfirm }) {
-  const [root, setRoot] = useState<MockRoot>(MOCK_ROOTS[0])
-  const [rulesByRoot, setRulesByRoot] = useState<Record<string, Rules>>(() =>
-    Object.fromEntries(MOCK_ROOTS.map((r) => [r.id, { ...r.rules }])),
+// Files: the sources Claude may attach files from. A source is a folder or a single file on this
+// Mac (copied to the server only when you synchronise) or the notes folder on the server.
+// Local paths exist only on this Mac; this window gets a display text and ids, never a path to read.
+
+interface Source {
+  id: string
+  label: string
+  kind: 'upload' | 'server_folder'
+  scope: 'folder' | 'file'
+  file_name: string | null
+  files: number
+  bytes: number
+}
+interface Quota {
+  sources: number
+  max_sources: number
+}
+interface LocalView {
+  server_id: string
+  kind: 'folder' | 'file'
+  display: string
+  reachable: boolean
+}
+interface Picked {
+  token: string
+  name: string
+  kind: 'folder' | 'file'
+}
+
+const inApp = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+const NO_ANSWER = 'Der Server antwortet nicht. Läuft der Tunnel noch?'
+
+async function server(method: string, path: string, body?: unknown) {
+  try {
+    return await admin.call(method, path, body)
+  } catch {
+    return { status: 0, data: { message: NO_ANSWER } }
+  }
+}
+const problem = (r: { status: number; data: { message?: string } }) =>
+  r.data?.message ?? (r.status === 0 ? NO_ANSWER : `Der Server meldet Fehler ${r.status}.`)
+const asText = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : 'Unbekannter Fehler.')
+const kb = (b: number) => (b < 1000 ? `${b} Byte` : `${Math.round(b / 1000)} KB`)
+const countText = (n: number) => `${n} ${n === 1 ? 'Datei' : 'Dateien'}`
+
+function Group({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="mb-4">
+      <div className="text-[11px] uppercase tracking-widest opacity-90 py-1.5 border-b border-white/30 mb-2">{title}</div>
+      {children}
+    </section>
   )
-  const [open, setOpen] = useState<Set<string>>(new Set(['Projekte', 'Backen']))
-  const [picking, setPicking] = useState(false)
+}
 
-  const rules = rulesByRoot[root.id]
-  const tree = root.tree
+function NameDialog({
+  title,
+  intro,
+  initial,
+  confirmLabel,
+  onSubmit,
+  onClose,
+}: {
+  title: string
+  intro: ReactNode
+  initial: string
+  confirmLabel: string
+  onSubmit: (name: string) => Promise<string | null>
+  onClose: () => void
+}) {
+  const [name, setName] = useState(initial)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    setBusy(true)
+    setError('')
+    const problemText = await onSubmit(name.trim())
+    setBusy(false)
+    if (problemText) setError(problemText)
+  }
+  return (
+    <Win95Modal title={title} width={420} onClose={onClose}>
+      <div className="text-xs mb-3 leading-relaxed">{intro}</div>
+      <input
+        className="ginput w-full mb-2"
+        value={name}
+        autoFocus
+        maxLength={60}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && name.trim() && !busy && void submit()}
+      />
+      {error && <div className="text-[12px] mb-2" style={{ color: '#a01020' }}>{error}</div>}
+      <div className="flex justify-end gap-2">
+        <button className="bevel" onClick={onClose}>Abbrechen</button>
+        <button className="bevel font-bold" disabled={busy || !name.trim()} onClick={() => void submit()}>{confirmLabel}</button>
+      </div>
+    </Win95Modal>
+  )
+}
 
-  const toggle = (path: string) =>
-    setOpen((prev) => {
-      const next = new Set(prev)
-      if (next.has(path)) next.delete(path)
-      else next.add(path)
-      return next
-    })
+type Dialog =
+  | { type: 'add'; picked: Picked }
+  | { type: 'rename'; source: Source }
+  | null
 
-  const setRule = (path: string, kind?: 'allow' | 'deny') =>
-    setRulesByRoot((prev) => {
-      const next = { ...prev[root.id] }
-      if (kind) next[path] = kind
-      else delete next[path]
-      return { ...prev, [root.id]: next }
-    })
+export function FilesTile({ ask }: { ask: AskConfirm }) {
+  const [sources, setSources] = useState<Source[] | null>(null)
+  const [quota, setQuota] = useState<Quota | null>(null)
+  const [locals, setLocals] = useState<LocalView[]>([])
+  const [error, setError] = useState('')
+  const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null)
+  const [dialog, setDialog] = useState<Dialog>(null)
 
-  const choose = (r: MockRoot) => {
-    setRoot(r)
-    setOpen(new Set())
-    setPicking(false)
+  const load = useCallback(async () => {
+    setError('')
+    const r = await server('GET', '/admin/sources')
+    if (r.status !== 200) return setError(problem(r))
+    setSources(r.data.sources as Source[])
+    setQuota(r.data.quota as Quota)
+    if (inApp) {
+      try {
+        setLocals(await invoke<LocalView[]>('local_list'))
+      } catch (e) {
+        setNote({ text: asText(e), bad: true })
+      }
+    }
+  }, [])
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const localOf = (id: string) => locals.find((l) => l.server_id === id)
+
+  const pick = async (kind: 'folder' | 'file'): Promise<Picked | null> => {
+    try {
+      return await invoke<Picked | null>('local_pick', { kind })
+    } catch (e) {
+      setNote({ text: asText(e), bad: true })
+      return null
+    }
   }
 
-  const allow = (path: string) => {
-    const after = { ...rules, [path]: 'allow' as const }
-    const gain = countAttachable(tree, after, path) - countAttachable(tree, rules, path)
+  const startAdd = async (kind: 'folder' | 'file') => {
+    setNote(null)
+    const picked = await pick(kind)
+    if (picked) setDialog({ type: 'add', picked })
+  }
+
+  // Creates the source on the server, then links this Mac's place to it. If linking fails the new,
+  // empty source is removed again, so nothing is left half-done.
+  const create = async (picked: Picked, label: string): Promise<string | null> => {
+    const r = await server('POST', '/admin/sources', {
+      kind: 'upload',
+      scope: picked.kind,
+      label,
+      ...(picked.kind === 'file' ? { file_name: picked.name } : {}),
+    })
+    if (r.status !== 201) return problem(r)
+    const id = r.data.source.id as string
+    try {
+      await invoke('local_link', { token: picked.token, serverId: id })
+    } catch (e) {
+      await server('POST', `/admin/sources/${id}/remove`, {})
+      return asText(e)
+    }
+    setDialog(null)
+    setNote({ text: `Die Quelle „${label}“ ist angelegt. Es ist noch nichts freigegeben und nichts auf den Server kopiert.`, bad: false })
+    await load()
+    return null
+  }
+
+  const rename = async (source: Source, label: string): Promise<string | null> => {
+    const r = await server('POST', `/admin/sources/${source.id}/rename`, { label })
+    if (r.status !== 200) return problem(r)
+    setDialog(null)
+    await load()
+    return null
+  }
+
+  const relink = async (source: Source) => {
+    setNote(null)
+    const picked = await pick(source.scope)
+    if (!picked) return
+    try {
+      await invoke('local_link', { token: picked.token, serverId: source.id })
+      setNote({ text: `„${source.label}“ zeigt jetzt auf den neu gewählten Ort. Die Kopien auf dem Server bleiben, bis du abgleichst.`, bad: false })
+      await load()
+    } catch (e) {
+      setNote({ text: asText(e), bad: true })
+    }
+  }
+
+  const remove = (source: Source) =>
     ask({
-      title: 'Ordner freigeben?',
+      title: 'Quelle entfernen?',
       body: (
         <>
-          Claude darf aus <b>{path}</b> künftig <b>{gain}</b> {gain === 1 ? 'Datei' : 'Dateien'} an Mails anhängen. Bereits gesperrte Unterordner und Dateien bleiben gesperrt.
+          Die Quelle <b>{source.label}</b> wird entfernt. Alle Kopien davon auf dem Server werden gelöscht, offene Entwürfe mit Dateien aus dieser Quelle werden verworfen. Dateien auf diesem Mac bleiben unberührt.
         </>
       ),
-      confirmLabel: 'Freigeben',
-      run: () => setRule(path, 'allow'),
+      confirmLabel: 'Quelle entfernen',
+      run: () =>
+        void (async () => {
+          const r = await server('POST', `/admin/sources/${source.id}/remove`, {})
+          if (r.status !== 200) return setNote({ text: problem(r), bad: true })
+          if (inApp) {
+            try {
+              await invoke('local_unlink', { serverId: source.id })
+            } catch {
+              /* the server source is gone; a stale local entry is harmless and listed nowhere */
+            }
+          }
+          const files = Number(r.data.purged_files) || 0
+          const drafts = Number(r.data.cancelled_drafts) || 0
+          setNote({
+            text: `Entfernt. ${countText(files)} auf dem Server gelöscht${drafts ? `, ${drafts} ${drafts === 1 ? 'offener Entwurf' : 'offene Entwürfe'} verworfen` : ''}.`,
+            bad: false,
+          })
+          await load()
+        })(),
     })
-  }
 
-  const unblock = (path: string) =>
-    ask({
-      title: 'Sperre aufheben?',
-      body: <>Die Sperre auf <b>{path}</b> fällt weg. Ob Claude dort etwas anhängen darf, hängt danach von den übrigen Regeln ab.</>,
-      confirmLabel: 'Sperre aufheben',
-      run: () => setRule(path),
-    })
+  const serverFolders = (sources ?? []).filter((s) => s.kind === 'server_folder')
+  const macSources = (sources ?? []).filter((s) => s.kind === 'upload')
+  const full = quota ? quota.sources >= quota.max_sources : false
 
-  const renderNode = (node: FileNode, base: string, depth: number) => {
-    const path = base ? `${base}/${node.name}` : node.name
-    const isFolder = node.kind === 'folder'
-    const eff = effective(path, rules)
-    const own = rules[path]
-    const isOpen = open.has(path)
-    const hardDenied = eff.state === 'denied' && own !== 'deny'
-
-    let badge = <span className="text-[11px] opacity-60 whitespace-nowrap">nicht freigegeben</span>
-    if (eff.state === 'allowed') badge = <span className="text-[11px] whitespace-nowrap" style={{ color: '#b9ffd8' }}>✓ erlaubt{eff.source !== path ? ` (über „${eff.source.split('/').pop()}“)` : ''}</span>
-    if (eff.state === 'denied') badge = <span className="text-[11px] whitespace-nowrap" style={{ color: '#ffc9cd' }}>⛔ {eff.reason}</span>
-
+  const card = (s: Source) => {
+    const local = localOf(s.id)
+    const isMac = s.kind === 'upload'
     return (
-      <div key={path}>
-        <div className="flex items-center gap-2 py-1 border-b border-white/10" style={{ paddingLeft: depth * 16 }}>
-          {isFolder ? (
-            <button className="w-4 text-xs opacity-90" onClick={() => toggle(path)} aria-label={isOpen ? 'zuklappen' : 'aufklappen'}>
-              {isOpen ? '▾' : '▸'}
-            </button>
-          ) : (
-            <span className="w-4 text-xs opacity-60">·</span>
-          )}
-          <span className="text-[13px] flex-1 min-w-0 truncate">{isFolder ? '📁' : '📄'} {node.name}{!isFolder && isSensitiveName(node.name) && ' 🔑'}</span>
-          {badge}
-          {!hardDenied && isFolder && own !== 'allow' && own !== 'deny' && <button className="gbtn primary" onClick={() => allow(path)}>Freigeben</button>}
-          {!hardDenied && isFolder && own === 'allow' && <button className="gbtn" onClick={() => setRule(path)}>Zurücksetzen</button>}
-          {!hardDenied && own !== 'deny' && <button className="gbtn danger" onClick={() => setRule(path, 'deny')}>Sperren</button>}
-          {own === 'deny' && <button className="gbtn" onClick={() => unblock(path)}>Sperre aufheben</button>}
+      <div key={s.id} className="py-2 border-b border-white/10">
+        <div className="flex items-center gap-2">
+          <span className="text-[13px] font-semibold flex-1 min-w-0 truncate">
+            {isMac ? (s.scope === 'file' ? '📄' : '📁') : '🗄️'} {s.label}
+            {s.scope === 'file' && s.file_name ? <span className="font-normal opacity-70"> · {s.file_name}</span> : null}
+          </span>
+          <span className="text-[11px] opacity-80 whitespace-nowrap">{countText(s.files)}{s.files ? ` · ${kb(s.bytes)}` : ''}</span>
         </div>
-        {isFolder && isOpen && node.children?.map((c) => renderNode(c, path, depth + 1))}
+        {isMac && inApp && (
+          <div className="text-[11px] mt-0.5" style={{ color: local && local.reachable ? undefined : '#ffc9cd' }}>
+            {!local
+              ? 'Auf diesem Mac ist kein Ort für diese Quelle hinterlegt.'
+              : !local.reachable
+                ? `Nicht erreichbar: ${local.display}`
+                : <span className="opacity-80">{local.display}</span>}
+          </div>
+        )}
+        {isMac && (
+          <div className="flex gap-2 mt-1.5">
+            {inApp && (!local || !local.reachable) && <button className="gbtn primary" onClick={() => void relink(s)}>Neu zuordnen</button>}
+            <button className="gbtn" onClick={() => setDialog({ type: 'rename', source: s })}>Umbenennen</button>
+            <button className="gbtn danger" onClick={() => remove(s)}>Entfernen</button>
+          </div>
+        )}
       </div>
     )
   }
 
-  const total = countAttachable(tree, rules)
-
   return (
     <div className="tile-text flex-1 min-h-0 flex flex-col">
-      <div className="px-6 pb-2">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] uppercase tracking-widest opacity-80">Wurzelordner</span>
-          <span className="text-[13px] font-semibold truncate flex-1 min-w-0">📂 {root.path}</span>
-          <button className="gbtn" onClick={() => setPicking(true)}>Ändern…</button>
-        </div>
-        <div className="text-[11px] mt-1.5 opacity-90">
-          Claude kann aktuell <b>{total}</b> {total === 1 ? 'Datei' : 'Dateien'} anhängen. Die Regeln gelten nur für diesen Ordner und werden beim Wechsel nicht übernommen. Eine Sperre gewinnt immer. Einzelne Dateien lassen sich nur sperren, nicht separat freigeben.
-        </div>
+      <div className="px-6 pb-2 text-[12px] opacity-90 leading-relaxed">
+        Hier legst du fest, aus welchen Ordnern und Dateien Claude etwas an Mails anhängen darf. Claude sieht nur, was du ausdrücklich freigibst. Eine Sperre gewinnt immer.
       </div>
 
-      <div className="scroll-glass flex-1 min-h-0 px-6 pb-5 border-t border-white/30">
-        {tree.map((n) => renderNode(n, '', 0))}
+      <div className="scroll-glass flex-1 min-h-0 px-6 pb-5 border-t border-white/30 pt-3">
+        {error && (
+          <div className="mb-3 px-2 py-1.5 rounded text-[12px]" style={{ background: 'rgba(255,120,130,0.3)' }}>
+            {error} <button className="gbtn ml-2" onClick={() => void load()}>Erneut laden</button>
+          </div>
+        )}
+        {note && (
+          <div className="mb-3 px-2 py-1.5 rounded text-[12px]" style={{ background: note.bad ? 'rgba(255,120,130,0.3)' : 'rgba(120,255,180,0.2)' }}>
+            {note.text}
+          </div>
+        )}
+        {!sources && !error && <div className="opacity-70 text-[12px]">Lade …</div>}
+
+        {sources && (
+          <>
+            {serverFolders.length > 0 && (
+              <Group title="Ordner auf dem Server">{serverFolders.map(card)}</Group>
+            )}
+            <Group title="Von diesem Mac">
+              {macSources.length === 0 && (
+                <div className="text-[12px] opacity-80 mb-2">Noch keine Quelle von diesem Mac. Wähle einen Ordner oder eine einzelne Datei.</div>
+              )}
+              {macSources.map(card)}
+              {inApp ? (
+                <div className="flex gap-2 mt-3">
+                  <button className="gbtn primary" disabled={full} onClick={() => void startAdd('folder')}>Ordner hinzufügen</button>
+                  <button className="gbtn" disabled={full} onClick={() => void startAdd('file')}>Einzelne Datei hinzufügen</button>
+                </div>
+              ) : (
+                <div className="text-[12px] opacity-80 mt-2">Ordner und Dateien von diesem Mac lassen sich nur in der App auswählen, nicht im Browser.</div>
+              )}
+              {quota && (
+                <div className="text-[11px] opacity-65 mt-2">
+                  {quota.sources} von höchstens {quota.max_sources} Quellen angelegt.{full ? ' Entferne eine Quelle, um eine neue anzulegen.' : ''}
+                </div>
+              )}
+            </Group>
+          </>
+        )}
       </div>
 
-      {picking && (
-        <Win95Modal title="Wurzelordner wählen" width={400} onClose={() => setPicking(false)}>
-          <div className="text-xs mb-3 opacity-80">Im echten Programm öffnet sich hier die Ordnerauswahl deines Betriebssystems. Im Prototyp stehen zwei Beispiele zur Wahl.</div>
-          {MOCK_ROOTS.map((r) => (
-            <button key={r.id} className="bevel w-full text-left mb-2 py-2" onClick={() => choose(r)}>
-              <b>{r.label}</b>
-              <span className="block text-[11px] opacity-70">{r.path}</span>
-            </button>
-          ))}
-          <div className="flex justify-end"><button className="bevel" onClick={() => setPicking(false)}>Abbrechen</button></div>
-        </Win95Modal>
+      {dialog?.type === 'add' && (
+        <NameDialog
+          title={dialog.picked.kind === 'folder' ? 'Ordner als Quelle anlegen' : 'Datei als Quelle anlegen'}
+          intro={
+            <>
+              Unter diesem Namen sieht Claude die Quelle. Gewählt: <b>{dialog.picked.name}</b>. Der Ort auf deinem Mac bleibt hier gespeichert und geht nie an den Server. Angelegt wird nur der Name, freigegeben wird noch nichts.
+            </>
+          }
+          initial={dialog.picked.name.replace(/\.(md|txt)$/i, '')}
+          confirmLabel="Quelle anlegen"
+          onSubmit={(name) => create(dialog.picked, name)}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.type === 'rename' && (
+        <NameDialog
+          title="Quelle umbenennen"
+          intro="Unter dem neuen Namen sieht Claude die Quelle."
+          initial={dialog.source.label}
+          confirmLabel="Umbenennen"
+          onSubmit={(name) => rename(dialog.source, name)}
+          onClose={() => setDialog(null)}
+        />
       )}
     </div>
   )
