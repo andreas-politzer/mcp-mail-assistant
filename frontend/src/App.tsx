@@ -54,11 +54,14 @@ const ICONS: { id: string; label: string; sprite: Sprite; action: IconAction }[]
 function defaultWins(): Win[] {
   const w = window.innerWidth
   return [
-    { id: nextWinId++, kind: 'clock', initial: { x: Math.max(8, w - 230), y: 56 } },
-    { id: nextWinId++, kind: 'sticky', initial: { x: Math.max(8, w - 250), y: 290 } },
+    { id: nextWinId++, kind: 'clock', initial: { x: Math.max(8, w - 170), y: 44 } },
+    { id: nextWinId++, kind: 'sticky', initial: { x: Math.max(8, w - 190), y: 232 } },
   ]
 }
 let nextWinId = 1
+
+// Application tiles lie above the playful desktop pieces: clock and sticky note use level 50, Funki none.
+const TILE_Z = 60
 
 const CHAOS: JokeKind[] = ['chaos-text', 'chaos-sheet', 'chaos-net', 'chaos-note', 'chaos-404']
 
@@ -78,6 +81,14 @@ function gridSize() {
   }
 }
 
+// Funki stands directly left of the column with the bin and the floppy, never on top of them.
+// Returns the distance of Funki's right edge from the window's right edge.
+export function funkiRight(windowWidth: number): number {
+  const cols = Math.max(2, Math.floor((windowWidth - OX) / CW))
+  const binLeft = OX + (cols - 1) * CW
+  return windowWidth - binLeft + 8
+}
+
 // Default layout: most icons fill columns from the left; floppy and bin sit at the bottom right.
 function defaultCells(): Record<string, Cell> {
   const { cols, rows } = gridSize()
@@ -91,7 +102,7 @@ function defaultCells(): Record<string, Cell> {
   return out
 }
 
-function DesktopApp({ onLogout }: { onLogout: () => void }) {
+function DesktopApp() {
   const [pending, setPending] = useState<ConfirmRequest | null>(null)
   const [showRecipients, setShowRecipients] = useState(true)
   const [showFiles, setShowFiles] = useState(true)
@@ -222,7 +233,6 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
           : setShowActivity((v) => !v)
         }
         onCommand={runStart}
-        onLogout={onLogout}
       />
 
       {ICONS.map((i) => {
@@ -248,6 +258,7 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
           containerRef={recipientsRef}
           title="Empfänger"
           className="rounded-3xl"
+          zIndex={TILE_Z}
           initialPosition={{ x: startX, y: 44 }}
           initialSize={{ width: tileW, height: 600 }}
           minSize={{ width: 340, height: 260 }}
@@ -263,6 +274,7 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
           containerRef={filesRef}
           title="Dateien und Anhänge"
           className="rounded-3xl"
+          zIndex={TILE_Z}
           initialPosition={{ x: startX + tileW + 24, y: 44 }}
           initialSize={{ width: tileW, height: 600 }}
           minSize={{ width: 340, height: 260 }}
@@ -278,6 +290,7 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
           containerRef={settingsRef}
           title="Einstellungen"
           className="rounded-3xl"
+          zIndex={TILE_Z}
           initialPosition={{ x: startX + 40, y: 72 }}
           initialSize={{ width: tileW, height: 640 }}
           minSize={{ width: 340, height: 260 }}
@@ -293,6 +306,7 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
           containerRef={activityRef}
           title="Aktivität"
           className="rounded-3xl"
+          zIndex={TILE_Z}
           initialPosition={{ x: startX + 80, y: 100 }}
           initialSize={{ width: tileW + 40, height: 620 }}
           minSize={{ width: 360, height: 260 }}
@@ -308,6 +322,7 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
           containerRef={helpRef}
           title="Hilfe und Anleitung"
           className="rounded-3xl"
+          zIndex={TILE_Z}
           initialPosition={{ x: startX + 120, y: 128 }}
           initialSize={{ width: tileW + 20, height: 600 }}
           minSize={{ width: 340, height: 260 }}
@@ -318,7 +333,7 @@ function DesktopApp({ onLogout }: { onLogout: () => void }) {
         </DraggableGlass>
       )}
 
-      <Assistant />
+      <Assistant right={funkiRight(w)} />
 
       {wins.map(renderWin)}
 
@@ -389,15 +404,9 @@ export default function App() {
     [],
   )
 
-  const logout = async () => {
-    await admin.logout()
-    setResume(true)
-    setBooting(true)
-  }
-
   return (
     <>
-      {started && <DesktopApp onLogout={logout} />}
+      {started && <DesktopApp />}
       {booting && (
         <Boot
           key={resume ? 'resume' : 'first'}

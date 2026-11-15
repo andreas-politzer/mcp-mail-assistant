@@ -7,7 +7,7 @@ export interface TaskbarItem {
   open: boolean
 }
 
-export function Taskbar({ items, onToggle, onCommand, onLogout }: { items: TaskbarItem[]; onToggle: (id: string) => void; onCommand: (c: StartCommand) => void; onLogout?: () => void }) {
+export function Taskbar({ items, onToggle, onCommand }: { items: TaskbarItem[]; onToggle: (id: string) => void; onCommand: (c: StartCommand) => void }) {
   const [now, setNow] = useState(() => new Date())
   const [menuOpen, setMenuOpen] = useState(false)
   useEffect(() => {
@@ -17,11 +17,10 @@ export function Taskbar({ items, onToggle, onCommand, onLogout }: { items: Taskb
 
   return (
     <>
-      <div className="absolute top-0 left-0 right-0 h-7 flex items-center px-3 text-xs select-none" style={{ background: 'var(--face)', borderBottom: '2px solid var(--bevel-dark)' }}>
+      <div className="absolute top-0 left-0 right-0 h-7 flex items-center px-3 text-xs select-none" style={{ background: 'var(--face)', borderBottom: '2px solid var(--bevel-dark)', zIndex: 70 }}>
         <span className="text-[13px]">Mail Assistant</span>
-        {onLogout && <button className="bevel ml-auto" onClick={onLogout}>Abmelden</button>}
       </div>
-      <div className="absolute bottom-0 left-0 right-0 h-9 flex items-center gap-2 px-2 select-none" style={{ background: 'var(--face)', borderTop: '2px solid var(--bevel-light)' }}>
+      <div className="absolute bottom-0 left-0 right-0 h-9 flex items-center gap-2 px-2 select-none" style={{ background: 'var(--face)', borderTop: '2px solid var(--bevel-light)', zIndex: 70 }}>
         <button className="bevel font-bold" aria-pressed={menuOpen} onClick={() => setMenuOpen((v) => !v)}>✉ Start</button>
         {items.map((it) => (
           <button key={it.id} className="bevel" aria-pressed={it.open} onClick={() => onToggle(it.id)}>

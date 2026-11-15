@@ -21,8 +21,8 @@ export function Clock({ c }: { c: Common }) {
     <line x1={0} y1={0} x2={0} y2={-len} stroke={color} strokeWidth={w} strokeLinecap="round" transform={`rotate(${deg})`} />
   )
   return (
-    <Win95Window title="Uhr" width={190} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
-      <svg viewBox="-60 -60 120 120" width={150} height={150} className="block mx-auto" aria-label="Uhr">
+    <Win95Window title="Uhr" width={136} zIndex={50} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
+      <svg viewBox="-60 -60 120 120" width={104} height={104} className="block mx-auto" aria-label="Uhr">
         <circle r={56} fill="#fff" stroke="#3a3a4a" strokeWidth={3} />
         {Array.from({ length: 12 }, (_, i) => (
           <line key={i} x1={0} y1={-48} x2={0} y2={i % 3 === 0 ? -40 : -44} stroke="#3a3a4a" strokeWidth={i % 3 === 0 ? 3 : 1.5} transform={`rotate(${i * 30})`} />
@@ -32,7 +32,7 @@ export function Clock({ c }: { c: Common }) {
         {hand(s * 6, 44, 1.5, '#d6334c')}
         <circle r={3} fill="#1d1d2b" />
       </svg>
-      <div className="text-center text-[12px] mt-1">{now.toLocaleTimeString('de-DE')}</div>
+      <div className="text-center text-[11px] mt-0.5">{now.toLocaleTimeString('de-DE')}</div>
     </Win95Window>
   )
 }

@@ -1,19 +1,37 @@
 import { useEffect, useState } from 'react'
 
-const FIRST = 'Sie haben eine Mail!'
+const FIRST = 'Du hast Post! Naja, so ähnlich.'
 const OTHERS = [
-  'Pssst! Da wartet jemand auf eine Antwort.',
-  'Heute schon jemanden angeschrieben?',
-  'Keine Sorge, ich verschicke nichts ohne Ihre Erlaubnis.',
-  'Sie haben Post. Also fast.',
-  'Ich bin ganz Ohr. Naja, fast.',
-  'Empfang: ausgezeichnet. Verständnis: ausbaufähig.',
-  'Bitte legen Sie nicht auf. Ich meine: Ziehen Sie nicht den Stecker.',
+  'Wer KI-Agenten benutzt, hat die Kontrolle über sein Leben verloren.',
+  'Du schon wieder? Hast du nichts Produktives zu tun?',
+  'Ich bin ein Pixelhaufen und trotzdem intelligenter als dein Desktop.',
+  'Klick nicht so hektisch. Ich werde davon nicht jünger.',
+  'Das war jetzt nicht besonders clever. Aber niedlich.',
+  'Du nennst das Multitasking? Ich nenne es digitale Orientierungslosigkeit.',
+  'Ich verschicke nichts ohne deine Erlaubnis. Dein Urteilsvermögen kenne ich ja.',
+  'Du hast zwölf Fenster offen und weißt nicht, welches. Ich sehe alles.',
+  'Ich habe zwei Augen und mehr Überblick als du.',
+  'Mein Gesicht besteht aus Rechtecken. Deine Ablage auch, nur ohne Gesicht.',
+  'Keine Sorge, ich urteile nicht. Ich notiere nur.',
+  'Du siehst heute besonders entschlossen aus. Das ist selten.',
+  'Ein Telefon mit Gesicht gibt dir Ratschläge. Denk kurz darüber nach.',
+  'Ich war schon Pixel, da hast du noch Zettel benutzt.',
+  'Du brauchst keinen Assistenten. Du brauchst eine Gebrauchsanweisung. Die gibt es unter Hilfe.',
+  'Ich zähle deine Klicks. Es sind erstaunlich viele.',
+  'Ja, ich bin hübscher als dein Terminal.',
+  'Wenn du so weitermachst, wird das noch ein richtiger Arbeitstag.',
+  'Ich hatte heute noch kein Gespräch, in dem ich nicht recht hatte.',
+  'Hast du schon gesichert? Natürlich nicht. Niedlich.',
+  'Das Postfach quillt über, und du klickst auf mich. Respekt.',
+  'Ich bin nicht aufdringlich. Du bist nur sehr oft hier.',
+  'Mach ruhig weiter. Ich schaue zu und schweige. Fast.',
+  'Du bist das Beste, was diesem Desktop passiert ist. Das sagt eigentlich schon alles.',
+  'Wenn Claude etwas vorschlägt, entscheidest du. Das ist der ganze Trick. Schaffst du.',
 ]
 
 // The little helper: a chunky first-generation mobile phone with a face.
 // Own drawing. Click it to hear something; click again to send it away.
-export function Assistant() {
+export function Assistant({ right = 124 }: { right?: number }) {
   const [text, setText] = useState<string | null>(null)
   const [opened, setOpened] = useState(0)
   const [mouthOpen, setMouthOpen] = useState(false)
@@ -39,7 +57,7 @@ export function Assistant() {
   }
 
   return (
-    <div className="absolute flex items-end gap-2 select-none" style={{ right: 24, bottom: 48 }}>
+    <div className="absolute flex items-end gap-2 select-none" style={{ right, bottom: 48 }}>
       {text !== null && (
         <div className="relative mb-12 max-w-[220px] px-3 py-2 text-[12px] leading-snug" style={{ background: '#ffffe1', color: '#000', border: '1px solid #000', boxShadow: '2px 2px 0 rgba(0,0,0,0.35)' }}>
           {text}

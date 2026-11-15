@@ -54,7 +54,7 @@ export function HelpTile() {
         </Part>
 
         <Part title="Sitzung und Abmelden">
-          <p>Nach 20 Minuten ohne Eingabe meldet der Server dich ab, spätestens nach 4 Stunden. Die Passphrase liegt nur im Arbeitsspeicher. Mit Abmelden oder Herunterfahren endet die Sitzung sofort.</p>
+          <p>Nach 20 Minuten ohne Eingabe meldet der Server dich ab, spätestens nach 4 Stunden. Die Passphrase liegt nur im Arbeitsspeicher. Mit Herunterfahren im Startmenü endet die Sitzung sofort, und das Fenster schließt sich.</p>
         </Part>
 
         <Part title="Wenn etwas nicht klappt">

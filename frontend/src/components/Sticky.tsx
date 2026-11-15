@@ -24,7 +24,7 @@ function load(): string {
 export function Sticky({ onClose, onFocus, initial }: { onClose: () => void; onFocus?: () => void; initial?: { x: number; y: number } }) {
   const [text, setText] = useState(load)
   const [tip, setTip] = useState(0)
-  const { position, dragHandlers } = useDraggable(initial ?? { x: 300, y: 300 }, undefined, { width: 200, height: 190 })
+  const { position, dragHandlers } = useDraggable(initial ?? { x: 300, y: 300 }, undefined, { width: 160, height: 150 })
   const save = (v: string) => {
     setText(v)
     try {
@@ -43,7 +43,7 @@ export function Sticky({ onClose, onFocus, initial }: { onClose: () => void; onF
     <div
       className="fixed"
       onPointerDownCapture={onFocus}
-      style={{ left: position.x, top: position.y, width: 200, zIndex: 90, background: '#ffff99', border: '1px solid #000', color: '#000', fontFamily: 'var(--retro-font)' }}
+      style={{ left: position.x, top: position.y, width: 160, zIndex: 50, background: '#ffff99', border: '1px solid #000', color: '#000', fontFamily: 'var(--retro-font)' }}
     >
       <div
         className="flex items-center px-1 text-[11px] select-none cursor-grab touch-none"
@@ -58,8 +58,8 @@ export function Sticky({ onClose, onFocus, initial }: { onClose: () => void; onF
       <textarea
         value={text}
         onChange={(e) => save(e.target.value)}
-        rows={6}
-        className="w-full bg-transparent outline-none resize-none px-2 py-1 text-[13px] leading-snug"
+        rows={4}
+        className="w-full bg-transparent outline-none resize-none px-2 py-1 text-[12px] leading-snug"
         style={{ fontFamily: '"Courier New", Courier, monospace' }}
       />
       {secret && <div className="px-2 pb-1 text-[11px]" style={{ color: '#a01d2c' }}>Psst: Passwörter gehören nicht auf Zettel. Auch nicht auf digitale.</div>}
