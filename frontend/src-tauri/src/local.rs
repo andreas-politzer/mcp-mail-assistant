@@ -449,6 +449,86 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn more_than_the_manifest_limit_aborts_instead_of_cutting_the_list() {
+        let root = temp("many");
+        for i in 0..(MAX_MANIFEST + 1) {
+            fs::write(root.join(format!("f{i:05}.md")), "x").unwrap();
+        }
+        let r = scan_link(&folder_link(&root));
+        assert!(r.is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn too_deep_a_tree_aborts() {
+        let root = temp("deep");
+        let mut p = root.clone();
+        for i in 0..(MAX_DEPTH + 3) {
+            p = p.join(format!("d{i}"));
+        }
+        fs::create_dir_all(&p).unwrap();
+        fs::write(p.join("x.md"), "x").unwrap();
+        assert!(scan_link(&folder_link(&root)).is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_place_of_the_folder_is_not_reachable_and_not_scanned() {
+        let real = temp("real");
+        fs::write(real.join("a.md"), "x").unwrap();
+        let holder = temp("holder");
+        let link_path = holder.join("link");
+        std::os::unix::fs::symlink(&real, &link_path).unwrap();
+        let link = Link { server_id: "s".into(), kind: "folder".into(), path: link_path.display().to_string() };
+        assert!(!reachable(&link));
+        assert!(scan_link(&link).is_err());
+        assert!(list_level(&link, "").is_err());
+        let _ = fs::remove_dir_all(&real);
+        let _ = fs::remove_dir_all(&holder);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_replaced_by_a_link_is_refused_when_read_again() {
+        let root = temp("swap");
+        fs::write(root.join("a.md"), "one").unwrap();
+        let outside = temp("outside");
+        fs::write(outside.join("secret.md"), "one").unwrap();
+        let r = scan_link(&folder_link(&root)).unwrap();
+        fs::remove_file(root.join("a.md")).unwrap();
+        std::os::unix::fs::symlink(outside.join("secret.md"), root.join("a.md")).unwrap();
+        assert!(read_scanned(&r.scan, &["a.md".into()]).is_err());
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn the_tree_lists_one_level_and_refuses_paths_that_leave_the_source() {
+        let root = temp("tree");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join("sub/b.md"), "x").unwrap();
+        fs::write(root.join("a.md"), "x").unwrap();
+        fs::write(root.join("skip.pdf"), "x").unwrap();
+        let link = folder_link(&root);
+        let top = list_level(&link, "").unwrap();
+        let names: Vec<_> = top.iter().map(|i| (i.name.as_str(), i.kind.as_str())).collect();
+        assert_eq!(names, vec![("sub", "dir"), ("a.md", "file")]);
+        assert_eq!(list_level(&link, "sub").unwrap().len(), 1);
+        assert!(list_level(&link, "../x").is_err());
+        assert!(list_level(&link, "/etc").is_err());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_damaged_link_file_is_reported_not_replaced_by_an_empty_list() {
+        let dir = temp("damaged");
+        fs::write(dir.join(STORE_FILE), "{ not json").unwrap();
+        assert!(load_links(&dir).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[cfg(unix)]
     #[test]
     fn the_link_file_is_private() {

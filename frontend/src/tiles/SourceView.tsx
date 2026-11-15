@@ -229,7 +229,7 @@ export function SourceView({
     const level = levels[node.path]
     return (
       <div key={node.path}>
-        <div className="flex items-center gap-2 py-1 border-b border-white/10" style={{ paddingLeft: depth * 16 }}>
+        <div data-testid={`node-${node.path}`} className="flex items-center gap-2 py-1 border-b border-white/10" style={{ paddingLeft: depth * 16 }}>
           {isFolder ? (
             <button className="w-4 text-xs opacity-90" onClick={() => toggle(node)} aria-label={isOpen ? 'zuklappen' : 'aufklappen'}>{isOpen ? '▾' : '▸'}</button>
           ) : (

@@ -1,54 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { invoke } from '@tauri-apps/api/core'
-import { admin } from '../api/admin'
 import type { AskConfirm } from '../core/types'
 import { Win95Modal } from '../components/Win95Window'
+import {
+  asText, countText, inApp, kb, local, problem, server,
+  type LocalView, type Picked, type Quota, type Source,
+} from './filesApi'
+import { SourceView } from './SourceView'
 
 // Files: the sources Claude may attach files from. A source is a folder or a single file on this
 // Mac (copied to the server only when you synchronise) or the notes folder on the server.
-// Local paths exist only on this Mac; this window gets a display text and ids, never a path to read.
-
-interface Source {
-  id: string
-  label: string
-  kind: 'upload' | 'server_folder'
-  scope: 'folder' | 'file'
-  file_name: string | null
-  files: number
-  bytes: number
-}
-interface Quota {
-  sources: number
-  max_sources: number
-}
-interface LocalView {
-  server_id: string
-  kind: 'folder' | 'file'
-  display: string
-  reachable: boolean
-}
-interface Picked {
-  token: string
-  name: string
-  kind: 'folder' | 'file'
-}
-
-const inApp = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-const NO_ANSWER = 'Der Server antwortet nicht. Läuft der Tunnel noch?'
-
-async function server(method: string, path: string, body?: unknown) {
-  try {
-    return await admin.call(method, path, body)
-  } catch {
-    return { status: 0, data: { message: NO_ANSWER } }
-  }
-}
-const problem = (r: { status: number; data: { message?: string } }) =>
-  r.data?.message ?? (r.status === 0 ? NO_ANSWER : `Der Server meldet Fehler ${r.status}.`)
-const asText = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : 'Unbekannter Fehler.')
-const kb = (b: number) => (b < 1000 ? `${b} Byte` : `${Math.round(b / 1000)} KB`)
-const countText = (n: number) => `${n} ${n === 1 ? 'Datei' : 'Dateien'}`
 
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -116,6 +77,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
   const [error, setError] = useState('')
   const [note, setNote] = useState<{ text: string; bad: boolean } | null>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
+  const [openId, setOpenId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     setError('')
@@ -125,7 +87,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
     setQuota(r.data.quota as Quota)
     if (inApp) {
       try {
-        setLocals(await invoke<LocalView[]>('local_list'))
+        setLocals(await local.list())
       } catch (e) {
         setNote({ text: asText(e), bad: true })
       }
@@ -139,7 +101,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
 
   const pick = async (kind: 'folder' | 'file'): Promise<Picked | null> => {
     try {
-      return await invoke<Picked | null>('local_pick', { kind })
+      return await local.pick(kind)
     } catch (e) {
       setNote({ text: asText(e), bad: true })
       return null
@@ -164,7 +126,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
     if (r.status !== 201) return problem(r)
     const id = r.data.source.id as string
     try {
-      await invoke('local_link', { token: picked.token, serverId: id })
+      await local.link(picked.token, id)
     } catch (e) {
       await server('POST', `/admin/sources/${id}/remove`, {})
       return asText(e)
@@ -188,7 +150,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
     const picked = await pick(source.scope)
     if (!picked) return
     try {
-      await invoke('local_link', { token: picked.token, serverId: source.id })
+      await local.link(picked.token, source.id)
       setNote({ text: `„${source.label}“ zeigt jetzt auf den neu gewählten Ort. Die Kopien auf dem Server bleiben, bis du abgleichst.`, bad: false })
       await load()
     } catch (e) {
@@ -211,7 +173,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
           if (r.status !== 200) return setNote({ text: problem(r), bad: true })
           if (inApp) {
             try {
-              await invoke('local_unlink', { serverId: source.id })
+              await local.unlink(source.id)
             } catch {
               /* the server source is gone; a stale local entry is harmless and listed nowhere */
             }
@@ -231,7 +193,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
   const full = quota ? quota.sources >= quota.max_sources : false
 
   const card = (s: Source) => {
-    const local = localOf(s.id)
+    const place = localOf(s.id)
     const isMac = s.kind === 'upload'
     return (
       <div key={s.id} className="py-2 border-b border-white/10">
@@ -243,22 +205,36 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
           <span className="text-[11px] opacity-80 whitespace-nowrap">{countText(s.files)}{s.files ? ` · ${kb(s.bytes)}` : ''}</span>
         </div>
         {isMac && inApp && (
-          <div className="text-[11px] mt-0.5" style={{ color: local && local.reachable ? undefined : '#ffc9cd' }}>
-            {!local
+          <div className="text-[11px] mt-0.5" style={{ color: place && place.reachable ? undefined : '#ffc9cd' }}>
+            {!place
               ? 'Auf diesem Mac ist kein Ort für diese Quelle hinterlegt.'
-              : !local.reachable
-                ? `Nicht erreichbar: ${local.display}`
-                : <span className="opacity-80">{local.display}</span>}
+              : !place.reachable
+                ? `Nicht erreichbar: ${place.display}`
+                : <span className="opacity-80">{place.display}</span>}
           </div>
         )}
-        {isMac && (
-          <div className="flex gap-2 mt-1.5">
-            {inApp && (!local || !local.reachable) && <button className="gbtn primary" onClick={() => void relink(s)}>Neu zuordnen</button>}
+        <div className="flex gap-2 mt-1.5">
+          <button className="gbtn primary" onClick={() => setOpenId(s.id)}>Öffnen</button>
+          {isMac && <>
+            {inApp && (!place || !place.reachable) && <button className="gbtn" onClick={() => void relink(s)}>Neu zuordnen</button>}
             <button className="gbtn" onClick={() => setDialog({ type: 'rename', source: s })}>Umbenennen</button>
             <button className="gbtn danger" onClick={() => remove(s)}>Entfernen</button>
-          </div>
-        )}
+          </>}
+        </div>
       </div>
+    )
+  }
+
+  const opened = sources?.find((x) => x.id === openId)
+  if (opened) {
+    return (
+      <SourceView
+        source={opened}
+        linked={localOf(opened.id)}
+        ask={ask}
+        onBack={() => setOpenId(null)}
+        onChanged={load}
+      />
     )
   }
 

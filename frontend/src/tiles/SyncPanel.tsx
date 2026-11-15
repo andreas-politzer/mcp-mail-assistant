@@ -102,7 +102,7 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
     return (
       <div className="mb-4">
         {phase.name === 'done' && (
-          <div className="mb-2 px-2 py-1.5 rounded text-[12px]" style={{ background: 'rgba(120,255,180,0.2)' }}>
+          <div data-testid="sync-done" className="mb-2 px-2 py-1.5 rounded text-[12px]" style={{ background: 'rgba(120,255,180,0.2)' }}>
             Abgleich fertig: {phase.stored} neu oder geändert gespeichert, {phase.removed} gelöscht, {phase.unchanged} unverändert.
             {phase.skipped.length > 0 && (
               <details className="mt-1">
@@ -114,7 +114,7 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
             {(phase.stored > 0 || phase.removed > 0) && <div className="mt-1 opacity-85">Ein Entwurf mit einer geänderten oder gelöschten Datei muss neu vorbereitet werden.</div>}
           </div>
         )}
-        {phase.name === 'error' && <div className="mb-2 px-2 py-1.5 rounded text-[12px]" style={{ background: 'rgba(255,120,130,0.3)' }}>{phase.text}</div>}
+        {phase.name === 'error' && <div data-testid="sync-error" className="mb-2 px-2 py-1.5 rounded text-[12px]" style={{ background: 'rgba(255,120,130,0.3)' }}>{phase.text}</div>}
         <button className="gbtn primary" onClick={() => void start()}>Mit diesem Mac abgleichen</button>
         <span className="text-[11px] opacity-70 ml-2">Du siehst vorher, was passiert.</span>
       </div>
@@ -147,7 +147,7 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
       {nothing ? (
         <div className="text-[12px]">Alles ist aktuell: {s.unchanged} {s.unchanged === 1 ? 'Datei ist' : 'Dateien sind'} unverändert, nichts ist zu tun.</div>
       ) : (
-        <div className="text-[12px]">
+        <div className="text-[12px]" data-testid="sync-summary">
           <b>{s.new}</b> neu, <b>{s.changed}</b> geändert, <b>{s.removed}</b> {s.removed === 1 ? 'wird' : 'werden'} vom Server gelöscht, {s.unchanged} unverändert.
           {plan.passes > 1 && <> Die Übertragung läuft in {plan.passes} Durchgängen.</>}
         </div>
