@@ -217,6 +217,100 @@ class RecipientStore:
                 self._audit(conn, now, "recipient_expired", "system", row["address"], None)
             return len(rows)
 
+    def count_stale(self, now: float, ttl_days: int) -> int:
+        """How many open candidates would expire with a window of `ttl_days`."""
+        with self._db._connect() as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM recipients WHERE status='suggested' AND created_at<=?",
+                (now - ttl_days * DAY,),
+            ).fetchone()[0]
+
+    # -- import of a list of contacts (candidates only, never approved) --------------------
+
+    IMPORT_MAX_ROWS = 2000
+    IMPORT_PASS = 500
+    # Addresses that were turned down, removed or blocked never come back as candidates.
+    _EXCLUDED = ("rejected", "removed", "blocked")
+
+    def classify_import(self, rows: object) -> Tuple[List[dict], List[dict]]:
+        """(report, accepted) for rows of {name, address, note?}. The report has one entry per row with
+        a category: new, known (already allowed), candidate (already suggested), excluded (turned down,
+        removed or blocked before), invalid or duplicate. `accepted` are the rows that would become
+        candidates, in file order. Nothing is written."""
+        if not isinstance(rows, list):
+            raise ValidationError("The rows must be a list.")
+        if len(rows) > self.IMPORT_MAX_ROWS:
+            raise ValidationError(f"An import may have at most {self.IMPORT_MAX_ROWS} rows.")
+        report, accepted, seen = [], [], set()
+        with self._db._connect() as conn:
+            for number, raw in enumerate(rows, 1):
+                entry = {"row": number, "address": str(raw.get("address", ""))[:254] if isinstance(raw, dict) else "",
+                         "name": "", "category": "invalid", "reason": ""}
+                try:
+                    if not isinstance(raw, dict):
+                        raise ValidationError("A row must be an object with name and address.")
+                    address = validate_address(raw.get("address"))
+                    name = validate_display_name(raw.get("name", ""))
+                    note = validate_display_name(raw.get("note", "") or "", NOTE_MAX_CHARS)
+                    if not name:
+                        raise ValidationError("A row needs a name.")
+                except ValidationError as exc:
+                    entry["reason"] = str(exc)
+                    report.append(entry)
+                    continue
+                entry.update(address=address, name=name)
+                key = _key(address)
+                if key in seen:
+                    entry.update(category="duplicate", reason="This address is listed twice in the file.")
+                else:
+                    seen.add(key)
+                    row = self._by_address(conn, address)
+                    if row is None or row["status"] == "expired":
+                        entry["category"] = "new"
+                        accepted.append({"name": name, "address": address, "note": note})
+                    elif row["status"] == "active":
+                        entry.update(category="known", reason="Already allowed.")
+                    elif row["status"] == "suggested":
+                        entry.update(category="candidate", reason="Already waiting for a decision.")
+                    else:
+                        entry.update(category="excluded", reason=f"Was {row['status']} before; it does not become a candidate again.")
+                report.append(entry)
+        return report, accepted
+
+    def add_import_candidates(
+        self, rows: Sequence[dict], now: float, source: str, import_id: str, pass_no: int, passes: int,
+        total_added: int, final: bool,
+    ) -> Tuple[int, int]:
+        """One pass of an import, all or nothing: (added, skipped). Every row is checked again inside the
+        transaction (a row that became known, blocked and so on is skipped). New addresses become
+        candidates with status 'suggested' and nothing else; one audit entry covers the pass."""
+        added = skipped = 0
+        with self._db._tx() as conn:
+            for r in rows:
+                address = validate_address(r["address"])
+                row = self._by_address(conn, address)
+                if row is not None and row["status"] != "expired":
+                    skipped += 1
+                    continue
+                if row is None:
+                    conn.execute(
+                        "INSERT INTO recipients(name,address,address_key,status,note,suggested_by,created_at)"
+                        " VALUES (?,?,?,?,?,?,?)",
+                        (r["name"], address, _key(address), "suggested", r["note"], source, now),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE recipients SET name=?, address=?, status='suggested', aliases='[]', note=?,"
+                        " suggested_by=?, created_at=?, decided_at=NULL WHERE id=?",
+                        (r["name"], address, r["note"], source, now, row["id"]),
+                    )
+                added += 1
+            detail = f"import={import_id} pass={pass_no}/{passes} added={added} skipped={skipped}"
+            if final:
+                detail += f" final total_added={total_added + added}"
+            self._audit(conn, now, "recipient_csv_imported", source, None, detail)
+        return added, skipped
+
     def import_list_once(self, recipients: RecipientList, now: float) -> int:
         """Take over the old recipients file the first time, when the registry is still empty."""
         with self._db._tx() as conn:

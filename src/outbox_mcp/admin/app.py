@@ -11,9 +11,11 @@ as a cookie, and request bodies are small.
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
 import logging
+import secrets
 import threading
 import time
 from pathlib import Path
@@ -390,6 +392,21 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
         await run_in_threadpool(db.set_send_limits, new_hour, new_day, clock(), SOURCE)
         return reply(request, 200, {"status": "done", **(await run_in_threadpool(limits_view))})
 
+    def parse_since(raw: Optional[str]) -> Optional[float]:
+        """Seconds since 1970, or an ISO 8601 date or time (without a zone it means UTC)."""
+        if raw is None or not raw.strip():
+            return None
+        raw = raw.strip()
+        try:
+            if raw.replace(".", "", 1).isdigit():
+                return float(raw)
+            moment = datetime.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            raise ValidationError("'since' must be a number of seconds or an ISO 8601 date.") from None
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=datetime.timezone.utc)
+        return moment.timestamp()
+
     async def audit(request: Request) -> Response:
         def number(name: str, default: Optional[int]) -> Optional[int]:
             raw = request.query_params.get(name)
@@ -400,7 +417,9 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
             return int(raw)
 
         limit = min(max(number("limit", 50) or 50, 1), 200)
-        rows = await run_in_threadpool(db.audit_page, limit, number("before", None))
+        types = [t.strip() for raw in request.query_params.getlist("type") for t in raw.split(",") if t.strip()]
+        since = parse_since(request.query_params.get("since"))
+        rows = await run_in_threadpool(db.audit_page, limit, number("before", None), types or None, since)
         items = [
             {"seq": r["seq"], "ts": r["ts"], "event": r["event"], "draft_id": r["draft_id"], "by": r["owner"],
              "address": r["recipient_address"], "detail": r["detail"]}
@@ -722,6 +741,148 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
         remember(data["confirmation_id"], token, digest, out)
         return reply(request, 200, out)
 
+    # -- settings, security information, contact import --------------------------------
+
+    def settings_view() -> Dict[str, Any]:
+        effective, source, reported = db.admin_candidate_expiry()
+        return {"candidate_expiry_days": {
+            "value": effective, "source": source, "starting_value": reported,
+            "min": db.EXPIRY_MIN, "max": db.EXPIRY_MAX, "default": 30,
+            "open_candidates": len(store.pending()),
+        }}
+
+    async def get_settings(request: Request) -> Response:
+        return reply(request, 200, await run_in_threadpool(settings_view))
+
+    async def put_settings(request: Request) -> Response:
+        data = await read_json(request)
+        unknown = [k for k in data if k not in ("candidate_expiry_days", "confirmation_id")]
+        if unknown or "candidate_expiry_days" not in data:
+            raise ValidationError("Only 'candidate_expiry_days' can be changed here (send limits are under /admin/limits).")
+        days = data["candidate_expiry_days"]
+        if isinstance(days, bool) or not isinstance(days, int) or not db.EXPIRY_MIN <= days <= db.EXPIRY_MAX:
+            raise ValidationError(f"'candidate_expiry_days' must be a whole number from {db.EXPIRY_MIN} to {db.EXPIRY_MAX}.")
+        current, source, _ = await run_in_threadpool(db.admin_candidate_expiry)
+        if source == "stored" and current == days:
+            return reply(request, 200, {"status": "unchanged", **(await run_in_threadpool(settings_view))})
+        loosening = current is None or days > current  # a longer window keeps candidates alive longer
+        if loosening:
+            token = bearer(request) or ""
+            action = f"setting:candidate_expiry_days:{days}"
+            state = hashlib.sha256(f"{current}:{source}".encode()).hexdigest()
+            given = data.get("confirmation_id")
+            if given is None:
+                cid = confirmations.issue(token, action, state)
+                return reply(request, 200, {
+                    "status": "confirmation_required", "confirmation_id": cid, "expires_in": config.confirmation_seconds,
+                    "preview": {"candidate_expiry_days": f"{current if current is not None else 'unknown'} -> {days}"},
+                })
+            if not confirmations.consume(given, token, action, state):
+                return fail(request, 409, "confirmation_invalid",
+                            "The confirmation is invalid, used up, expired, or the setting changed in the meantime. Ask again.")
+        affected = await run_in_threadpool(store.count_stale, clock(), days) if not loosening else 0
+        await run_in_threadpool(db.set_candidate_expiry, days, clock(), SOURCE)
+        view = await run_in_threadpool(settings_view)
+        return reply(request, 200, {"status": "done", "candidates_expiring_soon": affected, **view})
+
+    async def security_info(request: Request) -> Response:
+        """Read-only explanation of how the admin side and the mail connector are protected. Contains no
+        secrets, tokens, hashes or keys."""
+        def work() -> Dict[str, Any]:
+            usage = db.source_usage()
+            return {
+                "admin_access": {
+                    "reachable": "this computer only (loopback); from other devices only through an SSH tunnel",
+                    "sign_in": "passphrase, session token in a header, never a cookie",
+                    "idle_timeout_seconds": config.idle_seconds, "max_session_seconds": config.max_session_seconds,
+                    "failed_sign_ins_before_lockout": config.max_failed_logins, "lockout_seconds": config.lockout_seconds,
+                    "confirmation_valid_seconds": config.confirmation_seconds,
+                    "allowed_hosts": list(config.allowed_hosts), "allowed_origins": list(config.allowed_origins),
+                    "request_size_limit_bytes": config.max_body_bytes, "upload_size_limit_bytes": config.max_apply_bytes,
+                },
+                "claude_can": [
+                    "list the allowed recipients", "prepare a draft (nothing is sent)",
+                    "send a prepared draft after your explicit yes", "cancel a draft",
+                    "suggest a recipient (you decide outside the chat)", "list the files you allowed",
+                ],
+                "claude_cannot": [
+                    "approve, reject or block a recipient", "change folder or file rules", "change send limits or settings",
+                    "read mail", "attach a file that is blocked or not allowed",
+                ],
+                "mail_limits": {"hard_ceiling_per_hour": HARD_MAX_SENDS_PER_HOUR, "hard_ceiling_per_day": HARD_MAX_SENDS_PER_DAY},
+                "files": {
+                    "types": {"server_folder": [".md"], "upload": [".md", ".txt"]},
+                    "protections": ["names that look sensitive are always refused", "files with secrets are refused",
+                                    "a block always wins", "blocked files are deleted at once"],
+                    "quotas": {
+                        "max_sources": src_rules.MAX_ACTIVE_SOURCES, "max_files_per_source": src_rules.MAX_FILES_PER_SOURCE,
+                        "max_file_bytes": src_rules.MAX_FILE_BYTES, "max_total_bytes": src_rules.MAX_TOTAL_BYTES,
+                    },
+                    "active_sources": usage["sources"],
+                },
+                "database": {"schema_version": db.schema_version()},
+            }
+        return reply(request, 200, await run_in_threadpool(work))
+
+    IMPORT_TTL = 900
+    IMPORT_SHOWN = 200
+
+    async def import_plan(request: Request) -> Response:
+        data = await read_json(request, config.max_apply_bytes)
+        report, accepted = await run_in_threadpool(store.classify_import, data.get("rows"))
+        counts = {c: 0 for c in ("new", "known", "candidate", "excluded", "invalid", "duplicate")}
+        for entry in report:
+            counts[entry["category"]] += 1
+        import_id = secrets.token_hex(6)
+        token = bearer(request) or ""
+        passes = max(-(-len(accepted) // store.IMPORT_PASS), 1) if accepted else 0
+        payload = {"import_id": import_id, "rows": accepted, "passes": passes, "pass_no": 1, "added": 0}
+        cid = confirmations.issue(
+            token, "import", import_id, payload=payload, ttl=max(config.confirmation_seconds, IMPORT_TTL)
+        )
+        shown = [r for r in report if r["category"] != "new"][:IMPORT_SHOWN]
+        shown += [r for r in report if r["category"] == "new"][: max(IMPORT_SHOWN - len(shown), 0)]
+        return reply(request, 200, {
+            "import_id": import_id, "confirmation_id": cid, "expires_in": max(config.confirmation_seconds, IMPORT_TTL),
+            "summary": counts, "rows": shown, "rows_truncated": len(report) > len(shown),
+            "passes": passes, "per_pass": store.IMPORT_PASS,
+            "note": "New addresses become candidates waiting for your decision. Nothing is approved automatically.",
+        })
+
+    async def import_apply(request: Request) -> Response:
+        data = await read_json(request)
+        token = bearer(request) or ""
+        given = data.get("confirmation_id")
+        again = remembered(given, token, "import")
+        if again is not None:
+            return reply(request, 200, {**again, "replayed": True})
+        item = confirmations.peek_payload(given)
+        import_id = item["import_id"] if item else ""
+        ok, payload = confirmations.consume_payload(given, token, "import", import_id)
+        if not ok or payload is None:
+            return fail(request, 409, "confirmation_invalid",
+                        "The confirmation is invalid, used up or expired. Plan the import again.")
+        rows = payload["rows"]
+        batch, rest = rows[: store.IMPORT_PASS], rows[store.IMPORT_PASS:]
+        final = not rest
+        added, skipped = await run_in_threadpool(
+            store.add_import_candidates, batch, clock(), SOURCE, payload["import_id"], payload["pass_no"],
+            payload["passes"], payload["added"], final,
+        )
+        total = payload["added"] + added
+        out: Dict[str, Any] = {
+            "status": "done" if final else "partial", "import_id": payload["import_id"],
+            "pass": payload["pass_no"], "passes": payload["passes"], "added": added, "skipped": skipped,
+            "total_added": total, "remaining": len(rest),
+        }
+        if not final:
+            nxt = {**payload, "rows": rest, "pass_no": payload["pass_no"] + 1, "added": total}
+            out["confirmation_id"] = confirmations.issue(
+                token, "import", payload["import_id"], payload=nxt, ttl=max(config.confirmation_seconds, IMPORT_TTL)
+            )
+        remember(given, token, "import", out)
+        return reply(request, 200, out)
+
     routes = [
         Route("/admin/login", endpoint(login, auth=False), methods=["POST"]),
         Route("/admin/logout", endpoint(logout), methods=["POST"]),
@@ -744,6 +905,11 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
         Route("/admin/sources/{sid}/sync/plan", endpoint(sync_plan_ep), methods=["POST"]),
         Route("/admin/sources/{sid}/sync/apply", endpoint(sync_apply_ep), methods=["POST"]),
         Route("/admin/audit", endpoint(audit), methods=["GET"]),
+        Route("/admin/settings", endpoint(get_settings), methods=["GET"]),
+        Route("/admin/settings", endpoint(put_settings), methods=["PUT"]),
+        Route("/admin/security", endpoint(security_info), methods=["GET"]),
+        Route("/admin/recipients/import/plan", endpoint(import_plan), methods=["POST"]),
+        Route("/admin/recipients/import/apply", endpoint(import_apply), methods=["POST"]),
         Route("/admin/limits", endpoint(get_limits), methods=["GET"]),
         Route("/admin/limits", endpoint(put_limits), methods=["PUT"]),
     ]

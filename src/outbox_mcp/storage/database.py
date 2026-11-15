@@ -698,14 +698,114 @@ class Database:
         with self._tx() as conn:
             self._audit(conn, now, event, owner=owner, detail=detail)
 
-    def audit_page(self, limit: int, before_seq: Optional[int] = None) -> List[sqlite3.Row]:
-        """Newest entries first, without subjects and body hashes (no mail content)."""
+    # Which audit events belong to which activity type (the admin app filters by these).
+    AUDIT_TYPES = {
+        "recipients": ("recipient_%",),
+        "files": ("file_rule_set", "source_rule_set", "stored_file_%", "stored_files_purged"),
+        "limits": ("send_limits_%",),
+        "sources": ("source_created", "source_renamed", "source_removed", "source_synced"),
+        "sends": ("prepared", "claimed", "sent", "failed", "unknown", "expired", "cancelled", "rate_limited",
+                  "draft_%"),
+        "settings": ("setting_changed",),
+        "access": ("admin_%",),
+    }
+
+    def audit_page(
+        self, limit: int, before_seq: Optional[int] = None, types: Optional[Sequence[str]] = None,
+        since: Optional[float] = None,
+    ) -> List[sqlite3.Row]:
+        """Newest entries first, without subjects and body hashes (no mail content). `types` are names
+        from AUDIT_TYPES (several allowed), `since` a time stamp; all filters combine."""
+        where, args = ["(? IS NULL OR seq < ?)"], [before_seq, before_seq]
+        if since is not None:
+            where.append("ts >= ?")
+            args.append(since)
+        if types:
+            unknown = [t for t in types if t not in self.AUDIT_TYPES]
+            if unknown:
+                raise ValidationError(f"Unknown activity type: {unknown[0][:40]}.")
+            clauses = []
+            for t in types:
+                for pat in self.AUDIT_TYPES[t]:
+                    if pat.endswith("%"):
+                        clauses.append("substr(event,1,?)=?")
+                        args.extend([len(pat) - 1, pat[:-1]])
+                    else:
+                        clauses.append("event=?")
+                        args.append(pat)
+            where.append("(" + " OR ".join(clauses) + ")")
         with self._connect() as conn:
             return conn.execute(
-                "SELECT seq,ts,event,draft_id,owner,recipient_address,detail FROM audit_log"
-                " WHERE (? IS NULL OR seq < ?) ORDER BY seq DESC LIMIT ?",
-                (before_seq, before_seq, limit),
+                "SELECT seq,ts,event,draft_id,owner,recipient_address,detail FROM audit_log WHERE "
+                + " AND ".join(where) + " ORDER BY seq DESC LIMIT ?",
+                (*args, limit),
             ).fetchall()
+
+    # -- candidate expiry (setting) ---------------------------------------------------
+
+    EXPIRY_KEY = "candidate_expiry_days"
+    _EXPIRY_REPORTED = "candidate_expiry_start"
+    EXPIRY_MIN, EXPIRY_MAX = 1, 365
+
+    @staticmethod
+    def _int_setting(conn, key: str) -> Optional[int]:
+        row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        try:
+            return int(row["value"]) if row is not None else None
+        except ValueError:
+            return None
+
+    def candidate_expiry_days(self, default: int) -> int:
+        """What the mail service applies: the stored value, else its own starting value; always inside
+        the allowed range."""
+        with self._connect() as conn:
+            value = self._int_setting(conn, self.EXPIRY_KEY)
+        value = default if value is None else value
+        return min(max(value, self.EXPIRY_MIN), self.EXPIRY_MAX)
+
+    def report_candidate_expiry(self, days: int, now: float) -> None:
+        """Information for the admin side only: the starting value the mail service runs with."""
+        value = str(min(max(days, self.EXPIRY_MIN), self.EXPIRY_MAX))
+        with self._tx() as conn:
+            row = conn.execute("SELECT value FROM settings WHERE key=?", (self._EXPIRY_REPORTED,)).fetchone()
+            if row is not None and row["value"] == value:
+                return
+            conn.execute(
+                "INSERT INTO settings(key,value,changed_at,changed_by) VALUES (?,?,?,'mail-service')"
+                " ON CONFLICT(key) DO UPDATE SET value=excluded.value, changed_at=excluded.changed_at,"
+                " changed_by=excluded.changed_by",
+                (self._EXPIRY_REPORTED, value, now),
+            )
+
+    def admin_candidate_expiry(self) -> Tuple[Optional[int], str, Optional[int]]:
+        """(effective days or None, source 'stored' | 'mail_service_settings' | 'unknown', reported start)."""
+        with self._connect() as conn:
+            stored = self._int_setting(conn, self.EXPIRY_KEY)
+            reported = self._int_setting(conn, self._EXPIRY_REPORTED)
+        if stored is not None:
+            return min(max(stored, self.EXPIRY_MIN), self.EXPIRY_MAX), "stored", reported
+        if reported is not None:
+            return reported, "mail_service_settings", reported
+        return None, "unknown", None
+
+    def set_candidate_expiry(self, days: int, now: float, changed_by: str) -> int:
+        if isinstance(days, bool) or not isinstance(days, int) or not self.EXPIRY_MIN <= days <= self.EXPIRY_MAX:
+            raise ValidationError(f"The expiry must be a whole number of days from {self.EXPIRY_MIN} to {self.EXPIRY_MAX}.")
+        with self._tx() as conn:
+            before = self._int_setting(conn, self.EXPIRY_KEY)
+            reported = self._int_setting(conn, self._EXPIRY_REPORTED)
+            was = before if before is not None else reported
+            conn.execute(
+                "INSERT INTO settings(key,value,changed_at,changed_by) VALUES (?,?,?,?)"
+                " ON CONFLICT(key) DO UPDATE SET value=excluded.value, changed_at=excluded.changed_at,"
+                " changed_by=excluded.changed_by",
+                (self.EXPIRY_KEY, str(days), now, changed_by),
+            )
+            self._audit(
+                conn, now, "setting_changed", owner=changed_by,
+                detail=f"candidate_expiry_days {was if was is not None else 'unknown'} -> {days}",
+            )
+        return days
 
     def schema_version(self) -> int:
         with self._connect() as conn:

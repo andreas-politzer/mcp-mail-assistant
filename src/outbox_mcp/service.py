@@ -82,6 +82,7 @@ class OutboxService:
             self.notes_source_id = db.ensure_server_folder_source(config.attachment_root, clock())
         # Tell the admin side which starting values this process really runs with (information only).
         db.report_start_limits(config.limits, clock())
+        db.report_candidate_expiry(config.suggestion_ttl_days, clock())
 
     def _resolve(self, ref: str):
         """(source row, path) for an attachment given as 'label:relative/path'. Without a known
@@ -274,7 +275,7 @@ class OutboxService:
         self.db.expire_stale(now)
         self.db.purge(now, self.config.draft_retention_days)
         if self.recipient_store is not None:
-            self.recipient_store.expire_stale(now, self.config.suggestion_ttl_days)
+            self.recipient_store.expire_stale(now, self.db.candidate_expiry_days(self.config.suggestion_ttl_days))
 
     def list_recipients(self) -> Dict:
         return {

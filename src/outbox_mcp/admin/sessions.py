@@ -133,6 +133,15 @@ class ConfirmationStore:
     def consume(self, cid: object, session_token: str, action: str, fingerprint: str) -> bool:
         return self.consume_payload(cid, session_token, action, fingerprint)[0]
 
+    def peek_payload(self, cid: object) -> Optional[dict]:
+        """The payload of a pending confirmation if it is a dict (used to find the state it was issued
+        for; the check of session, action and expiry is still done by consume_payload)."""
+        if not isinstance(cid, str):
+            return None
+        with self._lock:
+            item = self._items.get(cid)
+        return item[4] if item is not None and isinstance(item[4], dict) else None
+
     def consume_payload(self, cid: object, session_token: str, action: str, fingerprint: str):
         """(ok, payload). Used up by the first try, right or wrong."""
         if not isinstance(cid, str):
