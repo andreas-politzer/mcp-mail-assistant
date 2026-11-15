@@ -103,15 +103,16 @@ def evaluate(
 ) -> str:
     """'denied', 'allowed' or 'none' for a normalised path key inside one source.
 
-    A block at or above the path wins over everything. In a folder source a path is allowed if
+    A block at or above the path wins over everything. An empty rule path means the whole source
+    (only an upload folder source can hold one). In a folder source a path is allowed if
     an allowed folder lies above it. In a single-file source only the registered file is allowed
     (its registration is the allowance); everything else is 'none'."""
     parts = key_parts(key)
-    if any(d and parts[: len(d)] == d for d in denied):
+    if any(parts[: len(d)] == d for d in denied):
         return "denied"
     if scope == "file":
         return "allowed" if file_key is not None and key == file_key else "none"
-    if any(a and parts[: len(a)] == a for a in allowed):
+    if any(parts[: len(a)] == a for a in allowed):
         return "allowed"
     return "none"
 

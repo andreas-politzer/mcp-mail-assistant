@@ -220,6 +220,33 @@ describe('synchronisation', () => {
     expect((await currentPaths(src.id)).length).toBe(2)
   })
 
+  it('shares a folder that holds files directly in its main folder', async () => {
+    const dir = await setUp('Aric', { '2026 Paper.md': 'one', 'MOC.md': 'two', 'passwort.md': 'secret name', 'Sub/c.md': 'three' })
+    const src = (await sourceByLabel('Aric'))!
+    // there is a way to share the main folder, and nothing is shared before it is used
+    const root = await screen.findByTestId('root-rule')
+    expect(text(root)).toContain('nicht freigegeben')
+    fireEvent.click(within(root).getByText('Ganzen Ordner freigeben'))
+    expect((await nextAsk()).title).toBe('Ganzen Ordner freigeben?')
+    expect(text(await screen.findByTestId('root-rule'))).toContain('nicht freigegeben')
+    await confirmLast()
+    await waitFor(() => expect(text(screen.getByTestId('root-rule'))).toContain('erlaubt'))
+    expect(text(await node('MOC.md'))).toContain('erlaubt')
+    fireEvent.click(await screen.findByText('Mit diesem Mac abgleichen'))
+    await screen.findByText('Vorschau des Abgleichs')
+    await runSync()
+    // the protected name is still never sent, and everything else arrives
+    expect((await currentPaths(src.id)).sort()).toEqual(['2026 Paper.md', 'MOC.md', 'Sub/c.md'])
+    expect(dir).toBeTruthy()
+    // a block inside still wins, and it removes the copies at once
+    await clickRow('Sub', 'Sperren')
+    await waitFor(async () => expect((await currentPaths(src.id)).sort()).toEqual(['2026 Paper.md', 'MOC.md']))
+    // blocking everything removes all copies
+    fireEvent.click(within(screen.getByTestId('root-rule')).getByText('Alles sperren'))
+    await waitFor(async () => expect(await currentPaths(src.id)).toEqual([]))
+    await waitFor(() => expect(text(screen.getByTestId('root-rule'))).toContain('gesperrt'))
+  })
+
   it('sends in several passes, removes only in the last one, and survives a failed pass', async () => {
     const files: Record<string, string> = { 'Doc/old.md': 'old' }
     const dir = await setUp('Passes', files)

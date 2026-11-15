@@ -191,11 +191,11 @@ export function SourceView({
           <>Danach darf Claude <b>{p.files_attachable_after}</b> Dateien anhängen, bisher {p.files_attachable_before}.{p.count_is_partial ? ' Die Zählung ist unvollständig, es können mehr sein.' : ''}</>
         ) : null
       ask({
-        title: effect === 'allow' ? 'Ordner freigeben?' : 'Sperre aufheben?',
+        title: effect === 'allow' ? (path === '' ? 'Ganzen Ordner freigeben?' : 'Ordner freigeben?') : 'Sperre aufheben?',
         body: effect === 'allow' ? (
-          <>Claude darf aus <b>{path}</b> künftig Dateien an Mails anhängen. Gesperrte Unterordner und Dateien bleiben gesperrt. {gain}</>
+          <>Claude darf aus <b>{path === '' ? 'dem ganzen Ordner' : path}</b> künftig Dateien an Mails anhängen. Gesperrte Unterordner und Dateien bleiben gesperrt. {gain}</>
         ) : (
-          <>Die Sperre auf <b>{path}</b> fällt weg. Ob Claude dort etwas anhängen darf, hängt danach von den übrigen Regeln ab. {gain}</>
+          <>Die Sperre auf <b>{path === '' ? 'dem ganzen Ordner' : path}</b> fällt weg. Ob Claude dort etwas anhängen darf, hängt danach von den übrigen Regeln ab. {gain}</>
         ),
         confirmLabel: effect === 'allow' ? 'Freigeben' : 'Sperre aufheben',
         run: () => void putRule(path, effect, r.data.confirmation_id),
@@ -295,6 +295,27 @@ export function SourceView({
 
         {placeOk && (
           <Section title={single ? 'Datei' : 'Ordner und Freigaben'}>
+            {!isServer && !single && (
+              <div data-testid="root-rule" className="flex items-center gap-2 py-1.5 border-b border-white/10 text-[12px]">
+                <span className="flex-1 min-w-0">
+                  <b>Ganzer Ordner</b>
+                  <span className="opacity-80">
+                    {' '}
+                    {source.root_rule === undefined
+                      ? 'lässt sich erst freigeben, wenn der Server auf georgie aktualisiert ist'
+                      : source.root_rule === 'allow'
+                      ? '✓ erlaubt, auch die Dateien direkt im Hauptordner'
+                      : source.root_rule === 'deny'
+                        ? '✗ gesperrt, nichts daraus darf angehängt werden'
+                        : 'nicht freigegeben'}
+                  </span>
+                </span>
+                {source.root_rule === null && <button className="gbtn primary" onClick={() => void putRule('', 'allow')}>Ganzen Ordner freigeben</button>}
+                {source.root_rule === 'allow' && <button className="gbtn" onClick={() => void putRule('', 'clear')}>Zurücksetzen</button>}
+                {(source.root_rule === null || source.root_rule === 'allow') && <button className="gbtn danger" onClick={() => void putRule('', 'deny')}>Alles sperren</button>}
+                {source.root_rule === 'deny' && <button className="gbtn" onClick={() => void putRule('', 'clear')}>Sperre aufheben</button>}
+              </div>
+            )}
             {renderLevel('', 0, levels[''])}
           </Section>
         )}

@@ -12,6 +12,7 @@ export interface Source {
   file_name: string | null
   files: number
   bytes: number
+  root_rule: 'allow' | 'deny' | null
 }
 export interface Quota {
   sources: number

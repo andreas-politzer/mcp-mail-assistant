@@ -45,7 +45,7 @@ def fingerprint(rules: Sequence[Rule]) -> str:
 
 
 def _under(parts: Tuple[str, ...], prefix: Tuple[str, ...]) -> bool:
-    return bool(prefix) and parts[: len(prefix)] == prefix
+    return parts[: len(prefix)] == prefix  # an empty prefix is the whole source (upload sources only)
 
 
 def evaluate(parts: Tuple[str, ...], rules: Sequence[Rule]) -> Tuple[str, Optional[Rule]]:

@@ -545,3 +545,60 @@ def test_two_identical_requests_at_the_same_moment_apply_once(admin_config, cloc
         [t.join() for t in threads]
     assert sorted(results) in ([200, 200], [200, 409])  # a duplicate in flight is told to wait or gets the answer
     assert db.count_events("source_synced") == 1 and len(db.list_stored_files(sid)) == 1
+
+
+# -- the whole main folder of a source ---------------------------------------------------------
+
+def test_the_main_folder_can_be_allowed_and_a_block_still_wins(client, auth, db):
+    sid = create(client, auth)
+    first = rule(client, auth, sid, "", "allow").json()
+    assert first["status"] == "confirmation_required" and first["preview"]["whole_source"] is True
+    assert db.source_path_state(sid, "a.md") == "none"  # nothing changes before the confirmation
+    done = rule(client, auth, sid, "", "allow", confirmation_id=first["confirmation_id"]).json()
+    assert done["status"] == "done"
+    assert db.source_path_state(sid, "a.md") == "allowed" and db.source_path_state(sid, "Sub/b.md") == "allowed"
+    listed = client.get("/admin/sources", headers=auth).json()["sources"]
+    assert [s["root_rule"] for s in listed if s["id"] == sid] == ["allow"]
+    assert rule(client, auth, sid, "Sub", "deny").json()["status"] == "done"
+    assert db.source_path_state(sid, "Sub/b.md") == "denied" and db.source_path_state(sid, "a.md") == "allowed"
+    assert rule(client, auth, sid, "", "allow").json()["status"] == "unchanged"
+
+
+def test_files_in_the_main_folder_are_planned_and_stored_once_it_is_allowed(client, auth, db):
+    sid = create(client, auth)
+    allow(client, auth, sid, "")
+    p = plan(client, auth, sid, [entry("a.md", "# A"), entry("Sub/b.md", "# B")]).json()
+    assert p["summary"]["new"] == 2 and p["rejected"] == []
+    done = apply(client, auth, sid, p["confirmation_id"], [full("a.md", "# A"), full("Sub/b.md", "# B")]).json()
+    assert done["status"] == "done" and done["stored"] == 2
+
+
+def test_blocking_the_main_folder_removes_every_copy_at_once(client, auth, db):
+    sid = create(client, auth)
+    allow(client, auth, sid, "")
+    p = plan(client, auth, sid, [entry("a.md", "1"), entry("Sub/b.md", "2")]).json()
+    apply(client, auth, sid, p["confirmation_id"], [full("a.md", "1"), full("Sub/b.md", "2")])
+    done = rule(client, auth, sid, "", "deny").json()
+    assert done["status"] == "done" and done["purged_files"] == 2
+    assert db.source_path_state(sid, "a.md") == "denied"
+    needs = rule(client, auth, sid, "", "clear").json()  # lifting a block asks first
+    assert needs["status"] == "confirmation_required"
+
+
+def test_clearing_the_main_folder_rule_takes_the_access_away_again(client, auth, db):
+    sid = create(client, auth)
+    allow(client, auth, sid, "")
+    p = plan(client, auth, sid, [entry("a.md", "1")]).json()
+    apply(client, auth, sid, p["confirmation_id"], [full("a.md", "1")])
+    done = rule(client, auth, sid, "", "clear").json()  # tightening needs no confirmation
+    assert done["status"] == "done" and done["purged_files"] == 1
+    assert db.source_path_state(sid, "a.md") == "none"
+
+
+def test_only_a_folder_from_the_mac_can_be_ruled_as_a_whole(client, auth, db, root):
+    single = create(client, auth, label="Eine", scope="file", file_name="x.md", origin_display="x.md")
+    assert rule(client, auth, single, "", "deny").status_code == 400
+    notes = db.ensure_server_folder_source(root, 1.0)
+    assert rule(client, auth, notes, "", "allow").status_code == 400
+    with pytest.raises(src_rules.SourceRejected):
+        db.set_source_rule(notes, "", "allow", 1.0, "t", True)

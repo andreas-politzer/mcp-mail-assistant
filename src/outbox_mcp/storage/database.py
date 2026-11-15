@@ -1200,19 +1200,24 @@ class Database:
             )
         return {"purged_files": purged, "cancelled_drafts": len(cancelled), "deleted_copies": deleted}
 
-    def set_source_rule(self, source_id: str, path: str, effect: str, now: float, changed_by: str) -> dict:
+    def set_source_rule(
+        self, source_id: str, path: str, effect: str, now: float, changed_by: str, whole: bool = False
+    ) -> dict:
         """Set, change or clear (effect 'cleared') a rule inside one source. Returns what the change
         removed (see _after_rules_changed). The rule, everything it removes and the audit entries are
         written in one transaction. Rows are never deleted. Only a folder can be
         allowed: a single file can only be blocked (its registration is the allowance)."""
         if effect not in ("allow", "deny", "cleared"):
             raise SourceRejected("input", "Unknown effect of a rule.")
+        # whole=True rules the whole source (its main folder) and is never taken from an empty path
         try:
-            display, key = self._rule_path(path)
+            display, key = ("", "") if whole else self._rule_path(path)
         except ValueError as exc:
             raise SourceRejected("input", str(exc)) from None
         with self._tx() as conn:
             src = self._active_source(conn, source_id)
+            if whole and (src["kind"] != "upload" or src["scope"] != "folder"):
+                raise SourceRejected("permission", "Only a folder from the Mac can be ruled as a whole.")
             if src["scope"] == "file":
                 if key != src["file_key"]:
                     raise SourceRejected("permission", "This source holds one file only; nothing else can be ruled.")
@@ -1244,7 +1249,7 @@ class Database:
             conn.execute("UPDATE file_sources SET sync_epoch=sync_epoch+1 WHERE id=?", (source_id,))
             self._audit(
                 conn, now, "source_rule_set", owner=changed_by,
-                detail=f"source={source_id} label={src['label']} path={display} {before} -> {effect}",
+                detail=f"source={source_id} label={src['label']} path={display or '(whole source)'} {before} -> {effect}",
             )
             effects = self._after_rules_changed(conn, source_id, now, changed_by)
             if effects["purged_files"]:

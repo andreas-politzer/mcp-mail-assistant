@@ -442,6 +442,7 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
             "origin_display": row["origin_display"], "file_name": row["file_display"],
             "created_at": row["created_at"], "epoch": row["sync_epoch"],
             "files": per.get("current", 0), "bytes": per.get("bytes", 0),
+            "root_rule": next((e for k, e, _ in db.source_rules(row["id"]) if k == ""), None),
         }
 
     def quota_view(usage: Dict[str, Any]) -> Dict[str, Any]:
@@ -542,8 +543,10 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
         path, effect = text(data, "path"), text(data, "effect")
         if effect not in ("allow", "deny", "clear"):
             raise ValidationError("'effect' must be allow, deny or clear.")
+        if path == "" and (src["kind"] != "upload" or src["scope"] != "folder"):
+            raise ValidationError("Only a folder from the Mac can be ruled as a whole.")
         try:
-            display, key = db._rule_path(path)
+            display, key = ("", "") if path == "" else db._rule_path(path)
         except ValueError as exc:
             raise ValidationError(str(exc)) from None
         rules = await run_in_threadpool(rule_objects, sid)
@@ -559,7 +562,7 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
             if given is None:
                 cid = confirmations.issue(token, action, state)
                 after = apply_change(rules, display, effect)
-                preview = {"path": display, "change": f"{old or 'none'} -> {effect}"}
+                preview = {"path": display, "whole_source": path == "", "change": f"{old or 'none'} -> {effect}"}
                 preview.update(await run_in_threadpool(stored_preview, src, rules, after))
                 return reply(request, 200, {
                     "status": "confirmation_required", "confirmation_id": cid,
@@ -569,7 +572,8 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
                 return fail(request, 409, "confirmation_invalid",
                             "The confirmation is invalid, used up, expired, or the rules changed in the meantime. Ask again.")
         effects = await run_in_threadpool(
-            db.set_source_rule, sid, display, "cleared" if effect == "clear" else effect, clock(), SOURCE
+            db.set_source_rule, sid, display, "cleared" if effect == "clear" else effect, clock(), SOURCE,
+            path == "",
         )
         return reply(request, 200, {"status": "done", **effects})
 
