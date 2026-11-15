@@ -28,11 +28,28 @@ Tested with: Infomaniak (STARTTLS). Other providers that offer standard SMTP wit
 
 ## What is what
 
-This repository holds one product and two optional additions. They do not depend on each other.
+**Mail Assistant is the product in this repository, and it works on its own.** For the basic setup you need Python with [uv](https://docs.astral.sh/uv/), an SMTP account and an AI assistant that can use MCP servers. No domain, no Cloudflare account, no tunnel and no note vault are needed. Follow [Setup (local, stdio)](#setup-local-stdio) and you are done.
 
-1. **Mail Assistant** is the MCP service that lets an AI assistant prepare and, after your explicit yes, send e-mail. Everything in `src/outbox_mcp/` belongs to it.
-2. **Vault Assistant** is a separate service for controlled access to notes and files. It is not part of this repository and Mail Assistant does not need it. Mail Assistant has only its own small, allow-listed notes folder for attachments.
-3. **Remote access** is the optional way to reach your services from your phone, away from home: an HTTPS address in front of the server, a sign-in, and a tunnel that only makes outgoing connections. Without it everything runs locally. The Mail Assistant has its own sign-in layer for this (`src/outbox_mcp/auth/`) and a worked example with a Cloudflare Tunnel in [docs/operations.md](docs/operations.md). For notes in an Obsidian vault the author uses a separate third-party project, [obsidian-web-mcp](#credits-and-third-party-projects), which is not part of this repository.
+Two optional additions make the whole setup more useful. They are separate from Mail Assistant and from each other, and Mail Assistant does not depend on either:
+
+| | What it is | What you gain with it | In this repository? |
+| --- | --- | --- | --- |
+| **Mail Assistant** | MCP service for drafts, recipients, attachments and sending, plus the desktop app to manage it | The product itself | Yes |
+| **Vault Assistant** | Separate MCP service for controlled access to your notes in an Obsidian vault | The assistant can read and write your notes, and you can have it attach a note to a mail in the same conversation | No. The author runs the third-party [obsidian-web-mcp](#credits-and-third-party-projects) for this |
+| **Remote access** | An HTTPS address with a sign-in and a tunnel that only makes outgoing connections | You can use the assistant from your phone, also by voice, away from home | The sign-in layer for Mail Assistant is (`src/outbox_mcp/auth/`). The tunnel is not. A worked Cloudflare example is in [docs/operations.md](docs/operations.md) |
+
+```
+ Claude (desktop, phone, voice)
+        |   local, or over remote access (HTTPS + sign-in + tunnel)
+        +--------------------+------------------------+
+                             |                        |
+                     Mail Assistant            Vault Assistant
+                    (this repository)           (optional, separate)
+                             |
+                     your SMTP account
+```
+
+Mail Assistant has its own small, allow-listed notes folder for attachments. That folder can be a part of your vault, and the author does it that way, but nothing requires it.
 
 The everyday experience is a natural conversation with Claude: you say who gets which message, Claude drafts, you confirm. The desktop app is only for setting things up and keeping them in order: who may receive mail, which files may be attached, how much may be sent. It is an independent desktop with a playful retro look, nothing more.
 
@@ -130,7 +147,7 @@ npm run tauri build    # installable package for the system you are on
 
 | System | Package | State |
 | --- | --- | --- |
-| macOS | `.dmg`, `.app` | Run in development mode by the author, Rust and frontend tests passed there. The release bundle itself has not been built and checked yet. |
+| macOS | `.dmg`, `.app` | Run in development mode by the author, Rust and frontend tests passed there. The release bundle was built, and its start screen was opened on 16 November 2026. Sign-in and the rest of the app inside the built package have not been checked yet. |
 | Windows | `.msi`, `.exe` | Build prepared in the workflow, **not tested**. Differences known so far: hidden files are recognised by a leading dot only, and the private permissions of the settings folder rely on the default protection of the user profile. |
 | Linux | `.deb`, `.AppImage` | Build prepared in the workflow, **not tested**. |
 
