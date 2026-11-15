@@ -8,3 +8,5 @@ stand-in for the Rust side (`tests/support/fakeTauri.ts`) that follows the same 
 Needs `uv` (it provides the project's Python environment plus `uvicorn` for the run), or set
 `ADMIN_PYTHON` to a Python that has the project and `uvicorn` installed.
 Nothing here touches your real server or your real database.
+
+`tests/devTest.test.ts` covers `npm run dev:test`: the test server gets its own port, refuses port 8431 (the tunnel to a real server) and refuses a port that is already taken.

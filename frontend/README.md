@@ -6,7 +6,8 @@ The admin app of the Mail Assistant: Tauri 2 for the window, React 19 with Tailw
 
 ```bash
 npm install
-npm run tauri dev      # window with live reload (needs Rust and the Tauri system packages)
+npm run tauri dev      # window with live reload against your real server (needs Rust, the Tauri system packages and the SSH tunnel)
+npm run dev:test       # the same window against a throw-away test server on port 18432, started and stopped for you
 npm run dev            # interface only in a browser; file features need the app
 npm run tauri build    # installable package for the current system
 ```

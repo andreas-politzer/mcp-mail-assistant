@@ -119,9 +119,12 @@ Replace BENUTZER and SERVER with your own login and server. To make the app copy
 ```bash
 cd frontend
 npm install
-npm run tauri dev      # development window
+npm run tauri dev      # development window against your real server (needs the SSH tunnel)
+npm run dev:test       # development window against a throw-away test server, no tunnel needed
 npm run tauri build    # installable package for the system you are on
 ```
+
+`npm run dev:test` starts a real admin API with a temporary database on port 18432, waits until it answers, opens the app pointed at it and stops the test server when you close the app. It prints the test passphrase. It never touches port 8431, so it can run while the tunnel to your real server is open.
 
 **Operating systems.** What has really been done, and what has not:
 
