@@ -54,7 +54,7 @@ def test_version_3_database_is_upgraded_and_keeps_its_rows(tmp_path):
         conn.executescript("DROP TABLE file_access_rules; DROP TABLE settings; PRAGMA user_version = 3;")
     again = Database(path)
     with sqlite3.connect(path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
         assert conn.execute("SELECT COUNT(*) FROM file_access_rules").fetchone()[0] == 0
     assert again.rule_lists("attach", "/r") == ([], [])
     Database(path)  # opening once more is harmless

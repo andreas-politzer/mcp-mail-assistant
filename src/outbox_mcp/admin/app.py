@@ -52,7 +52,7 @@ def _recipient(r: RecipientRecord) -> Dict[str, Any]:
     return {
         "id": r.id, "name": r.name, "address": r.address, "aliases": list(r.aliases),
         "status": r.status, "note": r.note, "suggested_by": r.suggested_by,
-        "created_at": r.created_at, "decided_at": r.decided_at,
+        "created_at": r.created_at, "decided_at": r.decided_at, "scope": r.scope,
     }
 
 
@@ -342,6 +342,45 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
             return fail(request, 409, "confirmation_invalid",
                         "The confirmation is invalid, used up, expired, or the address changed in the meantime. Ask again.")
         done = await run_in_threadpool(store.unblock, rid, clock(), SOURCE)
+        return reply(request, 200, {"status": "done", "recipient": _recipient(done)})
+
+    async def set_recipient_scope(request: Request) -> Response:
+        """Change an active recipient between 'external' and 'own'. Mail to an external address needs
+        an approval outside the chat; mail to an own address does not. So 'external' is applied at
+        once, and 'own' (the loosening) only after a one-time confirmation. New recipients are always
+        external: this is the only API route that can make an address own."""
+        rid = int(request.path_params["rid"])
+        data = await read_json(request)
+        wanted = data.get("scope")
+        if wanted not in ("own", "external"):
+            raise ValidationError("'scope' must be 'own' or 'external'.")
+        record = await run_in_threadpool(store.find, rid)
+        if record.status != "active":
+            raise ValidationError("Only an active recipient has a scope.")
+        if wanted == "external" or record.scope == "own":
+            done = await run_in_threadpool(store.set_scope, rid, wanted, clock(), SOURCE)
+            return reply(request, 200, {"status": "done", "recipient": _recipient(done)})
+        token = bearer(request) or ""
+        action = f"scope-own:{rid}"
+        state = hashlib.sha256(
+            f"{record.status}:{record.scope}:{record.decided_at}:{record.address}".encode()
+        ).hexdigest()
+        given = data.get("confirmation_id")
+        if given is None:
+            cid = confirmations.issue(token, action, state)
+            return reply(request, 200, {
+                "status": "confirmation_required", "confirmation_id": cid,
+                "expires_in": config.confirmation_seconds,
+                "preview": {
+                    "name": record.name, "address": record.address,
+                    "effect": "Mail to this address will no longer need an approval outside the chat. "
+                              "Your 'yes' in the chat is then enough. Only do this for your own addresses.",
+                },
+            })
+        if not confirmations.consume(given, token, action, state):
+            return fail(request, 409, "confirmation_invalid",
+                        "The confirmation is invalid, used up, expired, or the recipient changed in the meantime. Ask again.")
+        done = await run_in_threadpool(store.set_scope, rid, "own", clock(), SOURCE)
         return reply(request, 200, {"status": "done", "recipient": _recipient(done)})
 
     # -- send limits -------------------------------------------------------------------
@@ -897,6 +936,7 @@ def build_admin_app(config: AdminConfig, clock: Callable[[], float] = time.time)
     ]
     routes += [
         Route("/admin/recipients/{rid:int}/unblock", endpoint(unblock), methods=["POST"]),
+        Route("/admin/recipients/{rid:int}/scope", endpoint(set_recipient_scope), methods=["POST"]),
         Route("/admin/folders", endpoint(folders), methods=["GET"]),
         Route("/admin/folders/rule", endpoint(put_rule), methods=["PUT"]),
         Route("/admin/sources", endpoint(list_sources_ep), methods=["GET"]),

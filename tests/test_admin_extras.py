@@ -160,7 +160,7 @@ def test_security_information_explains_without_secrets(client, auth, admin_confi
     assert body["files"]["types"] == {"server_folder": [".md"], "upload": [".md", ".txt"]}
     assert body["files"]["quotas"]["max_total_bytes"] == 50_000_000 and body["files"]["active_sources"] == 0
     assert "approve, reject or block a recipient" in body["claude_cannot"]
-    assert body["database"]["schema_version"] == 5
+    assert body["database"]["schema_version"] == 6
 
 
 # -- audit filters ------------------------------------------------------------------------------------

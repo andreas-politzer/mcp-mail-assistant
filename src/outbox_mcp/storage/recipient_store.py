@@ -19,6 +19,7 @@ from ..security.validation import validate_address, validate_display_name
 from .database import Database
 
 NOTE_MAX_CHARS = 300
+SCOPES = ("own", "external")
 
 Ref = Union[int, str]
 
@@ -34,6 +35,7 @@ class RecipientRecord:
     suggested_by: Optional[str]
     created_at: float
     decided_at: Optional[float]
+    scope: str = "external"
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,7 @@ def _record(row: sqlite3.Row) -> RecipientRecord:
         id=row["id"], name=row["name"], address=row["address"],
         aliases=tuple(json.loads(row["aliases"])), status=row["status"], note=row["note"],
         suggested_by=row["suggested_by"], created_at=row["created_at"], decided_at=row["decided_at"],
+        scope="own" if row["scope"] == "own" else "external",
     )
 
 
@@ -101,7 +104,7 @@ class RecipientStore:
                 rid = row["id"]
                 conn.execute(
                     "UPDATE recipients SET name=?, address=?, status='suggested', aliases='[]', note=?,"
-                    " suggested_by=?, created_at=?, decided_at=NULL WHERE id=?",
+                    " suggested_by=?, created_at=?, decided_at=NULL, scope='external' WHERE id=?",
                     (name, address, note, owner, now, rid),
                 )
             self._audit(conn, now, "recipient_suggested", owner, address, f"name: {name}")
@@ -120,6 +123,17 @@ class RecipientStore:
         with self._db._connect() as conn:
             rows = conn.execute("SELECT * FROM recipients WHERE status='active' ORDER BY id").fetchall()
         return tuple(Recipient(r["name"], r["address"], tuple(json.loads(r["aliases"]))) for r in rows)
+
+    def scope_of(self, address: str) -> Optional[str]:
+        """'own' or 'external' for an ACTIVE recipient, None for any other address. A value that
+        is not exactly 'own' counts as 'external': when in doubt, the stricter rule applies."""
+        with self._db._connect() as conn:
+            row = conn.execute(
+                "SELECT scope FROM recipients WHERE address_key=? AND status='active'", (_key(address),)
+            ).fetchone()
+        if row is None:
+            return None
+        return "own" if row["scope"] == "own" else "external"
 
     def has_any(self) -> bool:
         with self._db._connect() as conn:
@@ -144,6 +158,7 @@ class RecipientStore:
     def approve(
         self, ref: Ref, now: float, source: str,
         name: Optional[str] = None, aliases: Optional[Sequence[str]] = None,
+        scope: str = "external",
     ) -> RecipientRecord:
         with self._db._tx() as conn:
             row = self._get(conn, ref)
@@ -151,10 +166,30 @@ class RecipientStore:
                 raise ValidationError(
                     f"{row['address']} is not an open suggestion (status: {row['status']})."
                 )
-            return self._activate(conn, row, now, source, name, aliases, "recipient_approved")
+            return self._activate(conn, row, now, source, name, aliases, "recipient_approved", scope)
+
+    def set_scope(self, ref: Ref, scope: str, now: float, source: str) -> RecipientRecord:
+        """Change a recipient between 'own' and 'external'. Admin side only: the AI connector has
+        no way to reach this. An active recipient only; every change is written to the audit log."""
+        if scope not in SCOPES:
+            raise ValidationError("The scope must be 'own' or 'external'.")
+        with self._db._tx() as conn:
+            row = self._get(conn, ref)
+            if row["status"] != "active":
+                raise ValidationError(
+                    f"{row['address']} is not an active recipient (status: {row['status']})."
+                )
+            if row["scope"] != scope:
+                conn.execute("UPDATE recipients SET scope=? WHERE id=?", (scope, row["id"]))
+                self._audit(
+                    conn, now, "recipient_scope_changed", source, row["address"],
+                    f"scope: {row['scope']} -> {scope}",
+                )
+            return _record(conn.execute("SELECT * FROM recipients WHERE id=?", (row["id"],)).fetchone())
 
     def add(
-        self, name: str, address: str, aliases: Sequence[str], now: float, source: str
+        self, name: str, address: str, aliases: Sequence[str], now: float, source: str,
+        scope: str = "external",
     ) -> RecipientRecord:
         name = validate_display_name(name)
         if not name:
@@ -173,7 +208,9 @@ class RecipientStore:
                 raise ValidationError(f"{row['address']} is already on the list.")
             elif row["status"] == "blocked":
                 raise RecipientNotAllowed("This address is blocked. Unblock it first.")
-            return self._activate(conn, row, now, source, name or row["name"], aliases, "recipient_added")
+            return self._activate(
+                conn, row, now, source, name or row["name"], aliases, "recipient_added", scope
+            )
 
     def reject(self, ref: Ref, now: float, source: str) -> RecipientRecord:
         return self._move(ref, now, source, {"suggested"}, "rejected", "recipient_rejected")
@@ -301,7 +338,7 @@ class RecipientStore:
                 else:
                     conn.execute(
                         "UPDATE recipients SET name=?, address=?, status='suggested', aliases='[]', note=?,"
-                        " suggested_by=?, created_at=?, decided_at=NULL WHERE id=?",
+                        " suggested_by=?, created_at=?, decided_at=NULL, scope='external' WHERE id=?",
                         (r["name"], address, r["note"], source, now, row["id"]),
                     )
                 added += 1
@@ -319,9 +356,9 @@ class RecipientStore:
             imported = 0
             for r in recipients.all():
                 conn.execute(
-                    "INSERT INTO recipients(name,address,address_key,status,aliases,created_at,decided_at)"
-                    " VALUES (?,?,?,?,?,?,?)",
-                    (r.name, r.address, _key(r.address), "active", json.dumps(list(r.aliases)), now, now),
+                    "INSERT INTO recipients(name,address,address_key,status,aliases,scope,created_at,decided_at)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (r.name, r.address, _key(r.address), "active", json.dumps(list(r.aliases)), "external", now, now),
                 )
                 self._audit(conn, now, "recipient_imported", "system", r.address, "from recipients file")
                 imported += 1
@@ -369,7 +406,7 @@ class RecipientStore:
                 )
             return self._set_status(conn, row, now, source, status, event)
 
-    def _activate(self, conn, row, now, source, name, aliases, event) -> RecipientRecord:
+    def _activate(self, conn, row, now, source, name, aliases, event, scope: str = "external") -> RecipientRecord:
         new_name = validate_display_name(name) if name else row["name"]
         if not new_name:
             raise ValidationError("A recipient needs a name.")
@@ -389,11 +426,18 @@ class RecipientStore:
         clash = [label for label, key in zip(labels, folded) if key in taken]
         if clash:
             raise ValidationError(f"The name or alias '{clash[0]}' is already used by another recipient.")
+        if scope not in SCOPES:
+            raise ValidationError("The scope must be 'own' or 'external'.")
+        # The scope is always set here and never carried over from an earlier life of the record.
         conn.execute(
-            "UPDATE recipients SET status='active', name=?, aliases=?, decided_at=? WHERE id=?",
-            (new_name, json.dumps(new_aliases), now, row["id"]),
+            "UPDATE recipients SET status='active', name=?, aliases=?, scope=?, decided_at=? WHERE id=?",
+            (new_name, json.dumps(new_aliases), scope, now, row["id"]),
         )
-        detail = f"aliases: {', '.join(new_aliases)}" if new_aliases else None
+        details = []
+        if new_aliases:
+            details.append(f"aliases: {', '.join(new_aliases)}")
+        details.append(f"scope: {scope}")
+        detail = "; ".join(details)
         self._audit(conn, now, event, source, row["address"], detail)
         return _record(conn.execute("SELECT * FROM recipients WHERE id=?", (row["id"],)).fetchone())
 

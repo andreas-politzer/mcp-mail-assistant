@@ -136,7 +136,8 @@ CREATE TABLE IF NOT EXISTS recipients (
     note TEXT NOT NULL DEFAULT '',
     suggested_by TEXT,
     created_at REAL NOT NULL,
-    decided_at REAL
+    decided_at REAL,
+    scope TEXT NOT NULL DEFAULT 'external' CHECK (scope IN ('own','external'))
 );
 
 CREATE TRIGGER IF NOT EXISTS recipients_no_delete
@@ -297,9 +298,10 @@ def body_hash(subject: str, body: str, address: str, attachments: Sequence[Attac
 class Database:
     # Version 1: drafts, audit log and draft_attachments. Version 2: the recipient registry. Version 3: the origin path of
     # an attachment (checked again when sending). Version 4: file_access_rules and settings. Version 5: file sources
-    # (file_sources, stored_files) and the source id on rules and on the origin of an attachment. The schema script only
+    # (file_sources, stored_files) and the source id on rules and on the origin of an attachment. Version 6: the scope of
+    # a recipient (own or external); active recipients that exist at the upgrade become own. The schema script only
     # creates what is missing, so opening an older database upgrades it without touching existing rows.
-    SCHEMA_VERSION = 5
+    SCHEMA_VERSION = 6
 
     def __init__(self, path: Path) -> None:
         self.path = str(path)
@@ -324,8 +326,31 @@ class Database:
             ):
                 if column not in [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+            self._migrate_recipient_scope(conn)
             if version < self.SCHEMA_VERSION:
                 conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
+
+    @staticmethod
+    def _migrate_recipient_scope(conn: sqlite3.Connection) -> None:
+        """Version 6: every recipient is either 'own' (an address of the operator) or 'external'.
+
+        Recipients that exist when the column is added were put on the list by the operator, so
+        the active ones become 'own'. Everything else, and everything added later, is 'external'.
+        The check and the change happen under one write lock, so two processes that open the
+        database at the same time cannot both run the migration."""
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            columns = [r[1] for r in conn.execute("PRAGMA table_info(recipients)")]
+            if "scope" not in columns:
+                conn.execute(
+                    "ALTER TABLE recipients ADD COLUMN scope TEXT NOT NULL DEFAULT 'external' "
+                    "CHECK (scope IN ('own','external'))"
+                )
+                conn.execute("UPDATE recipients SET scope='own' WHERE status='active'")
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
 
     # -- plumbing -----------------------------------------------------------------
 

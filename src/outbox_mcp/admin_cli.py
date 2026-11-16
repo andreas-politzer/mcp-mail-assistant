@@ -25,7 +25,8 @@ def _when(ts: float) -> str:
 
 def _describe(r: RecipientRecord, out: TextIO) -> None:
     aliases = f"  aliases: {', '.join(r.aliases)}" if r.aliases else ""
-    print(f"#{r.id}  {r.name}  <{r.address}>  [{r.status}]  {_when(r.created_at)}{aliases}", file=out)
+    state = f"{r.status}, {r.scope}" if r.status == "active" else r.status
+    print(f"#{r.id}  {r.name}  <{r.address}>  [{state}]  {_when(r.created_at)}{aliases}", file=out)
     if r.note:
         print(f"      Note from Claude (not verified): {r.note}", file=out)
 
@@ -41,10 +42,15 @@ def _parser() -> argparse.ArgumentParser:
     approve.add_argument("--name")
     approve.add_argument("--alias", action="append", default=[])
     approve.add_argument("--yes", action="store_true", help="do not ask")
+    approve.add_argument("--own", action="store_true", help="an address of your own (no approval outside the chat later)")
     add = sub.add_parser("add", help="add a recipient directly")
     add.add_argument("name")
     add.add_argument("address")
     add.add_argument("--alias", action="append", default=[])
+    add.add_argument("--own", action="store_true", help="an address of your own (no approval outside the chat later)")
+    scope = sub.add_parser("scope", help="mark an active recipient as your own address or as external")
+    scope.add_argument("ref", help="id or address")
+    scope.add_argument("value", choices=("own", "external"))
     for command, text in (("reject", "reject a suggestion"), ("block", "block an address for good"),
                           ("unblock", "lift a block"), ("remove", "take an active recipient off the list")):
         sub.add_parser(command, help=text).add_argument("ref", help="id or address")
@@ -88,11 +94,19 @@ def main(
             ):
                 print("Not approved.", file=out)
                 return 0
-            done = store.approve(record.id, now, SOURCE, name=args.name, aliases=args.alias)
-            print(f"Approved: {done.name} <{done.address}>", file=out)
+            done = store.approve(
+                record.id, now, SOURCE, name=args.name, aliases=args.alias,
+                scope="own" if args.own else "external",
+            )
+            print(f"Approved: {done.name} <{done.address}> [{done.scope}]", file=out)
         elif args.command == "add":
-            done = store.add(args.name, args.address, args.alias, now, SOURCE)
-            print(f"Added: {done.name} <{done.address}>", file=out)
+            done = store.add(
+                args.name, args.address, args.alias, now, SOURCE, scope="own" if args.own else "external"
+            )
+            print(f"Added: {done.name} <{done.address}> [{done.scope}]", file=out)
+        elif args.command == "scope":
+            done = store.set_scope(args.ref, args.value, now, SOURCE)
+            print(f"Scope: {done.name} <{done.address}> [{done.scope}]", file=out)
         else:
             action = getattr(store, args.command)
             done = action(args.ref, now, SOURCE)
