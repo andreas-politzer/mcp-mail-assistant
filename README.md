@@ -21,7 +21,7 @@ Working end to end for the author, built in stages. Be clear about what is and i
 | Backup and restore | Hourly encrypted backup of the data directory (databases via SQLite snapshots, configuration). The first automatic run of the timer was verified, and a restore was tested once (databases open and pass `integrity_check`, config files identical). See [docs/operations.md](docs/operations.md#backup). |
 | Markdown attachments from an allowed notes folder | **Used for real**: a note was attached and sent from a voice chat, and later a recipe note from another allowed folder arrived intact (see [docs/architecture.md](docs/architecture.md)). |
 | New recipients: the AI suggests, you approve outside the chat (admin command line) | **Used for real**: a suggestion made in the chat was approved on the server, then a mail with an attachment went to the new address. Reviewed by a second model; two small findings fixed. |
-| Admin API | Implemented and covered by automated tests: recipients (approve, reject, block, remove, CSV import with preview), file sources and rules, send limits, settings, activity log. It listens locally only and has its own sign-in. Not yet running on the author's server in its latest version. |
+| Admin API | Implemented and covered by automated tests: recipients (approve, reject, block, remove, CSV import with preview), file sources and rules, send limits, settings, activity log. It listens locally only and has its own sign-in. Running on the author's server in its latest version since 16 November 2026 (code update with a backup, a restore test and a rollback mark first). Reachable only through an SSH tunnel. |
 | Desktop app (Tauri 2, React, Rust) | Implemented: sign-in, recipients, files and attachments, settings, activity, help. Frontend tests run against the real admin API; Rust tests cover the local file access. Run in development mode on macOS by the author. Release builds: see [Desktop app](#desktop-app). |
 
 Tested with: Infomaniak (STARTTLS). Other providers that offer standard SMTP with STARTTLS or SSL should work, but have not been tested.
@@ -173,6 +173,7 @@ Documented on purpose, to be decided later:
 - Expiry uses the system clock; a backwards clock jump would extend a draft's lifetime.
 - If building the message fails before anything is sent, the draft is reported as `unknown` rather than `failed` (safe, but imprecise).
 - Not yet tested: real TLS with certificate verification, SSL mode (port 465), failed login.
+- The desktop app is not reachable without an SSH tunnel on purpose: the admin API is kept off the public internet. This is a real hurdle for people who are not used to a terminal, and it is not solved. The app can copy the tunnel command for you, and the in-app help explains it, nothing more.
 - The desktop app is verified on macOS only (see [Desktop app](#desktop-app)). Windows and Linux builds are prepared but untested.
 - The desktop app has no automatic update and no code signing yet, so macOS and Windows will show warnings for downloaded packages.
 - Contact import reads CSV files with a name and an e-mail column, up to 2000 valid rows per file.
