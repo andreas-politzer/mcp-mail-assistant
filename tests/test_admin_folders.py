@@ -26,6 +26,23 @@ class FakeClock:
         return self.t
 
 
+def require_case_sensitive_filesystem(folder):
+    """Two names that differ only in upper and lower case can exist side by side only on a
+    case-sensitive file system (Linux, where the server runs). On the default macOS file system
+    the second name is the first one, so there is nothing ambiguous to detect and the test would
+    check nothing. The skip is decided by trying it on the real file system, never by the platform name.
+    The expectations of the tests themselves are unchanged."""
+    probe = folder / "Case-Probe.tmp"
+    twin = folder / "CASE-PROBE.tmp"
+    probe.write_text("1", encoding="utf-8")
+    try:
+        distinct = not twin.exists()
+    finally:
+        probe.unlink()
+    if not distinct:
+        pytest.skip("this file system ignores upper and lower case in names, so ambiguous siblings cannot exist")
+
+
 @pytest.fixture
 def root(tmp_path):
     r = tmp_path / "vault"
@@ -121,6 +138,7 @@ def test_state_comes_with_its_reason_and_inheritance(client, auth):
 
 
 def test_ambiguous_siblings_are_marked(client, auth, root):
+    require_case_sensitive_filesystem(root)
     (root / "Banking" / "Konto.md").write_text("1", encoding="utf-8")
     (root / "Banking" / "KONTO.md").write_text("2", encoding="utf-8")
     entries = tree(client, auth, "Banking")
@@ -263,6 +281,7 @@ def test_single_files_can_only_be_blocked(client, auth):
 
 
 def test_allowing_is_refused_for_ambiguous_names(client, auth, root):
+    require_case_sensitive_filesystem(root)
     (root / "Banking" / "Konto").mkdir()
     (root / "Banking" / "KONTO").mkdir()
     assert put(client, auth, "Banking/Konto", "allow").status_code == 400
