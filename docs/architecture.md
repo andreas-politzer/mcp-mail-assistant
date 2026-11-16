@@ -35,17 +35,27 @@ Over HTTP the same rule holds: one process per database, so the update procedure
 
 | Enforced by the server | Not enforceable by the server |
 | --- | --- |
-| order of calls, immutability, single use, expiry | that a human really confirmed |
+| order of calls, immutability, single use, expiry | that a human really confirmed (planned: approval outside the chat for other recipients) |
 | recipient allow-list, fixed sender, no CC/BCC | that the assistant was not manipulated |
 | limits, audit log | theft of the SMTP password itself |
 
-## Confirmation: open question
+## Confirmation: current state and planned stage
 
-1. **A. Confirmation in the conversation only** (current). Simple, but vulnerable to prompt injection.
-2. **B. Approval prompt in the client for `send_email`.** Depends on the client; unverified for custom connectors, mobile and voice.
-3. **C. Out-of-band approval** (separate approval page or push). Strongest, most effort.
+**Implemented today.** The final confirmation of a send is given in the conversation (variant A). The server enforces what it can: recipient allow-list (checked again inside the claim transaction), attachment rules, send limits, a single atomic claim per draft, exactly one SMTP attempt, and the states `sent`, `failed` and `unknown`. It cannot prove that the confirmation came from a human.
 
-Plan: test the simplest variant with self-only sending first, decide before allowing other recipients.
+**Not enforceable by a client prompt.** An approval prompt in the client (variant B) depends on the client and its settings. It is not a boundary of this server.
+
+**Planned next stage (not built, no code yet): approval outside the chat (variant C).** Decision, as stated publicly: the server is not opened to other users or to recipients who are not the owner's own mailboxes until this stage is built and acceptable in daily use. Until then the approved list contains the owner's own addresses only. If the prototype is annoying in use, it is not adopted as it is, and other recipients wait. See [decision 0006](decisions/0006-approval-outside-the-chat.md).
+
+- The owner's own addresses keep the current flow unchanged.
+- For other recipients, the assistant can prepare a draft but `send_email` alone does not send it. The approval is bound to exactly that draft (recipient, subject, text, attachments, expiry), can be used once, and is given through a channel the assistant has no access to.
+- The server needs a way to tell the owner's own mailboxes from other recipients. How this is represented is **not decided**. Requirements: only the admin side can set it; every new address starts as "not own"; changing it to "own" is a loosening that needs the existing admin confirmation; the assistant may neither propose nor decide it; a domain name is not a usable rule. A later migration keeps the existing own addresses as own and must neither silently turn them into "other" nor turn any other address into "own".
+- The approval check sits **in front of** the existing claim. Claim, limits, the single SMTP attempt and the states stay as they are. SMTP is not moved into a transaction.
+- The recipient allow-list stays in force. It stops arbitrary addresses from being prepared at all; the approval stops different content from going to an approved address than the one the owner saw.
+
+**Open until tested:** how the approval feels in use (target: seconds, no copying between apps), which technology carries it (for example a passkey on a separate HTTPS origin), and how phone and desktop are covered. A throw-away prototype comes first, outside this repository and without SMTP or the real database.
+
+**What the approval shows.** The server can verify that a valid authentication took place for exactly this approval request, which is bound to this draft. It does not show that the owner read or understood the content, so the approval screen must display recipient, subject and attachments clearly. Binding and display belong together.
 
 ## Stages
 

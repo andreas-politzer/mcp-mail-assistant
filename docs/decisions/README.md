@@ -9,3 +9,4 @@ Short records of decisions that shape the project, written down so nobody has to
 | [0003](0003-admin-access-never-through-the-public-tunnel.md) | Admin access never goes through the public tunnel | built |
 | [0004](0004-permission-model.md) | Permission model: recipients, attachments, reading | built, reading planned |
 | [0005](0005-look-and-assets.md) | Look of the admin app: own assets, readable first | built |
+| [0006](0006-approval-outside-the-chat.md) | Approval outside the chat for recipients who are not the owner's own | planned |

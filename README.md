@@ -73,7 +73,18 @@ What the server enforces by itself:
 
 ## Honest limits
 
-**The server cannot prove that a human said "yes".** If the assistant is tricked (for example by a malicious web page or document containing instructions), it could call both tools. The allow-list, the limits and the audit log reduce the damage, but they do not remove this risk. Stronger options (an approval prompt in the client, or an approval step outside the chat) are discussed in [docs/architecture.md](docs/architecture.md) and are not built yet.
+**The server cannot prove that a human said "yes".** The final confirmation of a send happens in the conversation with the assistant. If the assistant is tricked (for example by a malicious web page or document containing instructions), it could call both `prepare_email` and `send_email` itself, and the server cannot tell the difference.
+
+What a tricked assistant can and cannot do today:
+
+- It **can** send mail to any approved recipient, with attachments the rules already allow, within the send limits.
+- It **cannot** add recipients, unblock addresses, open folders or raise limits. Those changes exist only in the admin API, which listens on the loopback interface only and has its own passphrase.
+
+A mail to one of the owner's own mailboxes can also be forwarded or affect other people, so the planned distinction between own and other recipients ranks the risk; it is not a hard boundary. The allow-list, the limits and the audit log reduce the damage, but they do not remove this risk. "Nothing is sent without your explicit yes" describes the **intended flow**, not a property the server enforces.
+
+**Planned, not built:** before this server is opened to other users or to recipients who are not the owner's own mailboxes, a separate approval step outside the chat is planned (see [docs/architecture.md](docs/architecture.md) and [decision 0006](docs/decisions/0006-approval-outside-the-chat.md)). Until it exists, the approved list is meant to contain the owner's own addresses only.
+
+The admin service binds to `127.0.0.1` in code. Whoever runs it must not create a public route to it (see [decision 0003](docs/decisions/0003-admin-access-never-through-the-public-tunnel.md)). This repository cannot check the tunnel configuration of a given installation.
 
 The sign-in layer is described, with the tests that prove each claim and its known weaknesses, in [docs/oauth-security.md](docs/oauth-security.md).
 
@@ -168,7 +179,7 @@ Nothing is called supported until it has been built and used on that system. The
 Documented on purpose, to be decided later:
 
 - The SQLite schema is versioned (`PRAGMA user_version`); opening an older database upgrades it in place. Back up before the first start with a new version.
-- Tool annotations (`readOnlyHint`, `destructiveHint`, ...) are set honestly, but they are only hints for the client, not a security measure. Claude's desktop app asked once for permission before the first send and then remembered "always allow"; the mobile app showed no prompt. Other clients have not been checked.
+- Tool annotations (`readOnlyHint`, `destructiveHint`, ...) are set honestly, but they are only hints for the client, not a security measure. The permission prompt a client shows before a tool call belongs to that client, not to this server. Its behavior depends on the client and its settings, so it is not relied on as a boundary. Other clients have not been checked.
 - Dependencies: `mcp[cli]` pulls in extras the server does not need; the lower bound `mcp>=1.9.0` is untested (tests run against the locked version).
 - Expiry uses the system clock; a backwards clock jump would extend a draft's lifetime.
 - If building the message fails before anything is sent, the draft is reported as `unknown` rather than `failed` (safe, but imprecise).
