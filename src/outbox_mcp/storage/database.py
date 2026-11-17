@@ -146,6 +146,47 @@ BEGIN
     SELECT RAISE(ABORT, 'recipient history is kept');
 END;
 
+-- Version 7: approval outside the chat. The passkey proves that the person who holds the device
+-- approved exactly this draft; nothing here can be created through the AI connector.
+CREATE TABLE IF NOT EXISTS passkey_credentials (
+    credential_id TEXT PRIMARY KEY,
+    public_key BLOB NOT NULL,
+    sign_count INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    last_used_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS passkey_enrollments (
+    token_hash TEXT PRIMARY KEY,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    used_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS passkey_challenges (
+    challenge_id TEXT PRIMARY KEY,
+    purpose TEXT NOT NULL CHECK (purpose IN ('enroll','approve')),
+    draft_id TEXT,
+    body_sha256 TEXT,
+    enrollment_hash TEXT,
+    created_at REAL NOT NULL,
+    expires_at REAL NOT NULL,
+    consumed_at REAL
+);
+
+CREATE TABLE IF NOT EXISTS draft_approvals (
+    draft_id TEXT PRIMARY KEY,
+    body_sha256 TEXT NOT NULL,
+    credential_id TEXT NOT NULL,
+    approved_at REAL NOT NULL
+);
+
+CREATE TRIGGER IF NOT EXISTS draft_approvals_no_update
+BEFORE UPDATE ON draft_approvals
+BEGIN
+    SELECT RAISE(ABORT, 'an approval cannot be changed');
+END;
+
 CREATE TABLE IF NOT EXISTS file_access_rules (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     scope TEXT NOT NULL CHECK (scope IN ('attach','read')),
@@ -299,9 +340,10 @@ class Database:
     # Version 1: drafts, audit log and draft_attachments. Version 2: the recipient registry. Version 3: the origin path of
     # an attachment (checked again when sending). Version 4: file_access_rules and settings. Version 5: file sources
     # (file_sources, stored_files) and the source id on rules and on the origin of an attachment. Version 6: the scope of
-    # a recipient (own or external); active recipients that exist at the upgrade become own. The schema script only
+    # a recipient (own or external); active recipients that exist at the upgrade become own. Version 7: the approval
+    # outside the chat (passkeys, one-time enrollment links, challenges, approvals). The schema script only
     # creates what is missing, so opening an older database upgrades it without touching existing rows.
-    SCHEMA_VERSION = 6
+    SCHEMA_VERSION = 7
 
     def __init__(self, path: Path) -> None:
         self.path = str(path)
@@ -600,6 +642,13 @@ class Database:
                 f"DELETE FROM draft_attachments WHERE draft_id IN (SELECT id FROM drafts WHERE {old})",
                 (cutoff,),
             )
+            for table in ("draft_approvals", "passkey_challenges"):
+                conn.execute(
+                    f"DELETE FROM {table} WHERE draft_id IN (SELECT id FROM drafts WHERE {old})", (cutoff,)
+                )
+            # challenges and enrollment links that ran out long ago are of no use to anyone
+            conn.execute("DELETE FROM passkey_challenges WHERE expires_at < ?", (now - DAY,))
+            conn.execute("DELETE FROM passkey_enrollments WHERE expires_at < ?", (now - DAY,))
             cur = conn.execute(f"DELETE FROM drafts WHERE {old}", (cutoff,))
             return cur.rowcount
 

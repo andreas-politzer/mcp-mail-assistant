@@ -12,6 +12,7 @@ license = { text = "MIT" }
 authors = [{ name = "Andreas Politzer" }]
 dependencies = [
     "mcp[cli]>=1.9.0,<2.0.0",
+    "webauthn>=3.0.1,<4",
 ]
 
 [project.scripts]

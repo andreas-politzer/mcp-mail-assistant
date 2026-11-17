@@ -80,7 +80,7 @@ def test_version_4_database_is_upgraded_and_keeps_its_rows(tmp_path):
     legacy_rule(path, "/notes", "Projekte/Privat", "deny")
     again = Database(path)
     with sqlite3.connect(path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
         assert conn.execute("SELECT COUNT(*) FROM file_access_rules").fetchone()[0] == 2
         assert conn.execute("SELECT COUNT(*) FROM file_access_rules WHERE source_id IS NULL").fetchone()[0] == 2
         assert [r[1] for r in conn.execute("PRAGMA table_info(draft_attachments)")].count("origin_key") == 1

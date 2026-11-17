@@ -54,7 +54,7 @@ def test_upgrade_from_5_makes_active_recipients_own_and_all_others_external(tmp_
         "evil@example.org": "external",   # blocked
     }
     with sqlite3.connect(path) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION == 6
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == Database.SCHEMA_VERSION == 7
 
 
 def test_the_migration_runs_once_and_does_not_undo_a_later_change(tmp_path):
