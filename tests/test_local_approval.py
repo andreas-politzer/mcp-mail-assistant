@@ -263,7 +263,8 @@ def test_a_taken_port_moves_the_page_to_the_next_free_port(config, sender, capsy
         assert original.port == first                          # the configuration object itself is untouched
         wait_until_up(first + 1)
         d = enroll_and_approve(svc, first + 1, Device(rp_id="localhost", origin=f"http://localhost:{first + 1}"))
-        assert svc.send_email("o", d["draft_id"])["status"] == "sent"
+        assert len(sender.sent) == 1                           # the page sent it right after the approval
+        assert svc.draft_status("o", d["draft_id"])["status"] == "sent"
     finally:
         for s in squatters:
             s.close()

@@ -95,7 +95,7 @@ def find_running_page(config: ApprovalConfig) -> Optional[int]:
     return None
 
 
-def start_local_listener(service: ApprovalService) -> LocalListener:
+def start_local_listener(service: ApprovalService, send=None) -> LocalListener:
     """Start the page. Never raises: a failure comes back in `.error` and means "no listener".
 
     The configured port is only the first one tried. Several stdio servers can run at the same
@@ -123,7 +123,7 @@ def start_local_listener(service: ApprovalService) -> LocalListener:
 
     import uvicorn
 
-    app = Starlette(routes=build_approval_routes(service, AttemptLimiter()))
+    app = Starlette(routes=build_approval_routes(service, AttemptLimiter(), send=send))
     server = uvicorn.Server(
         uvicorn.Config(app, log_level="warning", access_log=False, log_config=None, lifespan="off")
     )

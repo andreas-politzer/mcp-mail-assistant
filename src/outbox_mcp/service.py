@@ -13,6 +13,7 @@ from . import sources as src_rules
 from .approval.service import ApprovalService
 from .config import Config
 from .errors import (
+    OutboxError,
     ApprovalRequired, AttachmentRejected, DraftNotSendable, RecipientNotAllowed, SourceRejected,
 )
 from .mail.message_builder import build_message
@@ -63,6 +64,18 @@ WAITING_EXTERNAL_INSTRUCTIONS = (
     "not arrive in time: tell the user, and call send_email again only after they tell you they "
     "approved it. The approval is valid only for exactly this draft and only until it expires. The "
     "draft cannot be edited: for changes, cancel it and prepare a new one."
+)
+
+SENDING_EXTERNAL_INSTRUCTIONS = (
+    "This recipient is outside the user's own addresses, so the user has to approve THIS draft with "
+    "their passkey, outside the chat. Show the user the recipient, subject and text, and give them "
+    "the link in 'approval_url' to open {where}. They may take as long as they need, until the draft "
+    "expires. The approval page sends the mail itself right after the approval: do NOT call "
+    "send_email and do not ask the user to tell you that they approved. Do not write that nothing "
+    "has been sent yet; say only that the draft is ready for approval. When the user later talks "
+    "about this mail, call draft_status first to see whether it was sent. If the user wants changes, "
+    "prepare a new draft and do not cancel the old one: the user may still prefer it, and the "
+    "approval page shows which version is which."
 )
 
 NO_APPROVAL_INSTRUCTIONS = (
@@ -432,6 +445,8 @@ class OutboxService:
         that the link comes first and send_email right after it."""
         config = self.approval.config if self.approval is not None else None
         where = "in the browser on this computer" if config is not None and config.is_local else "on their phone or computer"
+        if config is not None and config.sends:
+            return SENDING_EXTERNAL_INSTRUCTIONS.format(where=where)
         if config is not None and config.wait_seconds > 0:
             return WAITING_EXTERNAL_INSTRUCTIONS.format(where=where, seconds=config.wait_seconds)
         return EXTERNAL_INSTRUCTIONS.format(where=where)
@@ -506,6 +521,47 @@ class OutboxService:
             "note": "The mail server accepted the message. This does not guarantee delivery.",
         }
 
+    def send_after_approval(self, draft_id: str) -> Dict:
+        """Called by the approval page right after a successful passkey check: the same send path as
+        send_email (it checks the approval again and claims the draft inside one transaction), for the
+        owner of the draft. Never raises; a refusal comes back as status "refused"."""
+        owner = self.db.owner_of(draft_id)
+        if owner is None:
+            return {"status": "refused", "draft_id": draft_id, "note": "No such draft."}
+        try:
+            return self.send_email(owner, draft_id)
+        except OutboxError as exc:
+            return {"status": "refused", "draft_id": draft_id, "note": str(exc)}
+
+    def draft_status(self, owner: str, draft_id: str) -> Dict:
+        """Where a draft stands. Read only."""
+        self._housekeeping()
+        draft = self.db.get_draft(draft_id, owner)
+        approved = (
+            self.approval is not None and draft.status == "pending"
+            and self.approval.is_approved_now(draft.id, draft.body_sha256)
+        )
+        notes = {
+            "pending": "Not sent yet. It waits for the user's passkey approval."
+            if not approved else "Approved, not sent yet.",
+            "sending": "Being sent right now.",
+            "sent": "The mail server accepted the message. This does not guarantee delivery.",
+            "failed": "The mail server did not accept the message. Nothing was sent.",
+            "unknown": "The result is unclear: the mail may or may not have been sent. Tell the user "
+            "and let them check. Do NOT send it again on your own.",
+            "expired": "The draft expired without being sent.",
+            "cancelled": "The draft was discarded.",
+        }
+        result = {
+            "status": draft.status, "draft_id": draft.id, "to_address": draft.recipient_address,
+            "subject": draft.subject, "approved": bool(approved), "note": notes.get(draft.status, ""),
+        }
+        if draft.finished_at:
+            result["finished_at"] = datetime.datetime.fromtimestamp(
+                draft.finished_at, datetime.timezone.utc
+            ).strftime("%Y-%m-%d %H:%M UTC")
+        return result
+
     def approval_state(self, owner: str, draft_id: str) -> str:
         """Where a draft stands for a waiting send_email: "approved" (this exact content is approved),
         "waiting" (still pending and not approved) or "closed" (gone, finished, expired, not this
@@ -525,9 +581,15 @@ class OutboxService:
             "draft_id": draft_id,
             "approval_url": self.approval.approval_url(draft_id) if ready else None,
             "note": (
-                "Nothing was sent. The user has to approve this draft with their passkey outside "
-                "the chat first. Give them the link in 'approval_url'; call send_email again only "
-                "after they tell you they approved it."
+                (
+                    "Nothing was sent yet. The user approves this draft with their passkey outside "
+                    "the chat, using the link in 'approval_url'; the approval page then sends the "
+                    "mail itself. Do not call send_email again; call draft_status to see the result."
+                    if self.approval.config.sends else
+                    "Nothing was sent. The user has to approve this draft with their passkey outside "
+                    "the chat first. Give them the link in 'approval_url'; call send_email again only "
+                    "after they tell you they approved it."
+                )
                 if ready else NO_APPROVAL_INSTRUCTIONS
             ),
         }

@@ -2,6 +2,9 @@
 
 Status: laboratory state, off by default.
 
+Superseded in practice by 0009 (the approval page sends the mail). The waiting send remains as an
+option for setups that switch the page send off with `OUTBOX_APPROVAL_SENDS=0`.
+
 ## Problem
 
 For an external recipient the person approves a draft with a passkey on a page outside the chat. They then have to go back to the chat and tell the assistant that they approved, so that it calls `send_email` again. That last sentence adds nothing to the security: the passkey is the approval.

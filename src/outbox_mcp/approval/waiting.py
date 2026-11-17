@@ -120,4 +120,6 @@ class ApprovalWaiter:
     @staticmethod
     def _seconds(service) -> int:
         approval = getattr(service, "approval", None)
-        return approval.config.wait_seconds if approval is not None else 0
+        if approval is None or approval.config.sends:
+            return 0          # the approval page sends the mail itself: nothing to wait for
+        return approval.config.wait_seconds

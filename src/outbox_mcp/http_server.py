@@ -37,7 +37,7 @@ def build_http_app(
     if service.approval is not None:
         # The approval and enrollment pages live in the public process; they need no sign-in
         # because the passkey is the proof.
-        app.router.routes.extend(build_approval_routes(service.approval))
+        app.router.routes.extend(build_approval_routes(service.approval, send=service.send_after_approval))
     return app
 
 

@@ -80,7 +80,7 @@ def test_validation_applies(svc):
 
 def test_expiry(svc, clock, sender):
     d = prep(svc)
-    clock.t += 601
+    clock.t += 86401
     with pytest.raises(DraftNotSendable) as e:
         svc.send_email("o", d["draft_id"])
     assert e.value.status == "expired" and "expired" in str(e.value)

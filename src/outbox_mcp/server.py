@@ -120,6 +120,15 @@ def register_tools(mcp: FastMCP, service: OutboxService, owner: Callable[[], str
         return await waiter.wait(service, run, who, draft_id, first)
 
     @mcp.tool(annotations=ToolAnnotations(
+        title="Show the status of an e-mail draft", readOnlyHint=True, openWorldHint=False))
+    async def draft_status(draft_id: str) -> dict:
+        """Show where a draft stands (not sent yet, approved, sent, failed, unclear, expired,
+        discarded). Use it when the user talks about a mail again, before you say anything about
+        whether it was sent."""
+        who = owner()
+        return await run(service.draft_status, who, draft_id)
+
+    @mcp.tool(annotations=ToolAnnotations(
         title="Discard e-mail draft", readOnlyHint=False, destructiveHint=False,
         idempotentHint=True, openWorldHint=False))
     async def cancel_draft(draft_id: str) -> dict:
@@ -161,7 +170,7 @@ def attach_local_approval(service: OutboxService) -> None:
 
     if service.approval is None or not service.approval.config.is_local:
         return
-    listener = start_local_listener(service.approval)
+    listener = start_local_listener(service.approval, send=service.send_after_approval)
     if listener.error:
         print(f"Mail Assistant: approval page not started. {listener.error} "
               "Mail to external recipients cannot be sent until this is fixed.", file=sys.stderr)

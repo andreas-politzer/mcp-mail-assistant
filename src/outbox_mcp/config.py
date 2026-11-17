@@ -29,7 +29,7 @@ class Config:
     from_name: str = ""
     smtp_helo: Optional[str] = None
     smtp_timeout_seconds: float = 30.0
-    draft_ttl_seconds: int = 600
+    draft_ttl_seconds: int = 86400
     draft_retention_days: int = 7
     max_prepares_per_hour: int = 20
     max_sends_per_hour: int = 3
@@ -132,7 +132,7 @@ class Config:
             recipients_file=Path(e.get("OUTBOX_RECIPIENTS_FILE", "recipients.json")),
             db_path=Path(e.get("OUTBOX_DB_PATH", "outbox.db")),
             smtp_timeout_seconds=number("OUTBOX_SMTP_TIMEOUT_SECONDS", 30.0, float),
-            draft_ttl_seconds=number("OUTBOX_DRAFT_TTL_SECONDS", 600),
+            draft_ttl_seconds=number("OUTBOX_DRAFT_TTL_SECONDS", 86400),
             draft_retention_days=number("OUTBOX_DRAFT_RETENTION_DAYS", 7),
             max_prepares_per_hour=number("OUTBOX_MAX_PREPARES_PER_HOUR", 20),
             max_sends_per_hour=number("OUTBOX_MAX_SENDS_PER_HOUR", 3),

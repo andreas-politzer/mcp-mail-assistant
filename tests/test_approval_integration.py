@@ -118,7 +118,7 @@ def test_approval_for_other_content_does_not_count(world, sender):
 def test_expired_approval_cannot_send(world, sender, clock):
     d = world.svc.prepare_email("o", "Ferdinand", "S", "T")["draft_id"]
     world.approve(d)
-    clock.t += 601
+    clock.t += 86401
     with pytest.raises(DraftNotSendable):
         world.svc.send_email("o", d)
     assert sender.sent == []

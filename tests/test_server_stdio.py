@@ -25,7 +25,7 @@ def call(mcp, name, arguments):
 def test_tools_and_annotations(service):
     tools = {t.name: t for t in asyncio.run(build_server(service).list_tools())}
     assert set(tools) == {"list_recipients", "prepare_email", "send_email", "cancel_draft",
-                          "suggest_recipient", "list_suggestions", "list_attachments"}
+                          "suggest_recipient", "list_suggestions", "list_attachments", "draft_status"}
     assert tools["list_recipients"].annotations.readOnlyHint is True
     assert tools["send_email"].annotations.destructiveHint is True
 

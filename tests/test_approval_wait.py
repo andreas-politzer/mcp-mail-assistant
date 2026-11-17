@@ -32,9 +32,9 @@ class World:
         self.store.add("Me", OWN, ["myself"], 1.0, "admin:test", scope="own")
         self.store.add("Ferdinand", EXT, [], 1.0, "admin:test")
         if local:
-            cfg = ApprovalConfig(rp_id="localhost", port=8433, wait_seconds=wait_seconds)
+            cfg = ApprovalConfig(rp_id="localhost", port=8433, wait_seconds=wait_seconds, sends=False)
         else:
-            cfg = ApprovalConfig(rp_id=HOST, wait_seconds=wait_seconds)
+            cfg = ApprovalConfig(rp_id=HOST, wait_seconds=wait_seconds, sends=False)
         self.approval = ApprovalService(self.db, cfg, clock)
         self.svc = OutboxService(
             config, DbRecipientList(self.store), self.db, sender, clock,

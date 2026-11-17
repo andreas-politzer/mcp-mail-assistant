@@ -121,11 +121,12 @@ def test_tool_list_and_honest_annotations(mail_client, token):
     resp = mail_client.post("/mcp", json=rpc("tools/list"), headers=auth(token))
     tools = {t["name"]: t for t in resp.json()["result"]["tools"]}
     assert set(tools) == {"list_recipients", "prepare_email", "send_email", "cancel_draft",
-                          "suggest_recipient", "list_suggestions", "list_attachments"}
+                          "suggest_recipient", "list_suggestions", "list_attachments", "draft_status"}
     ann = {name: t["annotations"] for name, t in tools.items()}
     assert ann["list_recipients"]["readOnlyHint"] is True
     for name in ("prepare_email", "send_email", "cancel_draft"):
         assert ann[name]["readOnlyHint"] is False
+    assert ann["draft_status"]["readOnlyHint"] is True
     assert ann["send_email"]["destructiveHint"] is True
     assert ann["send_email"]["openWorldHint"] is True
     assert ann["prepare_email"]["openWorldHint"] is False

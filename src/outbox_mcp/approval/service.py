@@ -76,6 +76,10 @@ class ApprovalConfig:
     # How long send_email waits for the approval before it answers "approval required". 0 = it does
     # not wait (the person tells the assistant that they approved, and it calls send_email again).
     wait_seconds: int = 0
+    # True: the approval page sends the mail itself right after the passkey check. The person can
+    # take any time to read and approve (until the draft expires), and nobody has to tell the
+    # assistant afterwards. False: the old way (the assistant calls send_email after the approval).
+    sends: bool = True
 
     def __post_init__(self) -> None:
         host = self.rp_id
@@ -131,7 +135,11 @@ class ApprovalConfig:
             wait = int(raw_wait) if raw_wait else 0
         except ValueError:
             raise ConfigError("OUTBOX_APPROVAL_WAIT_SECONDS must be a whole number.") from None
-        return cls(rp_id=host, challenge_seconds=seconds, port=port, wait_seconds=wait)
+        raw_sends = (env.get("OUTBOX_APPROVAL_SENDS") or "").strip().lower()
+        if raw_sends not in ("", "0", "1", "true", "false", "yes", "no", "on", "off"):
+            raise ConfigError("OUTBOX_APPROVAL_SENDS must be 1 or 0.")
+        sends = raw_sends not in ("0", "false", "no", "off")
+        return cls(rp_id=host, challenge_seconds=seconds, port=port, wait_seconds=wait, sends=sends)
 
 
 class _Rejected(Exception):
@@ -409,7 +417,7 @@ class ApprovalService:
             return None
         now = self.clock()
         with self.db._connect() as conn:
-            draft = conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
+            draft = conn.execute("SELECT rowid AS rid, * FROM drafts WHERE id=?", (draft_id,)).fetchone()
             if draft is None:
                 return None
             files = conn.execute(
@@ -418,9 +426,18 @@ class ApprovalService:
             ).fetchall()
             approved = conn.execute("SELECT 1 FROM draft_approvals WHERE draft_id=?", (draft_id,)).fetchone()
             keys = conn.execute("SELECT COUNT(*) FROM passkey_credentials").fetchone()[0]
-        if approved:
+            related = conn.execute(
+                "SELECT rowid AS rid, id, created_at, status, subject, finished_at, sending_at, expires_at FROM drafts "
+                "WHERE owner=? AND recipient_address=? AND id<>? "
+                "AND status IN ('pending','sending','sent','unknown')",
+                (draft["owner"], draft["recipient_address"], draft_id),
+            ).fetchall()
+        status = draft["status"]
+        if status in ("sent", "unknown", "failed", "sending"):
+            state = status
+        elif approved:
             state = "approved"
-        elif draft["status"] != "pending":
+        elif status != "pending":
             state = "closed"
         elif now >= draft["expires_at"]:
             state = "expired"
@@ -428,6 +445,24 @@ class ApprovalService:
             state = "no_passkey"
         else:
             state = "open"
+
+        def end(row) -> float:
+            return row["finished_at"] if row["finished_at"] is not None else row["expires_at"]
+
+        # Versions of one mail: drafts to the same address that were alive at the same time as this
+        # one. A later, separate mail to the same person is not one of them, because the earlier
+        # mail was already finished when the later draft was made.
+        mine_end = draft["finished_at"] if draft["finished_at"] is not None else draft["expires_at"]
+        siblings = [
+            r for r in related
+            if r["created_at"] <= mine_end and draft["created_at"] <= end(r)
+            and (r["status"] != "pending" or r["expires_at"] > now)
+        ]
+        sent_siblings = [r for r in siblings if r["status"] in ("sent", "sending", "unknown")]
+        other_sent = None
+        if sent_siblings:
+            last = max(sent_siblings, key=lambda r: r["finished_at"] or r["sending_at"] or 0)
+            other_sent = {"subject": last["subject"], "at": last["finished_at"] or last["sending_at"]}
         return {
             "state": state,
             "to_name": draft["recipient_name"],
@@ -438,6 +473,10 @@ class ApprovalService:
             "expires_at": draft["expires_at"],
             "seconds_left": max(0, int(draft["expires_at"] - now)),
             "attachments": [{"name": f["name"], "size": f["size"]} for f in files],
+            "version": 1 + sum(1 for r in siblings if (r["created_at"], r["rid"]) < (draft["created_at"], draft["rid"])),
+            "versions": len(siblings) + 1,
+            "other_sent": other_sent,
+            "finished_at": draft["finished_at"],
         }
 
     def enrollment_open(self, token: str) -> bool:

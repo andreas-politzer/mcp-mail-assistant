@@ -539,6 +539,11 @@ class Database:
         with self._connect() as conn:
             return self._load(conn, draft_id, owner)
 
+    def owner_of(self, draft_id: str) -> Optional[str]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT owner FROM drafts WHERE id=?", (draft_id,)).fetchone()
+        return row["owner"] if row else None
+
     def expire_stale(self, now: float) -> int:
         with self._tx() as conn:
             rows = conn.execute(

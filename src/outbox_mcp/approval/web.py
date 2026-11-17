@@ -13,9 +13,10 @@ import json
 import threading
 import time
 from collections import deque
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional
 from urllib.parse import urlsplit
 
+import anyio
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
@@ -52,9 +53,12 @@ if(kind==="enroll"){pk.user.id=fromB64(pk.user.id);(pk.excludeCredentials||[]).f
 else{(pk.allowCredentials||[]).forEach(c=>{c.id=fromB64(c.id);});cred=await navigator.credentials.get({publicKey:pk});}
 const d=await post(base+"/verify",{challenge_id:o.challenge_id,credential:pack(cred)});
 out.textContent=d.message;btn.hidden=true;
-if(kind==="approve"){const done=document.getElementById("done");if(done){out.textContent="";done.hidden=false;done.scrollIntoView();}}
+if(kind==="approve"){const done=document.getElementById("done");if(done){out.textContent="";
+if(d.title){const t=document.getElementById("done-title"),x=document.getElementById("done-text");if(t)t.textContent=d.title;if(x)x.textContent=d.detail||"";if(d.outcome!=="sent")done.classList.add("warn");}
+done.hidden=false;done.scrollIntoView();}}
 }catch(e){out.textContent="Not done: "+e.message;btn.disabled=false;showHelp();}}
-document.getElementById("go").addEventListener("click",go);
+const goBtn=document.getElementById("go");if(goBtn)goBtn.addEventListener("click",go);
+document.querySelectorAll("time[data-ts]").forEach(t=>{const d=new Date(Number(t.dataset.ts)*1000);if(!isNaN(d.getTime()))t.textContent=d.toLocaleString();});
 const copyBtn=document.getElementById("copy");
 if(copyBtn)copyBtn.addEventListener("click",async()=>{const c=document.getElementById("copied");let ok=false;try{await navigator.clipboard.writeText(window.location.href);ok=true;}catch(_){}
 if(c){c.textContent=ok?"Copied.":"Could not copy. Select the address bar text instead.";c.hidden=false;}});
@@ -67,6 +71,8 @@ dt{font-weight:600;margin-top:.8rem}dd{margin:0;word-break:break-word}
 pre.text{white-space:pre-wrap;word-break:break-word;max-height:22rem;overflow:auto;border:1px solid #888;padding:.6rem;border-radius:6px;margin:0}
 button{font-size:1.1rem;padding:.7rem 1.2rem;margin-top:1rem}
 .note{color:#555;font-size:.9rem}
+.warn{margin-top:1rem;padding:.8rem 1rem;border:2px solid #b26a00;border-radius:8px;background:#fff4e0}
+.done.warn{border-color:#b26a00;background:#fff4e0}
 .done{margin-top:1.2rem;padding:1rem;border:3px solid #2a7d3f;border-radius:10px;background:#eaf7ee;font-size:1.2rem}.done h2{margin:.2rem 0 .5rem;font-size:1.6rem}
 '''
 
@@ -147,12 +153,55 @@ def _size(n: int) -> str:
     return f"{n} bytes" if n < 1024 else f"{n / 1024:.1f} KB" if n < 1024 * 1024 else f"{n / 1024 / 1024:.1f} MB"
 
 
+def _when(ts: Optional[float]) -> str:
+    """A time as UTC text; the page script shows it in the viewer's own time zone."""
+    if not ts:
+        return "earlier"
+    text = time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(ts))
+    return f'<time data-ts="{int(ts)}">{text}</time>'
+
+
+def _left(seconds: int) -> str:
+    minutes = seconds // 60 + 1
+    return f"{minutes} more minutes" if minutes <= 120 else f"{minutes // 60} more hours"
+
+
+def _send_outcome(result: Dict[str, Any]) -> Dict[str, str]:
+    """What the page tells the person after the approval, from the answer of the send step."""
+    status = result.get("status")
+    to = result.get("to_address") or "the recipient"
+    if status == "sent":
+        return {"outcome": "sent", "title": "Mail sent",
+                "detail": f"Sent to {to}. The mail server accepted it. You can close this page."}
+    if status == "sent_but_not_recorded":
+        return {"outcome": "unknown", "title": "Mail most likely sent",
+                "detail": f"The mail server accepted the message to {to}, but the local status could not "
+                          "be stored. Do not send it again."}
+    if status == "failed":
+        return {"outcome": "failed", "title": "Not sent",
+                "detail": "The mail server did not accept the message. Nothing was sent. "
+                          "Ask Claude to prepare the mail again."}
+    if status == "unknown":
+        return {"outcome": "unknown", "title": "Result unclear",
+                "detail": "The connection to the mail server broke off. The mail may or may not have "
+                          "been sent. Check your sent folder, and do not send it again before you know."}
+    note = str(result.get("note") or "Tell Claude that you approved the mail.")
+    return {"outcome": "not_sent", "title": "Approved, but not sent", "detail": note}
+
+
 def _json(ok: bool, message: str = "", status: int = 200, **extra: Any) -> Response:
     return _secure(JSONResponse({"ok": ok, "message": message, **extra}, status_code=status))
 
 
-def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLimiter] = None) -> List[Route]:
+def build_approval_routes(
+    service: ApprovalService,
+    limiter: Optional[AttemptLimiter] = None,
+    send: Optional[Callable[[str], Dict[str, Any]]] = None,
+) -> List[Route]:
+    """`send` is the send step for an approved draft. With it (and `service.config.sends`), the
+    page sends the mail itself right after the passkey check."""
     limits = limiter or AttemptLimiter()
+    sending = send is not None and service.config.sends
     origin = service.config.origin
 
     def waits() -> bool:
@@ -204,27 +253,65 @@ def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLim
             "</dl>"
         )
         state = info["state"]
+        lead = ""
+        if info["versions"] > 1:
+            lead += (
+                f'<p class="note">Version {info["version"]} of {info["versions"]} of this mail to '
+                f'{html.escape(info["to_address"])}. The other versions stay open until one of them is sent.</p>'
+            )
+        other = info["other_sent"]
+        if other and state in ("open", "approved"):
+            lead += (
+                '<div class="warn"><strong>Another version of this mail was already sent.</strong> '
+                f'To {html.escape(info["to_address"])}, subject &quot;{html.escape(other["subject"])}&quot;, '
+                f'{_when(other["at"])}. Send this one as well?</div>'
+            )
+        card = lead + card
         if state == "open":
+            if sending:
+                button = "Send this one anyway with passkey" if other else "Approve and send with passkey"
+                note = (
+                    f'<p class="note">Valid for about {_left(info["seconds_left"])}. '
+                    "The mail is sent right after the passkey check, once.</p>"
+                )
+                done = (
+                    '<div id="done" class="done" hidden role="status">'
+                    '<h2 id="done-title">Approved</h2><p id="done-text"></p>'
+                )
+            else:
+                button = "Approve with passkey"
+                note = (
+                    f'<p class="note">Valid for about {_left(info["seconds_left"])}. '
+                    "Approving covers exactly this draft, once.</p>"
+                )
+                done = (
+                    '<div id="done" class="done" hidden role="status">'
+                    "<h2>Approved</h2>"
+                    + (
+                        "<p>Claude sends the mail now if it is still waiting, and tells you the result in the chat. "
+                        "If Claude already told you that the approval was late, tell it that you approved.</p>"
+                        if waits() else
+                        "<p>You can go back to Claude now and tell it that you approved.</p>"
+                    )
+                )
             tail = (
-                f'<p class="note">Valid for about {info["seconds_left"] // 60 + 1} more minutes. '
-                "Approving covers exactly this draft, once.</p>"
-                '<button id="go">Approve with passkey</button>'
-                '<p id="result" role="status" aria-live="polite"></p>' + _HELP_HTML +
-                '<div id="done" class="done" hidden role="status">'
-                "<h2>Approved</h2>"
-                + (
-                    "<p>Claude sends the mail now if it is still waiting, and tells you the result in the chat. "
-                    "If Claude already told you that the approval was late, tell it that you approved.</p>"
-                    if waits() else
-                    "<p>You can go back to Claude now and tell it that you approved.</p>"
-                ) +
+                note + f'<button id="go">{button}</button>'
+                '<p id="result" role="status" aria-live="polite"></p>' + _HELP_HTML + done +
                 '<button id="close" type="button">Close this page</button>'
                 '<p id="closehint" hidden>If the page did not close, close this tab or window yourself '
                 "(swipe it away or tap Done), then switch back to Claude.</p></div>"
             )
             return _page("Approve this mail", card + tail, kind="approve", base=f"/approve/{draft_id}")
+        sent_at = _when(info["finished_at"])
         messages = {
+            "sent": f"This mail was sent to {html.escape(info['to_address'])}, {sent_at}.",
+            "unknown": "The result of sending this mail is unclear. Check your sent folder, and do not "
+                       "send it again before you know.",
+            "failed": "The mail server did not accept this mail. Nothing was sent. Ask Claude to prepare it again.",
+            "sending": "This mail is being sent right now. Reload this page in a moment.",
             "approved": (
+                "This draft is approved but was not sent. Tell Claude that you approved it."
+                if sending else
                 "This draft is approved. If Claude is still waiting, it sends the mail by itself; "
                 "otherwise tell Claude to send it."
                 if waits() else "This draft is approved. Tell Claude to send it."
@@ -233,7 +320,8 @@ def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLim
             "closed": "This draft can no longer be approved.",
             "no_passkey": "No passkey is registered yet, so nothing can be approved.",
         }
-        return _page("Approve this mail", card + f"<p><strong>{messages[state]}</strong></p>")
+        page_kind = {"kind": "view", "base": ""} if "<time" in messages[state] or "<time" in card else {}
+        return _page("Approve this mail", card + f"<p><strong>{messages[state]}</strong></p>", **page_kind)
 
     async def approve_options(request: Request) -> Response:
         draft_id = request.path_params["draft_id"]
@@ -258,6 +346,10 @@ def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLim
         if not ok:
             limits.failed(draft_id)
             return _json(False, message, 400)
+        if sending:
+            result = await anyio.to_thread.run_sync(send, draft_id)
+            outcome = _send_outcome(result)
+            return _json(True, f"{outcome['title']}. {outcome['detail']}", **outcome)
         if waits():
             return _json(True, "Approved. If Claude is still waiting, it sends the mail now.")
         return _json(True, "Approved. Go back to Claude and tell it to send the mail.")

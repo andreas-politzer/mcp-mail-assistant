@@ -11,7 +11,7 @@ BASE = {
 
 def test_defaults():
     c = Config.from_env(BASE)
-    assert (c.smtp_port, c.smtp_security, c.draft_ttl_seconds, c.max_sends_per_hour) == (587, "starttls", 600, 3)
+    assert (c.smtp_port, c.smtp_security, c.draft_ttl_seconds, c.max_sends_per_hour) == (587, "starttls", 86400, 3)
 
 
 def test_ssl_default_port():
