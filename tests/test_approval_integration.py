@@ -183,6 +183,17 @@ def test_page_shows_the_whole_draft_and_changes_nothing(world, web):
     assert _dump(world) == before  # a GET writes nothing
 
 
+def test_approved_page_sends_the_person_back_to_claude(world, web):
+    from outbox_mcp.approval.web import BACK_URL
+    d = world.svc.prepare_email("o", "Ferdinand", "S", "T")["draft_id"]
+    page = web.get(f"/approve/{d}").text
+    assert f'<a id="back" href="{BACK_URL}" hidden>' in page
+    js = web.get("/approval/app.js").text
+    assert "window.location.assign(a.href)" in js and "BACK_DELAY_MS=1500" in js
+    assert "__DELAY__" not in js
+    assert BACK_URL == "https://claude.ai/"  # fixed target, never taken from a request
+
+
 def ferdinand_shown(html):
     return "ferdinand@example.org" in html
 
