@@ -327,6 +327,12 @@ def test_the_instructions_name_the_wait_and_the_order(world):
     assert "approval_url" in text
 
 
+def test_the_instructions_put_the_link_before_the_call(world):
+    text = world.svc.prepare_email("o", "Ferdinand", "S", "T")["instructions"]
+    assert text.index("First write your reply") < text.index("call send_email once")
+    assert "Never call it before the link is written" in text
+
+
 def test_a_local_link_is_not_sent_to_the_phone(config, sender, clock):
     w = World(config, sender, clock, local=True)
     w.enroll()
@@ -383,3 +389,60 @@ def test_the_send_tool_returns_the_ordinary_answer_when_waiting_is_off(config, s
 
     result, took = anyio.run(main)
     assert "approval_required" in str(result) and took < 2 and sender.sent == []
+
+
+# -- what the approval page says ----------------------------------------------------------------------
+
+def _page(world):
+    from starlette.applications import Starlette
+    from starlette.testclient import TestClient
+
+    from outbox_mcp.approval.web import AttemptLimiter, build_approval_routes
+
+    app = Starlette(routes=build_approval_routes(world.approval, AttemptLimiter(world.clock)))
+    return TestClient(app, base_url=world.approval.config.origin)
+
+
+def test_the_page_does_not_ask_to_tell_the_assistant_when_sending_waits(world):
+    draft = world.draft()
+    page = _page(world).get(f"/approve/{draft}").text
+    assert "sends the mail now if it is still waiting" in page
+    assert "tell it that you approved" in page                    # only for the late case
+    assert "You can go back to Claude now and tell it that you approved" not in page
+
+
+def test_the_page_keeps_the_old_text_when_sending_does_not_wait(config, sender, clock):
+    w = World(config, sender, clock, wait_seconds=0)
+    w.enroll()
+    draft = w.draft()
+    page = _page(w).get(f"/approve/{draft}").text
+    assert "You can go back to Claude now and tell it that you approved" in page
+    assert "sends the mail now if it is still waiting" not in page
+
+
+def test_an_approved_draft_page_names_both_ways(world, config):
+    draft = world.draft()
+    world.approve(draft)
+    page = _page(world).get(f"/approve/{draft}").text
+    assert "If Claude is still waiting, it sends the mail by itself" in page
+
+
+def _approve_over_http(w):
+    draft = w.draft()
+    client = _page(w)
+    hdr = {"Origin": w.approval.config.origin, "Content-Type": "application/json"}
+    cid = client.post(f"/approve/{draft}/options", headers=hdr, json={}).json()["challenge_id"]
+    return client.post(f"/approve/{draft}/verify", headers=hdr,
+                       json={"challenge_id": cid, "credential": w.device.assert_(cid)}).json()
+
+
+def test_the_approval_answer_names_the_waiting_mail(world):
+    answer = _approve_over_http(world)
+    assert answer["ok"] and "If Claude is still waiting, it sends the mail now" in answer["message"]
+
+
+def test_the_approval_answer_keeps_the_old_text_without_waiting(config, sender, clock):
+    w = World(config, sender, clock, wait_seconds=0)
+    w.enroll()
+    answer = _approve_over_http(w)
+    assert "Go back to Claude and tell it to send the mail" in answer["message"]

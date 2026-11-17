@@ -53,9 +53,11 @@ EXTERNAL_INSTRUCTIONS = (
 
 WAITING_EXTERNAL_INSTRUCTIONS = (
     "This recipient is outside the user's own addresses, so the user has to approve THIS draft with "
-    "their passkey, outside the chat. Show the user the recipient, subject and text, and give them "
-    "the link in 'approval_url' in your reply, to open {where}. Then, in the same turn, call "
-    "send_email once: it waits up to {seconds} seconds for the approval and sends the mail by itself "
+    "their passkey, outside the chat. First write your reply to the user: the recipient, subject and "
+    "text, and the link in 'approval_url' to open {where}. Only after that reply, and in the same "
+    "turn, call send_email once. Never call it before the link is written: while send_email waits "
+    "you cannot write anything, so the user would not see the link until the wait is over. "
+    "send_email waits up to {seconds} seconds for the approval and sends the mail by itself "
     "when the approval arrives in time. If send_email answers 'approval_required', the approval did "
     "not arrive in time: tell the user, and call send_email again only after they tell you they "
     "approved it. The approval is valid only for exactly this draft and only until it expires. The "

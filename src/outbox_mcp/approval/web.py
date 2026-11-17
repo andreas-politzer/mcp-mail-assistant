@@ -155,6 +155,11 @@ def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLim
     limits = limiter or AttemptLimiter()
     origin = service.config.origin
 
+    def waits() -> bool:
+        """True when send_email waits for the approval: the page then does not ask the person to
+        tell the assistant that they approved."""
+        return service.config.wait_seconds > 0
+
     async def read_json(request: Request) -> Optional[Any]:
         if request.headers.get("origin") != origin:
             return None
@@ -207,14 +212,23 @@ def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLim
                 '<p id="result" role="status" aria-live="polite"></p>' + _HELP_HTML +
                 '<div id="done" class="done" hidden role="status">'
                 "<h2>Approved</h2>"
-                "<p>You can go back to Claude now and tell it that you approved.</p>"
+                + (
+                    "<p>Claude sends the mail now if it is still waiting, and tells you the result in the chat. "
+                    "If Claude already told you that the approval was late, tell it that you approved.</p>"
+                    if waits() else
+                    "<p>You can go back to Claude now and tell it that you approved.</p>"
+                ) +
                 '<button id="close" type="button">Close this page</button>'
                 '<p id="closehint" hidden>If the page did not close, close this tab or window yourself '
                 "(swipe it away or tap Done), then switch back to Claude.</p></div>"
             )
             return _page("Approve this mail", card + tail, kind="approve", base=f"/approve/{draft_id}")
         messages = {
-            "approved": "This draft is approved. Tell Claude to send it.",
+            "approved": (
+                "This draft is approved. If Claude is still waiting, it sends the mail by itself; "
+                "otherwise tell Claude to send it."
+                if waits() else "This draft is approved. Tell Claude to send it."
+            ),
             "expired": "This draft has expired. Ask Claude to prepare it again.",
             "closed": "This draft can no longer be approved.",
             "no_passkey": "No passkey is registered yet, so nothing can be approved.",
@@ -244,6 +258,8 @@ def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLim
         if not ok:
             limits.failed(draft_id)
             return _json(False, message, 400)
+        if waits():
+            return _json(True, "Approved. If Claude is still waiting, it sends the mail now.")
         return _json(True, "Approved. Go back to Claude and tell it to send the mail.")
 
     # -- enrolling a passkey -------------------------------------------------------------

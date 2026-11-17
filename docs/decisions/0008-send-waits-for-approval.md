@@ -18,13 +18,17 @@ For an external recipient the person approves a draft with a passkey on a page o
 
 ## Limits
 
-- At most two calls wait at the same time. More calls get the ordinary answer at once, so a manipulated chat cannot pile up waiting calls.
+- At most two calls wait at the same time **per server process**. More calls get the ordinary answer at once, so a manipulated chat cannot pile up waiting calls. Several processes (for example two stdio servers started by one app) each have their own limit, so this is not a global limit.
 - The wait runs in the background of the event loop (a worker thread checks the database), so the approval page keeps being served. A call that the client cancels stops waiting and sends nothing afterwards.
 - The upper limit of 50 seconds is deliberate. Clients end a tool call that takes too long: reports for MCP clients mention about one minute; for connectors in Claude desktop a limit of four minutes has been reported. Both come from user bug reports, not from documentation, and can change. The default of 25 seconds is a starting value to be tested.
 
+## What the approval page says
+
+With waiting on, the page after a successful approval does not ask the person to tell the assistant that they approved. It says that Claude sends the mail now if it is still waiting and shows the result in the chat, and that the person should tell Claude only if Claude already reported a late approval. The page does not say "mail sent": it does not know. The send happens in another request, and "sent" only means that the mail server accepted the message. Without waiting, the page keeps the old text.
+
 ## What the assistant is told
 
-With waiting on, the instructions of an external draft say: show recipient, subject and text, give the link in the reply, then call `send_email` once in the same turn. Claude cannot write while a tool call is waiting, so the link has to be in the chat before the call. A link that works only on this computer (local approval page) is no longer described as "open it on the phone".
+With waiting on, the instructions of an external draft say: show recipient, subject and text, give the link in the reply, write the reply with the link first, then call `send_email` once in the same turn. Claude cannot write while a tool call is waiting, so the link has to be in the chat before the call. In the first real run the link appeared only after the wait, probably because the call came before the text; the wording now says explicitly that the text comes first. The cause was not confirmed. A link that works only on this computer (local approval page) is no longer described as "open it on the phone".
 
 ## Open questions
 
