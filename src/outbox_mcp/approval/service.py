@@ -46,6 +46,9 @@ from ..storage.database import Database, body_hash
 MAX_PASSKEYS = 2
 ENROLLMENT_SECONDS = 600
 DEFAULT_CHALLENGE_SECONDS = 300
+# Upper limit of the waiting time. Clients end a tool call that takes too long (often after about a
+# minute), so a long wait would only turn a missing approval into a client error.
+MAX_WAIT_SECONDS = 50
 
 
 def b64url(data: bytes) -> str:
@@ -70,6 +73,9 @@ class ApprovalConfig:
     rp_name: str = "Mail Assistant"
     challenge_seconds: int = DEFAULT_CHALLENGE_SECONDS
     port: Optional[int] = None
+    # How long send_email waits for the approval before it answers "approval required". 0 = it does
+    # not wait (the person tells the assistant that they approved, and it calls send_email again).
+    wait_seconds: int = 0
 
     def __post_init__(self) -> None:
         host = self.rp_id
@@ -93,6 +99,8 @@ class ApprovalConfig:
                 )
         if not 30 <= self.challenge_seconds <= 900:
             raise ConfigError("The approval challenge time must be between 30 and 900 seconds.")
+        if isinstance(self.wait_seconds, bool) or not 0 <= self.wait_seconds <= MAX_WAIT_SECONDS:
+            raise ConfigError(f"OUTBOX_APPROVAL_WAIT_SECONDS must be between 0 and {MAX_WAIT_SECONDS}.")
 
     @property
     def is_local(self) -> bool:
@@ -118,7 +126,12 @@ class ApprovalConfig:
             port = int(raw_port) if raw_port else None
         except ValueError:
             raise ConfigError("OUTBOX_APPROVAL_PORT must be a whole number.") from None
-        return cls(rp_id=host, challenge_seconds=seconds, port=port)
+        raw_wait = (env.get("OUTBOX_APPROVAL_WAIT_SECONDS") or "").strip()
+        try:
+            wait = int(raw_wait) if raw_wait else 0
+        except ValueError:
+            raise ConfigError("OUTBOX_APPROVAL_WAIT_SECONDS must be a whole number.") from None
+        return cls(rp_id=host, challenge_seconds=seconds, port=port, wait_seconds=wait)
 
 
 class _Rejected(Exception):

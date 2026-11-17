@@ -45,10 +45,21 @@ SUGGESTION_INSTRUCTIONS = (
 EXTERNAL_INSTRUCTIONS = (
     "This recipient is outside the user's own addresses, so the user has to approve THIS draft with "
     "their passkey, outside the chat. Show the user the recipient, subject and text, then give them "
-    "the link in 'approval_url' and ask them to open it on their phone and approve. Do not call "
+    "the link in 'approval_url' and ask them to open it {where} and approve. Do not call "
     "send_email before the user tells you they approved it. The approval is valid only for exactly "
     "this draft and only until it expires. The draft cannot be edited: for changes, cancel it and "
     "prepare a new one."
+)
+
+WAITING_EXTERNAL_INSTRUCTIONS = (
+    "This recipient is outside the user's own addresses, so the user has to approve THIS draft with "
+    "their passkey, outside the chat. Show the user the recipient, subject and text, and give them "
+    "the link in 'approval_url' in your reply, to open {where}. Then, in the same turn, call "
+    "send_email once: it waits up to {seconds} seconds for the approval and sends the mail by itself "
+    "when the approval arrives in time. If send_email answers 'approval_required', the approval did "
+    "not arrive in time: tell the user, and call send_email again only after they tell you they "
+    "approved it. The approval is valid only for exactly this draft and only until it expires. The "
+    "draft cannot be edited: for changes, cancel it and prepare a new one."
 )
 
 NO_APPROVAL_INSTRUCTIONS = (
@@ -407,10 +418,20 @@ class OutboxService:
             ready = self.approval is not None and self.approval.passkey_count() > 0
             result["approval_url"] = self.approval.approval_url(draft.id) if ready else None
             result["instructions"] = (
-                (EXTERNAL_INSTRUCTIONS if ready else NO_APPROVAL_INSTRUCTIONS)
+                (self._external_instructions() if ready else NO_APPROVAL_INSTRUCTIONS)
                 + (ATTACHMENT_INSTRUCTIONS if loaded else "")
             )
         return result
+
+    def _external_instructions(self) -> str:
+        """The text for a draft that needs a passkey approval. It says where the link can be opened
+        (a local link works only on this computer) and, when send_email waits for the approval,
+        that the link comes first and send_email right after it."""
+        config = self.approval.config if self.approval is not None else None
+        where = "in the browser on this computer" if config is not None and config.is_local else "on their phone or computer"
+        if config is not None and config.wait_seconds > 0:
+            return WAITING_EXTERNAL_INSTRUCTIONS.format(where=where, seconds=config.wait_seconds)
+        return EXTERNAL_INSTRUCTIONS.format(where=where)
 
     @staticmethod
     def _attachment_info(a: Attachment) -> Dict:
@@ -481,6 +502,18 @@ class OutboxService:
             "status_recorded": True,
             "note": "The mail server accepted the message. This does not guarantee delivery.",
         }
+
+    def approval_state(self, owner: str, draft_id: str) -> str:
+        """Where a draft stands for a waiting send_email: "approved" (this exact content is approved),
+        "waiting" (still pending and not approved) or "closed" (gone, finished, expired, not this
+        owner's, or approval is off). Read only, never raises."""
+        try:
+            draft = self.db.get_draft(draft_id, owner)
+            if self.approval is None or draft.status != "pending" or draft.expires_at <= self.clock():
+                return "closed"
+            return "approved" if self.approval.is_approved_now(draft.id, draft.body_sha256) else "waiting"
+        except Exception:
+            return "closed"
 
     def _approval_required(self, draft_id: str, attachments) -> Dict:
         ready = self.approval is not None and self.approval.passkey_count() > 0
