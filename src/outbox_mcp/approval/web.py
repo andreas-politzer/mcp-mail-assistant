@@ -39,8 +39,10 @@ if(r.getTransports)o.response.transports=r.getTransports();return o;}
 async function post(url,body){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),cache:"no-store"});
 let d={};try{d=await r.json();}catch(_){}
 if(!r.ok||d.ok===false)throw new Error(d.message||("HTTP "+r.status));return d;}
+function showHelp(){const h=document.getElementById("help");if(h)h.hidden=false;}
 async function go(){
 const out=document.getElementById("result"),btn=document.getElementById("go"),base=document.body.dataset.base,kind=document.body.dataset.kind;
+if(!window.PublicKeyCredential||!navigator.credentials){out.textContent="This window cannot use passkeys.";showHelp();return;}
 btn.disabled=true;out.textContent="Waiting for the passkey…";
 try{
 const o=await post(base+"/options",{});const pk=o.publicKey;pk.challenge=fromB64(pk.challenge);
@@ -50,8 +52,11 @@ else{(pk.allowCredentials||[]).forEach(c=>{c.id=fromB64(c.id);});cred=await navi
 const d=await post(base+"/verify",{challenge_id:o.challenge_id,credential:pack(cred)});
 out.textContent=d.message;btn.hidden=true;
 if(kind==="approve"){const done=document.getElementById("done");if(done){out.textContent="";done.hidden=false;done.scrollIntoView();}}
-}catch(e){out.textContent="Not done: "+e.message;btn.disabled=false;}}
+}catch(e){out.textContent="Not done: "+e.message;btn.disabled=false;showHelp();}}
 document.getElementById("go").addEventListener("click",go);
+const copyBtn=document.getElementById("copy");
+if(copyBtn)copyBtn.addEventListener("click",async()=>{const c=document.getElementById("copied");let ok=false;try{await navigator.clipboard.writeText(window.location.href);ok=true;}catch(_){}
+if(c){c.textContent=ok?"Copied.":"Could not copy. Select the address bar text instead.";c.hidden=false;}});
 const closeBtn=document.getElementById("close");
 if(closeBtn)closeBtn.addEventListener("click",()=>{window.close();setTimeout(()=>{const h=document.getElementById("closehint");if(h)h.hidden=false;},400);});
 '''
@@ -118,6 +123,14 @@ def _page(title: str, body_html: str, *, kind: str = "", base: str = "") -> Resp
     return _secure(HTMLResponse(doc))
 
 
+_HELP_HTML = (
+    '<div id="help" class="note" hidden>'
+    "<p>No passkey prompt? Some embedded windows (for example a browser panel inside an app) cannot "
+    "use passkeys. Open this page in your normal browser instead: copy the link and paste it there.</p>"
+    '<button id="copy" type="button">Copy link</button> <span id="copied" hidden>Copied.</span></div>'
+)
+
+
 def _size(n: int) -> str:
     return f"{n} bytes" if n < 1024 else f"{n / 1024:.1f} KB" if n < 1024 * 1024 else f"{n / 1024 / 1024:.1f} MB"
 
@@ -179,7 +192,7 @@ def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLim
                 f'<p class="note">Valid for about {info["seconds_left"] // 60 + 1} more minutes. '
                 "Approving covers exactly this draft, once.</p>"
                 '<button id="go">Approve with passkey</button>'
-                '<p id="result" role="status" aria-live="polite"></p>'
+                '<p id="result" role="status" aria-live="polite"></p>' + _HELP_HTML +
                 '<div id="done" class="done" hidden role="status">'
                 "<h2>Approved</h2>"
                 "<p>You can go back to Claude now and tell it that you approved.</p>"
@@ -231,7 +244,7 @@ def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLim
             "<p>This registers this device as an approval passkey for the Mail Assistant. "
             "The link works once and for a few minutes.</p>"
             '<button id="go">Register passkey</button>'
-            '<p id="result" role="status" aria-live="polite"></p>'
+            '<p id="result" role="status" aria-live="polite"></p>' + _HELP_HTML
         )
         return _page("Register passkey", body, kind="enroll", base=f"/passkey/enroll/{token}")
 

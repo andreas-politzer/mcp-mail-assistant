@@ -193,6 +193,15 @@ def test_approved_page_tells_the_person_to_go_back_and_never_redirects(world, we
     assert "window.close()" in js
 
 
+def test_pages_offer_help_when_the_window_cannot_do_passkeys(world, web):
+    d = world.svc.prepare_email("o", "Ferdinand", "S", "T")["draft_id"]
+    token = world.approval.create_enrollment()
+    for page in (web.get(f"/approve/{d}").text, web.get(f"/passkey/enroll/{token}").text):
+        assert '<div id="help" class="note" hidden>' in page and 'id="copy"' in page
+    js = web.get("/approval/app.js").text
+    assert "window.PublicKeyCredential" in js and "navigator.clipboard.writeText" in js
+
+
 def ferdinand_shown(html):
     return "ferdinand@example.org" in html
 
