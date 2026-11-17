@@ -1,0 +1,263 @@
+"""The approval and enrollment pages, served by the public process next to the sign-in.
+
+Rules: opening a page (GET) never changes anything; only POST does. Every answer carries strict
+headers (no caching, no framing, no referrer, no inline script or style). A POST must come from
+this page: JSON content type and an Origin that is exactly the approval origin. The pages show the
+full draft; what a person approves is what they can read there.
+"""
+
+from __future__ import annotations
+
+import html
+import json
+import threading
+import time
+from collections import deque
+from typing import Any, Deque, Dict, List, Optional
+
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.routing import Route
+
+from .service import ApprovalService
+
+MAX_BODY_BYTES = 64 * 1024
+POSTS_PER_MINUTE = 30       # across all approval and enrollment POSTs
+FAILURES_PER_TARGET = 5     # failed attempts per draft or enrollment link, until it expires
+
+_CSP = (
+    "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+    "img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+)
+
+APP_JS = r'''"use strict";
+function fromB64(v){const p="=".repeat((4-v.length%4)%4);const b=atob((v+p).replace(/-/g,"+").replace(/_/g,"/"));return Uint8Array.from(b,c=>c.charCodeAt(0));}
+function toB64(v){const b=new Uint8Array(v);let s="";for(const x of b)s+=String.fromCharCode(x);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,"");}
+function pack(c){const r=c.response;const o={id:c.id,rawId:toB64(c.rawId),type:c.type,response:{},clientExtensionResults:c.getClientExtensionResults()};
+for(const k of ["clientDataJSON","attestationObject","authenticatorData","signature","userHandle"]){if(r[k])o.response[k]=toB64(r[k]);}
+if(r.getTransports)o.response.transports=r.getTransports();return o;}
+async function post(url,body){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),cache:"no-store"});
+let d={};try{d=await r.json();}catch(_){}
+if(!r.ok||d.ok===false)throw new Error(d.message||("HTTP "+r.status));return d;}
+async function go(){
+const out=document.getElementById("result"),btn=document.getElementById("go"),base=document.body.dataset.base,kind=document.body.dataset.kind;
+btn.disabled=true;out.textContent="Waiting for the passkey…";
+try{
+const o=await post(base+"/options",{});const pk=o.publicKey;pk.challenge=fromB64(pk.challenge);
+let cred;
+if(kind==="enroll"){pk.user.id=fromB64(pk.user.id);(pk.excludeCredentials||[]).forEach(c=>{c.id=fromB64(c.id);});cred=await navigator.credentials.create({publicKey:pk});}
+else{(pk.allowCredentials||[]).forEach(c=>{c.id=fromB64(c.id);});cred=await navigator.credentials.get({publicKey:pk});}
+const d=await post(base+"/verify",{challenge_id:o.challenge_id,credential:pack(cred)});
+out.textContent=d.message;btn.hidden=true;
+}catch(e){out.textContent="Not done: "+e.message;btn.disabled=false;}}
+document.getElementById("go").addEventListener("click",go);
+'''
+
+APP_CSS = '''body{font-family:system-ui,sans-serif;max-width:40rem;margin:1rem auto;padding:0 1rem;line-height:1.4}
+dt{font-weight:600;margin-top:.8rem}dd{margin:0;word-break:break-word}
+pre.text{white-space:pre-wrap;word-break:break-word;max-height:22rem;overflow:auto;border:1px solid #888;padding:.6rem;border-radius:6px;margin:0}
+button{font-size:1.1rem;padding:.7rem 1.2rem;margin-top:1rem}
+.note{color:#555;font-size:.9rem}
+'''
+
+
+class AttemptLimiter:
+    """Small in-memory limits. They reset on restart, which is fine: the real protection is the
+    passkey, this only keeps a flood of requests in check."""
+
+    def __init__(self, clock=time.time) -> None:
+        self.clock = clock
+        self._posts: Deque[float] = deque()
+        self._failures: Dict[str, int] = {}
+        self._lock = threading.Lock()
+
+    def allow_post(self) -> bool:
+        now = self.clock()
+        with self._lock:
+            while self._posts and self._posts[0] < now - 60:
+                self._posts.popleft()
+            if len(self._posts) >= POSTS_PER_MINUTE:
+                return False
+            self._posts.append(now)
+            return True
+
+    def blocked(self, target: str) -> bool:
+        with self._lock:
+            return self._failures.get(target, 0) >= FAILURES_PER_TARGET
+
+    def failed(self, target: str) -> None:
+        with self._lock:
+            if len(self._failures) > 10_000:
+                self._failures.clear()
+            self._failures[target] = self._failures.get(target, 0) + 1
+
+
+def _secure(response: Response) -> Response:
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Content-Security-Policy"] = _CSP
+    return response
+
+
+def _page(title: str, body_html: str, *, kind: str = "", base: str = "") -> Response:
+    data = f' data-kind="{html.escape(kind)}" data-base="{html.escape(base, quote=True)}"' if kind else ""
+    script = '<script src="/approval/app.js"></script>' if kind else ""
+    doc = (
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta name="robots" content="noindex">'
+        f'<title>{html.escape(title)}</title><link rel="stylesheet" href="/approval/style.css"></head>'
+        f"<body{data}><h1>{html.escape(title)}</h1>{body_html}{script}</body></html>"
+    )
+    return _secure(HTMLResponse(doc))
+
+
+def _size(n: int) -> str:
+    return f"{n} bytes" if n < 1024 else f"{n / 1024:.1f} KB" if n < 1024 * 1024 else f"{n / 1024 / 1024:.1f} MB"
+
+
+def _json(ok: bool, message: str = "", status: int = 200, **extra: Any) -> Response:
+    return _secure(JSONResponse({"ok": ok, "message": message, **extra}, status_code=status))
+
+
+def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLimiter] = None) -> List[Route]:
+    limits = limiter or AttemptLimiter()
+    origin = service.config.origin
+
+    async def read_json(request: Request) -> Optional[Any]:
+        if request.headers.get("origin") != origin:
+            return None
+        if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+            return None
+        raw = await request.body()
+        if len(raw) > MAX_BODY_BYTES:
+            return None
+        try:
+            return json.loads(raw or b"{}")
+        except ValueError:
+            return None
+
+    async def static_js(request: Request) -> Response:
+        return _secure(Response(APP_JS, media_type="text/javascript; charset=utf-8"))
+
+    async def static_css(request: Request) -> Response:
+        return _secure(Response(APP_CSS, media_type="text/css; charset=utf-8"))
+
+    def not_found() -> Response:
+        r = _page("Not found", "<p>This page does not exist or has expired.</p>")
+        r.status_code = 404
+        return r
+
+    # -- approving a draft ---------------------------------------------------------
+
+    async def approve_page(request: Request) -> Response:
+        draft_id = request.path_params["draft_id"]
+        info = service.describe_draft(draft_id)
+        if info is None:
+            return not_found()
+        files = "".join(
+            f"<li>{html.escape(a['name'])} ({_size(a['size'])})</li>" for a in info["attachments"]
+        ) or "<li>none</li>"
+        card = (
+            "<dl>"
+            f"<dt>To</dt><dd>{html.escape(info['to_name'])} &lt;{html.escape(info['to_address'])}&gt;</dd>"
+            f"<dt>Subject</dt><dd>{html.escape(info['subject'])}</dd>"
+            f"<dt>Text</dt><dd><pre class=\"text\">{html.escape(info['text'])}</pre></dd>"
+            f"<dt>Attachments</dt><dd><ul>{files}</ul></dd>"
+            f"<dt>Fingerprint</dt><dd>{html.escape(info['fingerprint'])}</dd>"
+            "</dl>"
+        )
+        state = info["state"]
+        if state == "open":
+            tail = (
+                f'<p class="note">Valid for about {info["seconds_left"] // 60 + 1} more minutes. '
+                "Approving covers exactly this draft, once.</p>"
+                '<button id="go">Approve with passkey</button>'
+                '<p id="result" role="status" aria-live="polite"></p>'
+            )
+            return _page("Approve this mail", card + tail, kind="approve", base=f"/approve/{draft_id}")
+        messages = {
+            "approved": "This draft is approved. Tell Claude to send it.",
+            "expired": "This draft has expired. Ask Claude to prepare it again.",
+            "closed": "This draft can no longer be approved.",
+            "no_passkey": "No passkey is registered yet, so nothing can be approved.",
+        }
+        return _page("Approve this mail", card + f"<p><strong>{messages[state]}</strong></p>")
+
+    async def approve_options(request: Request) -> Response:
+        draft_id = request.path_params["draft_id"]
+        body = await read_json(request)
+        if body is None or not limits.allow_post():
+            return _json(False, "Request refused.", 429 if body is not None else 400)
+        if limits.blocked(draft_id):
+            return _json(False, "Too many failed attempts for this draft.", 429)
+        ok, result = service.approve_options(draft_id)
+        if not ok:
+            return _json(False, str(result), 400)
+        return _secure(JSONResponse({"ok": True, **result}))
+
+    async def approve_verify(request: Request) -> Response:
+        draft_id = request.path_params["draft_id"]
+        body = await read_json(request)
+        if body is None or not limits.allow_post():
+            return _json(False, "Request refused.", 429 if body is not None else 400)
+        if limits.blocked(draft_id):
+            return _json(False, "Too many failed attempts for this draft.", 429)
+        ok, message = service.approve_verify(draft_id, body)
+        if not ok:
+            limits.failed(draft_id)
+            return _json(False, message, 400)
+        return _json(True, "Approved. Tell Claude to send the mail.")
+
+    # -- enrolling a passkey -------------------------------------------------------------
+
+    async def enroll_page(request: Request) -> Response:
+        token = request.path_params["token"]
+        if not service.enrollment_open(token):
+            return not_found()
+        body = (
+            "<p>This registers this device as an approval passkey for the Mail Assistant. "
+            "The link works once and for a few minutes.</p>"
+            '<button id="go">Register passkey</button>'
+            '<p id="result" role="status" aria-live="polite"></p>'
+        )
+        return _page("Register passkey", body, kind="enroll", base=f"/passkey/enroll/{token}")
+
+    async def enroll_options(request: Request) -> Response:
+        token = request.path_params["token"]
+        body = await read_json(request)
+        if body is None or not limits.allow_post():
+            return _json(False, "Request refused.", 429 if body is not None else 400)
+        if limits.blocked(token):
+            return _json(False, "Too many failed attempts.", 429)
+        ok, result = service.enroll_options(token)
+        if not ok:
+            limits.failed(token)
+            return _json(False, str(result), 400)
+        return _secure(JSONResponse({"ok": True, **result}))
+
+    async def enroll_verify(request: Request) -> Response:
+        token = request.path_params["token"]
+        body = await read_json(request)
+        if body is None or not limits.allow_post():
+            return _json(False, "Request refused.", 429 if body is not None else 400)
+        if limits.blocked(token):
+            return _json(False, "Too many failed attempts.", 429)
+        ok, message = service.enroll_verify(token, body)
+        if not ok:
+            limits.failed(token)
+            return _json(False, message, 400)
+        return _json(True, "Passkey registered. You can close this page.")
+
+    return [
+        Route("/approval/app.js", static_js, methods=["GET"]),
+        Route("/approval/style.css", static_css, methods=["GET"]),
+        Route("/approve/{draft_id}", approve_page, methods=["GET"]),
+        Route("/approve/{draft_id}/options", approve_options, methods=["POST"]),
+        Route("/approve/{draft_id}/verify", approve_verify, methods=["POST"]),
+        Route("/passkey/enroll/{token}", enroll_page, methods=["GET"]),
+        Route("/passkey/enroll/{token}/options", enroll_options, methods=["POST"]),
+        Route("/passkey/enroll/{token}/verify", enroll_verify, methods=["POST"]),
+    ]

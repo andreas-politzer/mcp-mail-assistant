@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from typing import Mapping, Optional
 
+from .approval.web import build_approval_routes
 from .auth.app import create_authenticated_app
 from .auth.config import AuthConfig
 from .auth.store import AuthStore
@@ -25,7 +26,7 @@ def build_http_app(
     *,
     json_response: bool = False,
 ):
-    return create_authenticated_app(
+    app = create_authenticated_app(
         auth_config,
         store,
         configure=lambda mcp: register_tools(mcp, service, owner_from_token),
@@ -33,12 +34,17 @@ def build_http_app(
         stateless_http=True,
         name="outbox",
     )
+    if service.approval is not None:
+        # The approval and enrollment pages live in the public process; they need no sign-in
+        # because the passkey is the proof.
+        app.router.routes.extend(build_approval_routes(service.approval))
+    return app
 
 
 def build_app_from_env(env: Optional[Mapping[str, str]] = None):
     e = os.environ if env is None else env
     auth_config = AuthConfig.from_env(e)
-    service = build_service(Config.from_env(e))
+    service = build_service(Config.from_env(e), e)
     return build_http_app(auth_config, AuthStore(auth_config.db_path), service)
 
 

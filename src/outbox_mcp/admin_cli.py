@@ -51,6 +51,10 @@ def _parser() -> argparse.ArgumentParser:
     scope = sub.add_parser("scope", help="mark an active recipient as your own address or as external")
     scope.add_argument("ref", help="id or address")
     scope.add_argument("value", choices=("own", "external"))
+    sub.add_parser("passkey-enroll", help="print a one-time link to register an approval passkey")
+    sub.add_parser("passkey-list", help="show the registered approval passkeys")
+    sub.add_parser("passkey-remove", help="remove an approval passkey").add_argument(
+        "id", help="the first characters of its id (see passkey-list)")
     for command, text in (("reject", "reject a suggestion"), ("block", "block an address for good"),
                           ("unblock", "lift a block"), ("remove", "take an active recipient off the list")):
         sub.add_parser(command, help=text).add_argument("ref", help="id or address")
@@ -70,9 +74,12 @@ def main(
     if not db_path:
         print("Error: OUTBOX_DB_PATH is not set (or use --db).", file=out)
         return 2
-    store = RecipientStore(Database(db_path))
+    database = Database(db_path)
+    store = RecipientStore(database)
     now = time.time()
     try:
+        if args.command.startswith("passkey-"):
+            return _passkeys(args, environment, database, out)
         if args.command == "pending":
             records = store.pending()
             if not records:
@@ -114,6 +121,37 @@ def main(
     except OutboxError as exc:
         print(f"Error: {exc}", file=out)
         return 1
+    return 0
+
+
+def _passkeys(args, environment, database: Database, out: TextIO) -> int:
+    from .approval.service import ApprovalConfig, ApprovalService
+
+    config = ApprovalConfig.from_env(environment)
+    if config is None:
+        print("Error: OUTBOX_APPROVAL_HOST is not set. Set it to the public host name of the mail server.", file=out)
+        return 2
+    service = ApprovalService(database, config, time.time)
+    if args.command == "passkey-enroll":
+        token = service.create_enrollment()
+        if token is None:
+            print("The maximum number of passkeys is registered. Remove one first (passkey-remove).", file=out)
+            return 1
+        print("Open this link on the device that should hold the passkey. It works once, for 10 minutes:", file=out)
+        print(service.enrollment_url(token), file=out)
+    elif args.command == "passkey-list":
+        keys = service.list_passkeys()
+        if not keys:
+            print("No passkeys registered.", file=out)
+        for k in keys:
+            used = _when(k["last_used_at"]) if k["last_used_at"] else "never"
+            print(f"{k['credential_id'][:12]}...  registered {_when(k['created_at'])}  last used {used}", file=out)
+    else:
+        if service.remove_passkey(args.id):
+            print("Passkey removed.", file=out)
+        else:
+            print("No single passkey matches that id.", file=out)
+            return 1
     return 0
 
 

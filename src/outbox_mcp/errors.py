@@ -66,3 +66,7 @@ class DraftNotSendable(OutboxError):
                 "once and only while it is pending. Prepare a new draft if needed."
             )
         super().__init__(text)
+
+
+class ApprovalRequired(OutboxError):
+    """The recipient is external: the user has to approve this draft outside the chat first."""

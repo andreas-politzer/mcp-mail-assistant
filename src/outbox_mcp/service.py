@@ -10,8 +10,11 @@ import time
 from typing import Callable, Dict, List, Optional, Protocol
 
 from . import sources as src_rules
+from .approval.service import ApprovalService
 from .config import Config
-from .errors import AttachmentRejected, DraftNotSendable, RecipientNotAllowed, SourceRejected
+from .errors import (
+    ApprovalRequired, AttachmentRejected, DraftNotSendable, RecipientNotAllowed, SourceRejected,
+)
 from .mail.message_builder import build_message
 from .mail.smtp_client import SmtpSendFailed, SmtpSendUnknown
 from .security.attachments import Attachment, AttachmentPolicy, path_key, safe_filename
@@ -39,6 +42,21 @@ SUGGESTION_INSTRUCTIONS = (
     "has been approved. Never approve it yourself and do not suggest it again unless asked."
 )
 
+EXTERNAL_INSTRUCTIONS = (
+    "This recipient is outside the user's own addresses, so the user has to approve THIS draft with "
+    "their passkey, outside the chat. Show the user the recipient, subject and text, then give them "
+    "the link in 'approval_url' and ask them to open it on their phone and approve. Do not call "
+    "send_email before the user tells you they approved it. The approval is valid only for exactly "
+    "this draft and only until it expires. The draft cannot be edited: for changes, cancel it and "
+    "prepare a new one."
+)
+
+NO_APPROVAL_INSTRUCTIONS = (
+    "This recipient is outside the user's own addresses and needs a passkey approval, but approval "
+    "is not set up on this server (or no passkey is registered), so this mail cannot be sent. "
+    "Tell the user. Do not try to work around it."
+)
+
 ATTACHMENT_INSTRUCTIONS = (
     " The draft carries the attachments listed under 'attachments'. Tell the user their file "
     "names before asking for confirmation. They are fixed copies made now; later changes to "
@@ -58,8 +76,10 @@ class OutboxService:
         sender: Sender,
         clock: Callable[[], float] = time.time,
         recipient_store: Optional[RecipientStore] = None,
+        approval: Optional[ApprovalService] = None,
     ) -> None:
         self.recipient_store = recipient_store
+        self.approval = approval
         self.config, self.recipients, self.db, self.sender, self.clock = config, recipients, db, sender, clock
         self.attachment_policy: Optional[AttachmentPolicy] = None
         self.notes_source_id: Optional[str] = None
@@ -83,6 +103,14 @@ class OutboxService:
         # Tell the admin side which starting values this process really runs with (information only).
         db.report_start_limits(config.limits, clock())
         db.report_candidate_expiry(config.suggestion_ttl_days, clock())
+
+    def _is_external(self, address: str) -> bool:
+        """External recipients need a passkey approval per draft. Without a recipient registry
+        (the old recipients file, which knows no scope) every address counts as the user's own;
+        the real server always runs with the registry."""
+        if self.recipient_store is None:
+            return False
+        return self.recipient_store.scope_of(address) != "own"
 
     def _resolve(self, ref: str):
         """(source row, path) for an attachment given as 'label:relative/path'. Without a known
@@ -362,7 +390,7 @@ class OutboxService:
             owner, rec.name, rec.address, subject, body, self.clock(), cfg.draft_ttl_seconds,
             cfg.limits, loaded,
         )
-        return {
+        result = {
             "draft_id": draft.id,
             "status": draft.status,
             "to_name": draft.recipient_name,
@@ -374,6 +402,15 @@ class OutboxService:
             "attachments": [self._attachment_info(a) for a in loaded],
             "instructions": CONFIRMATION_INSTRUCTIONS + (ATTACHMENT_INSTRUCTIONS if loaded else ""),
         }
+        if self._is_external(draft.recipient_address):
+            result["approval_required"] = True
+            ready = self.approval is not None and self.approval.passkey_count() > 0
+            result["approval_url"] = self.approval.approval_url(draft.id) if ready else None
+            result["instructions"] = (
+                (EXTERNAL_INSTRUCTIONS if ready else NO_APPROVAL_INSTRUCTIONS)
+                + (ATTACHMENT_INSTRUCTIONS if loaded else "")
+            )
+        return result
 
     @staticmethod
     def _attachment_info(a: Attachment) -> Dict:
@@ -399,8 +436,16 @@ class OutboxService:
                     "This recipient is no longer on the allowed list. The draft was not sent."
                 )
             self._recheck_attachments(stored_attachments)
+            if self._is_external(current.recipient_address) and not (
+                self.approval is not None
+                and self.approval.is_approved_now(current.id, current.body_sha256)
+            ):
+                raise ApprovalRequired("approval required")
 
-        draft = self.db.claim_for_sending(draft_id, owner, now, cfg.limits, authorize)
+        try:
+            draft = self.db.claim_for_sending(draft_id, owner, now, cfg.limits, authorize)
+        except ApprovalRequired:
+            return self._approval_required(draft_id, stored_attachments)
         try:
             message = build_message(
                 cfg.from_address, cfg.from_name, draft.recipient_address,
@@ -436,6 +481,21 @@ class OutboxService:
             "status_recorded": True,
             "note": "The mail server accepted the message. This does not guarantee delivery.",
         }
+
+    def _approval_required(self, draft_id: str, attachments) -> Dict:
+        ready = self.approval is not None and self.approval.passkey_count() > 0
+        result = {
+            "status": "approval_required",
+            "draft_id": draft_id,
+            "approval_url": self.approval.approval_url(draft_id) if ready else None,
+            "note": (
+                "Nothing was sent. The user has to approve this draft with their passkey outside "
+                "the chat first. Give them the link in 'approval_url'; call send_email again only "
+                "after they tell you they approved it."
+                if ready else NO_APPROVAL_INSTRUCTIONS
+            ),
+        }
+        return result
 
     def _record(self, draft_id: str, status: str, detail: Optional[str] = None) -> bool:
         """Store the final status exactly once. Never raises and never retries.

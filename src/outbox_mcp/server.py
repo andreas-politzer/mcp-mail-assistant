@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Callable, List, Optional
 
@@ -11,6 +12,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 
+from .approval.service import ApprovalConfig, ApprovalService
 from .config import Config
 from .mail.smtp_client import SmtpClient
 from .security.recipients import RecipientList
@@ -128,7 +130,7 @@ def build_server(service: OutboxService) -> FastMCP:
     return mcp
 
 
-def build_service(config: Config) -> OutboxService:
+def build_service(config: Config, env=None) -> OutboxService:
     """Open the mail database, mark interrupted sends as unknown, wire up SMTP."""
     db = Database(config.db_path)
     store = RecipientStore(db)
@@ -140,7 +142,9 @@ def build_service(config: Config) -> OutboxService:
         config.smtp_host, config.smtp_port, config.smtp_user, config.smtp_password,
         config.smtp_security, config.smtp_timeout_seconds, config.smtp_helo,
     )
-    return OutboxService(config, DbRecipientList(store), db, sender, recipient_store=store)
+    approval_config = ApprovalConfig.from_env(os.environ if env is None else env)
+    approval = ApprovalService(db, approval_config, time.time) if approval_config is not None else None
+    return OutboxService(config, DbRecipientList(store), db, sender, recipient_store=store, approval=approval)
 
 
 def main() -> None:

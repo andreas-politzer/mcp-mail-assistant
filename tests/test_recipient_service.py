@@ -45,7 +45,7 @@ def test_suggestion_waits_and_cannot_be_mailed(svc, store):
 
 def test_after_approval_the_mail_flows_as_before(svc, store, sender):
     svc.suggest_recipient("o", "Ferdinand", "ferdinand@example.org")
-    store.approve("ferdinand@example.org", 2000.0, "admin:test", aliases=["Ferdi"])
+    store.approve("ferdinand@example.org", 2000.0, "admin:test", aliases=["Ferdi"], scope="own")
     draft = svc.prepare_email("o", "Ferdi", "Hallo", "Text")
     assert draft["to_address"] == "ferdinand@example.org"
     assert svc.send_email("o", draft["draft_id"])["status"] == "sent"

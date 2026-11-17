@@ -253,6 +253,7 @@ class ApprovalService:
                 (b64url(challenge), draft_id, fingerprint, now,
                  min(now + self.config.challenge_seconds, draft["expires_at"])),
             )
+        self._audit("approval_issued", draft_id)
         options = generate_authentication_options(
             rp_id=self.config.rp_id,
             challenge=challenge,
@@ -348,10 +349,68 @@ class ApprovalService:
                     (max(stored, verification.new_sign_count), now, raw_id),
                 )
         except Exception as exc:
+            self._audit("approval_rejected", draft_id, type(exc).__name__ + (f": {exc}" if isinstance(exc, _Rejected) else ""))
             return False, f"Approval rejected: {type(exc).__name__}"
+        self._audit("approval_done", draft_id)
         return True, "Draft approved."
 
+    # -- links and what the approval page shows ---------------------------------------
+
+    def approval_url(self, draft_id: str) -> str:
+        return f"{self.config.origin}/approve/{draft_id}"
+
+    def enrollment_url(self, token: str) -> str:
+        return f"{self.config.origin}/passkey/enroll/{token}"
+
+    def describe_draft(self, draft_id: str) -> Optional[Dict[str, Any]]:
+        """Everything the approval page shows: recipient, subject, the FULL text, attachments with
+        name and size, and where the draft stands. None if there is no such draft."""
+        if not isinstance(draft_id, str) or len(draft_id) > 100:
+            return None
+        now = self.clock()
+        with self.db._connect() as conn:
+            draft = conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
+            if draft is None:
+                return None
+            files = conn.execute(
+                "SELECT name, length(data) AS size FROM draft_attachments WHERE draft_id=? ORDER BY position",
+                (draft_id,),
+            ).fetchall()
+            approved = conn.execute("SELECT 1 FROM draft_approvals WHERE draft_id=?", (draft_id,)).fetchone()
+            keys = conn.execute("SELECT COUNT(*) FROM passkey_credentials").fetchone()[0]
+        if approved:
+            state = "approved"
+        elif draft["status"] != "pending":
+            state = "closed"
+        elif now >= draft["expires_at"]:
+            state = "expired"
+        elif keys == 0:
+            state = "no_passkey"
+        else:
+            state = "open"
+        return {
+            "state": state,
+            "to_name": draft["recipient_name"],
+            "to_address": draft["recipient_address"],
+            "subject": draft["subject"],
+            "text": draft["body"],
+            "fingerprint": draft["body_sha256"][:12],
+            "expires_at": draft["expires_at"],
+            "seconds_left": max(0, int(draft["expires_at"] - now)),
+            "attachments": [{"name": f["name"], "size": f["size"]} for f in files],
+        }
+
+    def enrollment_open(self, token: str) -> bool:
+        if not isinstance(token, str) or len(token) > 200:
+            return False
+        with self.db._connect() as conn:
+            return self._open_enrollment(conn, token, self.clock()) is not None
+
     # -- what the send step asks ---------------------------------------------------
+
+    def is_approved_now(self, draft_id: str, body_sha256: str) -> bool:
+        with self.db._connect() as conn:
+            return self.is_approved(conn, draft_id, body_sha256)
 
     def is_approved(self, conn: sqlite3.Connection, draft_id: str, body_sha256: str) -> bool:
         """True only if this exact draft content has been approved. Meant to run inside the send
@@ -362,6 +421,16 @@ class ApprovalService:
         return row is not None and secrets.compare_digest(row["body_sha256"], body_sha256)
 
     # -- internals ------------------------------------------------------------------
+
+    def _audit(self, event: str, draft_id: str, detail: Optional[str] = None) -> None:
+        """Best effort: a failing audit entry never changes the result of an approval."""
+        try:
+            with self.db._tx() as conn:
+                row = conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
+                if row is not None:
+                    self.db._audit(conn, self.clock(), event, self.db._draft(row), detail=detail)
+        except Exception:
+            pass
 
     @staticmethod
     def _hash(token: str) -> str:

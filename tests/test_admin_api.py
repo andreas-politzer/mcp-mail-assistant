@@ -292,7 +292,7 @@ def test_admin_code_does_not_load_the_mail_service_or_the_oauth_server():
 def mail_service(config, sender, clock):
     db = Database(config.db_path)
     store = RecipientStore(db)
-    store.add("Ferdinand", "ferdinand@example.org", [], 1.0, "admin:test")
+    store.add("Ferdinand", "ferdinand@example.org", [], 1.0, "admin:test", scope="own")
     return OutboxService(config, DbRecipientList(store), db, sender, clock, recipient_store=store)
 
 
