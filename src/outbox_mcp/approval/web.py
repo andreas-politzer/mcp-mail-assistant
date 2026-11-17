@@ -30,13 +30,7 @@ _CSP = (
     "img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 )
 
-# After a successful approval the page sends the person back to the Claude app. The target is fixed
-# here (a universal link opens the app when it is installed) and never taken from a request.
-BACK_URL = "https://claude.ai/"
-BACK_DELAY_MS = 1500
-
 APP_JS = r'''"use strict";
-const BACK_DELAY_MS=__DELAY__;
 function fromB64(v){const p="=".repeat((4-v.length%4)%4);const b=atob((v+p).replace(/-/g,"+").replace(/_/g,"/"));return Uint8Array.from(b,c=>c.charCodeAt(0));}
 function toB64(v){const b=new Uint8Array(v);let s="";for(const x of b)s+=String.fromCharCode(x);return btoa(s).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,"");}
 function pack(c){const r=c.response;const o={id:c.id,rawId:toB64(c.rawId),type:c.type,response:{},clientExtensionResults:c.getClientExtensionResults()};
@@ -55,16 +49,19 @@ if(kind==="enroll"){pk.user.id=fromB64(pk.user.id);(pk.excludeCredentials||[]).f
 else{(pk.allowCredentials||[]).forEach(c=>{c.id=fromB64(c.id);});cred=await navigator.credentials.get({publicKey:pk});}
 const d=await post(base+"/verify",{challenge_id:o.challenge_id,credential:pack(cred)});
 out.textContent=d.message;btn.hidden=true;
-if(kind==="approve"){const a=document.getElementById("back");if(a){a.hidden=false;setTimeout(()=>{window.location.assign(a.href);},BACK_DELAY_MS);}}
+if(kind==="approve"){const done=document.getElementById("done");if(done){out.textContent="";done.hidden=false;done.scrollIntoView();}}
 }catch(e){out.textContent="Not done: "+e.message;btn.disabled=false;}}
 document.getElementById("go").addEventListener("click",go);
-'''.replace("__DELAY__", str(BACK_DELAY_MS))
+const closeBtn=document.getElementById("close");
+if(closeBtn)closeBtn.addEventListener("click",()=>{window.close();setTimeout(()=>{const h=document.getElementById("closehint");if(h)h.hidden=false;},400);});
+'''
 
 APP_CSS = '''body{font-family:system-ui,sans-serif;max-width:40rem;margin:1rem auto;padding:0 1rem;line-height:1.4}
 dt{font-weight:600;margin-top:.8rem}dd{margin:0;word-break:break-word}
 pre.text{white-space:pre-wrap;word-break:break-word;max-height:22rem;overflow:auto;border:1px solid #888;padding:.6rem;border-radius:6px;margin:0}
 button{font-size:1.1rem;padding:.7rem 1.2rem;margin-top:1rem}
 .note{color:#555;font-size:.9rem}
+.done{margin-top:1.2rem;padding:1rem;border:3px solid #2a7d3f;border-radius:10px;background:#eaf7ee;font-size:1.2rem}.done h2{margin:.2rem 0 .5rem;font-size:1.6rem}
 '''
 
 
@@ -183,7 +180,12 @@ def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLim
                 "Approving covers exactly this draft, once.</p>"
                 '<button id="go">Approve with passkey</button>'
                 '<p id="result" role="status" aria-live="polite"></p>'
-                f'<p><a id="back" href="{BACK_URL}" hidden>Back to Claude</a></p>'
+                '<div id="done" class="done" hidden role="status">'
+                "<h2>Approved</h2>"
+                "<p>You can go back to Claude now and tell it that you approved.</p>"
+                '<button id="close" type="button">Close this page</button>'
+                '<p id="closehint" hidden>If the page did not close, close this tab or window yourself '
+                "(swipe it away or tap Done), then switch back to Claude.</p></div>"
             )
             return _page("Approve this mail", card + tail, kind="approve", base=f"/approve/{draft_id}")
         messages = {
@@ -217,7 +219,7 @@ def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLim
         if not ok:
             limits.failed(draft_id)
             return _json(False, message, 400)
-        return _json(True, "Approved. Going back to Claude: tell it to send the mail.")
+        return _json(True, "Approved. Go back to Claude and tell it to send the mail.")
 
     # -- enrolling a passkey -------------------------------------------------------------
 
