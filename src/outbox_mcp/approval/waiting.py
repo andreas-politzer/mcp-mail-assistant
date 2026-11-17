@@ -111,7 +111,9 @@ class ApprovalWaiter:
         timed_out = dict(first)
         timed_out["waited_seconds"] = seconds
         timed_out["note"] = (
-            f"The approval did not arrive within {seconds} seconds. " + str(first.get("note", ""))
+            f"The approval did not arrive within {seconds} seconds. Do not repeat the mail text: "
+            "the person has just read it. Answer in one or two sentences, give the link again and ask "
+            "them to tell you when they have approved. " + str(first.get("note", ""))
         ).strip()
         return timed_out
 

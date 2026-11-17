@@ -510,3 +510,10 @@ def test_the_approval_answer_keeps_the_old_text_without_waiting(config, sender, 
     w.enroll()
     answer = _approve_over_http(w)
     assert "Go back to Claude and tell it to send the mail" in answer["message"]
+
+
+def test_a_timeout_tells_the_assistant_not_to_repeat_the_mail_text(world):
+    draft = world.draft()
+    result = go(world, waiter_with(FakeTime()), draft)
+    assert result["status"] == "approval_required" and result["waited_seconds"] == 25
+    assert "Do not repeat the mail text" in result["note"]
