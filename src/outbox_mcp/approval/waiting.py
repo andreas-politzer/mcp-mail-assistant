@@ -14,6 +14,10 @@ Rules:
   gets the ordinary "approval_required" answer and the old way still works.
 - At most MAX_WAITERS calls wait at the same time. A manipulated chat that starts many sends
   cannot pile up waiting calls; the others get the ordinary answer at once.
+- The FIRST send_email call for a draft never waits. It answers at once and tells the assistant to
+  show the link to the person and then call send_email again. Only the next call waits. While a
+  call waits the assistant cannot write anything, so this forces a turn in which the link gets
+  written, whatever order the model would have chosen on its own.
 - It polls the database about once a second in a worker thread. The event loop is never blocked.
 - If the client gives up and cancels the call, the wait ends and nothing is sent after that.
 """
@@ -26,6 +30,7 @@ from typing import Awaitable, Callable, Dict
 import anyio
 
 MAX_WAITERS = 2
+MAX_ANNOUNCED = 200
 POLL_SECONDS = 1.0
 
 
@@ -42,6 +47,7 @@ class ApprovalWaiter:
         self._sleep = sleep
         self._monotonic = monotonic
         self._waiting = 0
+        self._announced: Dict[str, None] = {}
 
     @property
     def waiting(self) -> int:
@@ -57,6 +63,18 @@ class ApprovalWaiter:
             or self._waiting >= self.max_waiters
         ):
             return first
+        if draft_id not in self._announced:
+            self._announced[draft_id] = None
+            while len(self._announced) > MAX_ANNOUNCED:
+                self._announced.pop(next(iter(self._announced)))
+            announced = dict(first)
+            announced["note"] = (
+                "Do not wait yet. First write your reply to the person with the recipient, subject, "
+                "text and the link in 'approval_url'. Then call send_email once more for this draft: "
+                f"that call waits up to {seconds} seconds and sends the mail when the approval arrives. "
+                + str(first.get("note", ""))
+            ).strip()
+            return announced
         self._waiting += 1
         try:
             deadline = self._monotonic() + seconds

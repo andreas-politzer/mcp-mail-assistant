@@ -22,6 +22,10 @@ For an external recipient the person approves a draft with a passkey on a page o
 - The wait runs in the background of the event loop (a worker thread checks the database), so the approval page keeps being served. A call that the client cancels stops waiting and sends nothing afterwards.
 - The upper limit of 50 seconds is deliberate. Clients end a tool call that takes too long: reports for MCP clients mention about one minute; for connectors in Claude desktop a limit of four minutes has been reported. Both come from user bug reports, not from documentation, and can change. The default of 25 seconds is a starting value to be tested.
 
+## The first call never waits
+
+In the third real run the link appeared only after the wait, although the instructions said to write it first: the model called `send_email` straight after `prepare_email`, and the person approved after the wait had ended. Text in the instructions cannot force an order, so the server does. The first `send_email` call for a draft answers at once with `approval_required` and a note to show the link and call again. Only the next call waits. The assistant cannot write while a call waits, so this makes sure a turn exists in which the link is written. The cost is one extra round trip of about a second. The list of announced drafts lives in the server process and is capped at 200 entries.
+
 ## What the approval page says
 
 With waiting on, the page after a successful approval does not ask the person to tell the assistant that they approved. It says that Claude sends the mail now if it is still waiting and shows the result in the chat, and that the person should tell Claude only if Claude already reported a late approval. The page does not say "mail sent": it does not know. The send happens in another request, and "sent" only means that the mail server accepted the message. Without waiting, the page keeps the old text.

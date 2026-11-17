@@ -94,8 +94,11 @@ def waiter_with(fake, **kw):
     return ApprovalWaiter(sleep=fake.sleep, monotonic=fake.monotonic, **kw)
 
 
-def go(world, waiter, draft_id, owner="o"):
+def go(world, waiter, draft_id, owner="o", announced=True):
+    """One send_email call. By default the draft was already announced (the link was shown)."""
     async def main():
+        if announced:
+            await waiter.wait(world.svc, inline, owner, draft_id, world.svc.send_email(owner, draft_id))
         first = world.svc.send_email(owner, draft_id)
         return await waiter.wait(world.svc, inline, owner, draft_id, first)
     return anyio.run(main)
@@ -180,9 +183,11 @@ def test_approval_that_arrives_before_the_first_poll_is_found(world, sender):
     draft = world.draft()
 
     async def main():
+        waiter = waiter_with(FakeTime())
+        await waiter.wait(world.svc, inline, "o", draft, world.svc.send_email("o", draft))  # announced
         first = world.svc.send_email("o", draft)        # approval_required
         world.approve(draft)                            # approved right after
-        return await waiter_with(FakeTime()).wait(world.svc, inline, "o", draft, first)
+        return await waiter.wait(world.svc, inline, "o", draft, first)
 
     assert anyio.run(main)["status"] == "sent" and len(sender.sent) == 1
 
@@ -209,7 +214,7 @@ def test_it_does_not_wait_without_a_passkey(config, sender, clock):
 def test_it_does_not_wait_for_an_own_address(world, sender):
     draft = world.draft("me")
     fake = FakeTime()
-    result = go(world, waiter_with(fake), draft)
+    result = go(world, waiter_with(fake), draft, announced=False)
     assert result["status"] == "sent" and fake.sleeps == [] and len(sender.sent) == 1
 
 
@@ -261,6 +266,7 @@ def test_at_most_two_calls_wait_and_the_third_answers_at_once(world, sender):
 
     async def one(i):
         first = world.svc.send_email("o", drafts[i])
+        await waiter.wait(world.svc, inline, "o", drafts[i], first)       # announces, does not wait
         results[i] = await waiter.wait(world.svc, inline, "o", drafts[i], first)
 
     async def main():
@@ -364,16 +370,45 @@ def test_the_send_tool_waits_and_sends_when_the_approval_comes(world, sender):
     timer.start()
 
     async def main():
+        first = await server.call_tool("send_email", {"draft_id": draft})
         started = time.monotonic()
         result = await server.call_tool("send_email", {"draft_id": draft})
-        return result, time.monotonic() - started
+        return first, result, time.monotonic() - started
 
     try:
-        result, took = anyio.run(main)
+        first, result, took = anyio.run(main)
     finally:
         timer.cancel()
+    assert "approval_required" in str(first) and "write your reply" in str(first)
     assert "sent" in str(result) and len(sender.sent) == 1
     assert took < 5
+
+
+def test_the_first_call_for_a_draft_never_waits(world, sender):
+    draft = world.draft()
+    fake = FakeTime()
+    result = go(world, waiter_with(fake), draft, announced=False)
+    assert fake.sleeps == [] and sender.sent == []
+    assert result["status"] == "approval_required" and "waited_seconds" not in result
+    assert "write your reply" in result["note"] and result["approval_url"]
+
+
+def test_only_the_second_call_waits(world, sender):
+    draft = world.draft()
+    fake = FakeTime(on_sleep=lambda n, t: world.approve(draft) if n == 2 else None)
+    waiter = waiter_with(fake)
+    go(world, waiter, draft, announced=False)
+    result = go(world, waiter, draft, announced=False)
+    assert result["status"] == "sent" and len(fake.sleeps) == 2
+
+
+def test_each_draft_is_announced_once(world):
+    d1, d2 = world.draft(), world.draft()
+    fake = FakeTime()
+    waiter = waiter_with(fake)
+    assert go(world, waiter, d1, announced=False)["note"].startswith("Do not wait yet")
+    assert go(world, waiter, d2, announced=False)["note"].startswith("Do not wait yet")
+    assert "waited_seconds" in go(world, waiter, d1, announced=False)
 
 
 def test_the_send_tool_returns_the_ordinary_answer_when_waiting_is_off(config, sender, clock):
