@@ -14,6 +14,7 @@ import threading
 import time
 from collections import deque
 from typing import Any, Deque, Dict, List, Optional
+from urllib.parse import urlsplit
 
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
@@ -129,6 +130,17 @@ _HELP_HTML = (
     "use passkeys. Open this page in your normal browser instead: copy the link and paste it there.</p>"
     '<button id="copy" type="button">Copy link</button> <span id="copied" hidden>Copied.</span></div>'
 )
+
+
+def _allowed_hosts(origin: str) -> frozenset:
+    """The Host header values that belong to the configured origin: the exact network location,
+    plus the same name with the scheme's default port written out (some proxies add it)."""
+    parts = urlsplit(origin)
+    netloc = parts.netloc.lower()
+    allowed = {netloc}
+    if parts.port is None:
+        allowed.add(f"{netloc}:{443 if parts.scheme == 'https' else 80}")
+    return frozenset(allowed)
 
 
 def _size(n: int) -> str:
@@ -274,13 +286,28 @@ def build_approval_routes(service: ApprovalService, limiter: Optional[AttemptLim
             return _json(False, message, 400)
         return _json(True, "Passkey registered. You can close this page.")
 
+    allowed_hosts = _allowed_hosts(origin)
+
+    def guarded(endpoint):
+        """Every approval route answers only under the configured host name. This closes DNS
+        rebinding: a page on another name that resolves to this server is refused, and so is a
+        request that carries zero or several Host headers."""
+
+        async def wrapper(request: Request) -> Response:
+            hosts = request.headers.getlist("host")
+            if len(hosts) != 1 or hosts[0].strip().lower() not in allowed_hosts:
+                return _secure(Response("Misdirected request.", status_code=421, media_type="text/plain"))
+            return await endpoint(request)
+
+        return wrapper
+
     return [
-        Route("/approval/app.js", static_js, methods=["GET"]),
-        Route("/approval/style.css", static_css, methods=["GET"]),
-        Route("/approve/{draft_id}", approve_page, methods=["GET"]),
-        Route("/approve/{draft_id}/options", approve_options, methods=["POST"]),
-        Route("/approve/{draft_id}/verify", approve_verify, methods=["POST"]),
-        Route("/passkey/enroll/{token}", enroll_page, methods=["GET"]),
-        Route("/passkey/enroll/{token}/options", enroll_options, methods=["POST"]),
-        Route("/passkey/enroll/{token}/verify", enroll_verify, methods=["POST"]),
+        Route("/approval/app.js", guarded(static_js), methods=["GET"]),
+        Route("/approval/style.css", guarded(static_css), methods=["GET"]),
+        Route("/approve/{draft_id}", guarded(approve_page), methods=["GET"]),
+        Route("/approve/{draft_id}/options", guarded(approve_options), methods=["POST"]),
+        Route("/approve/{draft_id}/verify", guarded(approve_verify), methods=["POST"]),
+        Route("/passkey/enroll/{token}", guarded(enroll_page), methods=["GET"]),
+        Route("/passkey/enroll/{token}/options", guarded(enroll_options), methods=["POST"]),
+        Route("/passkey/enroll/{token}/verify", guarded(enroll_verify), methods=["POST"]),
     ]

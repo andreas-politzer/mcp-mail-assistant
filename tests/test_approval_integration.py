@@ -202,6 +202,75 @@ def test_pages_offer_help_when_the_window_cannot_do_passkeys(world, web):
     assert "window.PublicKeyCredential" in js and "navigator.clipboard.writeText" in js
 
 
+# -- host check (DNS rebinding) ---------------------------------------------------------------
+
+def _all_routes(draft_id, token):
+    return [
+        ("GET", "/approval/app.js"), ("GET", "/approval/style.css"),
+        ("GET", f"/approve/{draft_id}"), ("POST", f"/approve/{draft_id}/options"),
+        ("POST", f"/approve/{draft_id}/verify"), ("GET", f"/passkey/enroll/{token}"),
+        ("POST", f"/passkey/enroll/{token}/options"), ("POST", f"/passkey/enroll/{token}/verify"),
+    ]
+
+
+@pytest.mark.parametrize("bad", [
+    "evil.example", "relay.example.org.evil.example", "evilrelay.example.org",
+    "relay.example.org:8443", "localhost", "127.0.0.1:8430", "", "relay.example.org@evil.example",
+])
+def test_every_approval_route_refuses_a_foreign_host_and_changes_nothing(world, web, bad):
+    d = world.svc.prepare_email("o", "Ferdinand", "S", "T")["draft_id"]
+    token = world.approval.create_enrollment()
+    before = _dump(world)
+    for method, path in _all_routes(d, token):
+        r = web.request(method, path, headers={**JSON, "Host": bad}, json={} if method == "POST" else None)
+        assert r.status_code == 421, (method, path, bad, r.status_code)
+        assert "Approve" not in r.text and d not in r.text
+        assert r.headers["cache-control"] == "no-store"
+    assert _dump(world) == before  # no challenge was issued, nothing was written
+
+
+@pytest.mark.parametrize("good", ["relay.example.org", "RELAY.EXAMPLE.ORG", "relay.example.org:443", " relay.example.org "])
+def test_the_configured_host_is_accepted_in_its_usual_spellings(world, web, good):
+    d = world.svc.prepare_email("o", "Ferdinand", "S", "T")["draft_id"]
+    assert web.get(f"/approve/{d}", headers={"Host": good}).status_code == 200
+    assert web.get("/approval/app.js", headers={"Host": good}).status_code == 200
+
+
+def test_zero_or_several_host_headers_are_refused(world):
+    import asyncio
+    d = world.svc.prepare_email("o", "Ferdinand", "S", "T")["draft_id"]
+    app = Starlette(routes=build_approval_routes(world.approval, AttemptLimiter(world.clock)))
+
+    def call(hosts):
+        scope = {
+            "type": "http", "method": "GET", "path": f"/approve/{d}", "raw_path": f"/approve/{d}".encode(),
+            "query_string": b"", "headers": [(b"host", h.encode()) for h in hosts],
+            "scheme": "https", "server": ("relay.example.org", 443), "client": ("127.0.0.1", 1), "http_version": "1.1",
+        }
+        out = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(m):
+            out.append(m)
+
+        asyncio.run(app(scope, receive, send))
+        return next(m["status"] for m in out if m["type"] == "http.response.start")
+
+    assert call(["relay.example.org"]) == 200
+    assert call([]) == 421
+    assert call(["relay.example.org", "relay.example.org"]) == 421
+    assert call(["relay.example.org", "evil.example"]) == 421
+
+
+def test_allowed_hosts_follow_the_origin_including_a_port():
+    from outbox_mcp.approval.web import _allowed_hosts
+    assert _allowed_hosts("https://relay.example.org") == {"relay.example.org", "relay.example.org:443"}
+    assert _allowed_hosts("http://localhost:8433") == {"localhost:8433"}
+    assert _allowed_hosts("http://localhost") == {"localhost", "localhost:80"}
+
+
 def ferdinand_shown(html):
     return "ferdinand@example.org" in html
 
