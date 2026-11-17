@@ -133,12 +133,27 @@ def _passkeys(args, environment, database: Database, out: TextIO) -> int:
         return 2
     service = ApprovalService(database, config, time.time)
     if args.command == "passkey-enroll":
+        note = None
+        if config.is_local:
+            # The local page runs inside the assistant's own process, possibly on a later port than
+            # the configured one (another instance may hold it): print the link of the page that answers.
+            from dataclasses import replace
+
+            from .approval.local_listener import find_running_page
+
+            port = find_running_page(config)
+            if port is None:
+                note = "No approval page answers right now. It starts together with the assistant; restart the assistant first."
+            elif port != config.port:
+                service.config = replace(config, port=port)
         token = service.create_enrollment()
         if token is None:
             print("The maximum number of passkeys is registered. Remove one first (passkey-remove).", file=out)
             return 1
         print("Open this link on the device that should hold the passkey. It works once, for 10 minutes:", file=out)
         print(service.enrollment_url(token), file=out)
+        if note:
+            print(note, file=out)
     elif args.command == "passkey-list":
         keys = service.list_passkeys()
         if not keys:

@@ -147,5 +147,24 @@ def build_service(config: Config, env=None) -> OutboxService:
     return OutboxService(config, DbRecipientList(store), db, sender, recipient_store=store, approval=approval)
 
 
+def attach_local_approval(service: OutboxService) -> None:
+    """Local approval origin: serve the approval page next to the stdio server. If that is not
+    possible, approval is switched off again (external recipients stay unsendable) and the reason
+    goes to standard error, never to standard output."""
+    import sys
+
+    from .approval.local_listener import start_local_listener
+
+    if service.approval is None or not service.approval.config.is_local:
+        return
+    listener = start_local_listener(service.approval)
+    if listener.error:
+        print(f"Mail Assistant: approval page not started. {listener.error} "
+              "Mail to external recipients cannot be sent until this is fixed.", file=sys.stderr)
+        service.approval = None
+
+
 def main() -> None:
-    build_server(build_service(Config.from_env())).run()
+    service = build_service(Config.from_env())
+    attach_local_approval(service)
+    build_server(service).run()

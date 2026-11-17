@@ -52,33 +52,55 @@ def b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
 
 
+LOCAL_HOST = "localhost"
+
+
 @dataclass(frozen=True)
 class ApprovalConfig:
-    """`rp_id` is the host name of the public address of this server, nothing else: no scheme,
-    port, path or wildcard. A passkey is bound to it and works on no other host."""
+    """Two forms, and nothing in between.
+
+    Public: `rp_id` is the host name of the public address of this server (no scheme, port, path
+    or wildcard), `port` is None, the origin is https. A passkey is bound to it.
+
+    Local: `rp_id` is exactly "localhost" and `port` is the port of the local approval page; the
+    origin is `http://localhost:<port>`. Browsers treat localhost as a secure context, so passkeys
+    work there without a domain or a certificate. Only the loopback name is accepted for http."""
 
     rp_id: str
     rp_name: str = "Mail Assistant"
     challenge_seconds: int = DEFAULT_CHALLENGE_SECONDS
+    port: Optional[int] = None
 
     def __post_init__(self) -> None:
         host = self.rp_id
-        bad = (
-            not host or host != host.strip().lower() or "." not in host
-            or any(c in host for c in ":/\\@*? #%") or host.startswith(".") or host.endswith(".")
-            or ".." in host or not all(c.isalnum() or c in ".-" for c in host) or not host.isascii()
-        )
-        if bad:
-            raise ConfigError(
-                "The approval host must be a plain lower-case host name such as relay.example.org "
-                "(no scheme, port, path or wildcard)."
+        if host == LOCAL_HOST:
+            if self.port is None or isinstance(self.port, bool) or not 1024 <= self.port <= 65535:
+                raise ConfigError(
+                    "The local approval page needs OUTBOX_APPROVAL_PORT, a port between 1024 and 65535."
+                )
+        else:
+            if self.port is not None:
+                raise ConfigError("OUTBOX_APPROVAL_PORT is only allowed together with OUTBOX_APPROVAL_HOST=localhost.")
+            bad = (
+                not host or host != host.strip().lower() or "." not in host
+                or any(c in host for c in ":/\\@*? #%") or host.startswith(".") or host.endswith(".")
+                or ".." in host or not all(c.isalnum() or c in ".-" for c in host) or not host.isascii()
             )
+            if bad:
+                raise ConfigError(
+                    "The approval host must be a plain lower-case host name such as relay.example.org "
+                    "(no scheme, port, path or wildcard), or exactly 'localhost' for the local page."
+                )
         if not 30 <= self.challenge_seconds <= 900:
             raise ConfigError("The approval challenge time must be between 30 and 900 seconds.")
 
     @property
+    def is_local(self) -> bool:
+        return self.rp_id == LOCAL_HOST
+
+    @property
     def origin(self) -> str:
-        return f"https://{self.rp_id}"
+        return f"http://{LOCAL_HOST}:{self.port}" if self.is_local else f"https://{self.rp_id}"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Optional["ApprovalConfig"]:
@@ -91,7 +113,12 @@ class ApprovalConfig:
             seconds = int(raw) if raw else DEFAULT_CHALLENGE_SECONDS
         except ValueError:
             raise ConfigError("OUTBOX_APPROVAL_CHALLENGE_SECONDS must be a whole number.") from None
-        return cls(rp_id=host, challenge_seconds=seconds)
+        raw_port = (env.get("OUTBOX_APPROVAL_PORT") or "").strip()
+        try:
+            port = int(raw_port) if raw_port else None
+        except ValueError:
+            raise ConfigError("OUTBOX_APPROVAL_PORT must be a whole number.") from None
+        return cls(rp_id=host, challenge_seconds=seconds, port=port)
 
 
 class _Rejected(Exception):

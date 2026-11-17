@@ -45,6 +45,13 @@ def build_app_from_env(env: Optional[Mapping[str, str]] = None):
     e = os.environ if env is None else env
     auth_config = AuthConfig.from_env(e)
     service = build_service(Config.from_env(e), e)
+    if service.approval is not None and service.approval.config.is_local:
+        from .errors import ConfigError
+
+        raise ConfigError(
+            "OUTBOX_APPROVAL_HOST=localhost is for the stdio server. The HTTP server needs the "
+            "public host name its approval links are reached under."
+        )
     return build_http_app(auth_config, AuthStore(auth_config.db_path), service)
 
 
