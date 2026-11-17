@@ -99,6 +99,7 @@ def go(world, waiter, draft_id, owner="o", announced=True):
     async def main():
         if announced:
             await waiter.wait(world.svc, inline, owner, draft_id, world.svc.send_email(owner, draft_id))
+            waiter._monotonic.__self__.t += 10                   # the reply was written meanwhile
         first = world.svc.send_email(owner, draft_id)
         return await waiter.wait(world.svc, inline, owner, draft_id, first)
     return anyio.run(main)
@@ -183,8 +184,10 @@ def test_approval_that_arrives_before_the_first_poll_is_found(world, sender):
     draft = world.draft()
 
     async def main():
-        waiter = waiter_with(FakeTime())
+        fake = FakeTime()
+        waiter = waiter_with(fake)
         await waiter.wait(world.svc, inline, "o", draft, world.svc.send_email("o", draft))  # announced
+        fake.t += 10
         first = world.svc.send_email("o", draft)        # approval_required
         world.approve(draft)                            # approved right after
         return await waiter.wait(world.svc, inline, "o", draft, first)
@@ -261,12 +264,14 @@ def test_at_most_two_calls_wait_and_the_third_answers_at_once(world, sender):
         started.append(seconds)
         await release.wait()
 
-    waiter = ApprovalWaiter(sleep=blocking_sleep, monotonic=lambda: 0.0)
+    now = [0.0]
+    waiter = ApprovalWaiter(sleep=blocking_sleep, monotonic=lambda: now[0])
     results = {}
 
     async def one(i):
         first = world.svc.send_email("o", drafts[i])
         await waiter.wait(world.svc, inline, "o", drafts[i], first)       # announces, does not wait
+        now[0] += 10                                                      # the reply was written
         results[i] = await waiter.wait(world.svc, inline, "o", drafts[i], first)
 
     async def main():
@@ -305,6 +310,10 @@ def test_two_waiting_calls_for_one_draft_send_exactly_one_mail(world, sender):
     waiter = waiter_with(fake)
     outcomes = []
 
+    async def announce():
+        await waiter.wait(world.svc, inline, "o", draft, world.svc.send_email("o", draft))
+        fake.t += 10
+
     async def one():
         try:
             first = world.svc.send_email("o", draft)
@@ -313,6 +322,7 @@ def test_two_waiting_calls_for_one_draft_send_exactly_one_mail(world, sender):
             outcomes.append(exc)
 
     async def main():
+        await announce()
         async with anyio.create_task_group() as tg:
             tg.start_soon(one)
             tg.start_soon(one)
@@ -363,14 +373,16 @@ def test_a_local_link_is_not_sent_to_the_phone_even_without_waiting(config, send
 
 # -- through the real tool ----------------------------------------------------------------------------
 
-def test_the_send_tool_waits_and_sends_when_the_approval_comes(world, sender):
+def test_the_send_tool_waits_and_sends_when_the_approval_comes(world, sender, monkeypatch):
     draft = world.draft(owner=LOCAL_OWNER)
+    monkeypatch.setattr("outbox_mcp.approval.waiting.MIN_GAP_SECONDS", 0.05)
     server = build_server(world.svc)
     timer = threading.Timer(0.4, lambda: world.approve(draft))
     timer.start()
 
     async def main():
         first = await server.call_tool("send_email", {"draft_id": draft})
+        await anyio.sleep(0.1)
         started = time.monotonic()
         result = await server.call_tool("send_email", {"draft_id": draft})
         return first, result, time.monotonic() - started
@@ -398,8 +410,24 @@ def test_only_the_second_call_waits(world, sender):
     fake = FakeTime(on_sleep=lambda n, t: world.approve(draft) if n == 2 else None)
     waiter = waiter_with(fake)
     go(world, waiter, draft, announced=False)
+    fake.t += 10                                        # the reply with the link was written
     result = go(world, waiter, draft, announced=False)
     assert result["status"] == "sent" and len(fake.sleeps) == 2
+
+
+def test_a_call_straight_after_the_first_one_does_not_wait_either(world, sender):
+    draft = world.draft()
+    fake = FakeTime()
+    waiter = waiter_with(fake)
+    go(world, waiter, draft, announced=False)
+    fake.t += 1                                         # no reply written: only one second passed
+    again = go(world, waiter, draft, announced=False)
+    assert fake.sleeps == [] and again["status"] == "approval_required"
+    assert again["note"].startswith("Too early")
+    fake.t += 1                                         # the clock started over at the early call
+    assert go(world, waiter, draft, announced=False)["note"].startswith("Too early")
+    fake.t += 10
+    assert "waited_seconds" in go(world, waiter, draft, announced=False)
 
 
 def test_each_draft_is_announced_once(world):
@@ -408,6 +436,7 @@ def test_each_draft_is_announced_once(world):
     waiter = waiter_with(fake)
     assert go(world, waiter, d1, announced=False)["note"].startswith("Do not wait yet")
     assert go(world, waiter, d2, announced=False)["note"].startswith("Do not wait yet")
+    fake.t += 10
     assert "waited_seconds" in go(world, waiter, d1, announced=False)
 
 

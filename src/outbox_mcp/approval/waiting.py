@@ -18,6 +18,10 @@ Rules:
   show the link to the person and then call send_email again. Only the next call waits. While a
   call waits the assistant cannot write anything, so this forces a turn in which the link gets
   written, whatever order the model would have chosen on its own.
+- A second call that follows the first one within MIN_GAP_SECONDS does not wait either. Writing the
+  reply with the draft takes the assistant longer than that; a call that comes straight after the
+  first one means no reply was written. It gets the announcement again, with a stronger note, and
+  the clock starts over.
 - It polls the database about once a second in a worker thread. The event loop is never blocked.
 - If the client gives up and cancels the call, the wait ends and nothing is sent after that.
 """
@@ -31,6 +35,7 @@ import anyio
 
 MAX_WAITERS = 2
 MAX_ANNOUNCED = 200
+MIN_GAP_SECONDS = 3.0
 POLL_SECONDS = 1.0
 
 
@@ -47,7 +52,7 @@ class ApprovalWaiter:
         self._sleep = sleep
         self._monotonic = monotonic
         self._waiting = 0
-        self._announced: Dict[str, None] = {}
+        self._announced: Dict[str, float] = {}
 
     @property
     def waiting(self) -> int:
@@ -63,15 +68,25 @@ class ApprovalWaiter:
             or self._waiting >= self.max_waiters
         ):
             return first
-        if draft_id not in self._announced:
-            self._announced[draft_id] = None
+        now = self._monotonic()
+        last = self._announced.get(draft_id)
+        if last is None or now - last < MIN_GAP_SECONDS:
+            too_early = last is not None
+            self._announced.pop(draft_id, None)
+            self._announced[draft_id] = now
             while len(self._announced) > MAX_ANNOUNCED:
                 self._announced.pop(next(iter(self._announced)))
             announced = dict(first)
+            lead = (
+                "Too early: the person has not seen the link yet, because you called again without "
+                "writing anything. Write your reply now. "
+                if too_early else "Do not wait yet. "
+            )
             announced["note"] = (
-                "Do not wait yet. First write your reply to the person with the recipient, subject, "
-                "text and the link in 'approval_url'. Then call send_email once more for this draft: "
-                f"that call waits up to {seconds} seconds and sends the mail when the approval arrives. "
+                lead
+                + "First write your reply to the person with the recipient, subject, text and the "
+                "link in 'approval_url'. Only then call send_email once more for this draft: that call "
+                f"waits up to {seconds} seconds and sends the mail when the approval arrives. "
                 + str(first.get("note", ""))
             ).strip()
             return announced
