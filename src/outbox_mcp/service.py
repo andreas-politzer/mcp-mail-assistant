@@ -537,10 +537,9 @@ class OutboxService:
         """Where a draft stands. Read only."""
         self._housekeeping()
         draft = self.db.get_draft(draft_id, owner)
-        approved = (
-            self.approval is not None and draft.status == "pending"
-            and self.approval.is_approved_now(draft.id, draft.body_sha256)
-        )
+        # "approved" says whether a passkey approval exists for exactly this content, whatever the
+        # draft's status is now (a sent mail stays approved; an own-address mail never had one).
+        approved = self.approval is not None and self.approval.is_approved_now(draft.id, draft.body_sha256)
         notes = {
             "pending": "Not sent yet. It waits for the user's passkey approval."
             if not approved else "Approved, not sent yet.",

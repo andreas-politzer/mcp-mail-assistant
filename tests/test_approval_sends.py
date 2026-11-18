@@ -269,6 +269,17 @@ def test_draft_status_follows_the_draft(world):
     world.click(d)
     s = world.svc.draft_status("o", d)
     assert s["status"] == "sent" and "finished_at" in s and s["to_address"] == EXT
+    assert s["approved"] is True
+
+
+def test_draft_status_says_approved_for_a_sent_draft_only_if_a_passkey_approved_it(world):
+    own = world.draft(who="Me")
+    world.svc.send_email("o", own)
+    s = world.svc.draft_status("o", own)
+    assert s["status"] == "sent" and s["approved"] is False
+    ext = world.draft()
+    world.click(ext)
+    assert world.svc.draft_status("o", ext)["approved"] is True
 
 
 def test_draft_status_belongs_to_the_owner(world):
