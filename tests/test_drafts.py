@@ -152,6 +152,18 @@ def test_recover_interrupted(db):
     assert db.get_draft(d.id, "o").status == "unknown"
 
 
+def test_recover_leaves_a_send_that_just_began(db):
+    """Another server process on the same database may be in the middle of this send."""
+    fresh, stale = make(db, n=1), make(db, n=2)
+    db.claim_for_sending(stale.id, "o", 1001.0, LIM)
+    db.claim_for_sending(fresh.id, "o", 1100.0, LIM)
+    assert db.recover_interrupted(1110.0, older_than=60.0) == 1
+    assert db.get_draft(stale.id, "o").status == "unknown"
+    assert db.get_draft(fresh.id, "o").status == "sending"
+    assert db.recover_interrupted(1200.0, older_than=60.0) == 1
+    assert db.get_draft(fresh.id, "o").status == "unknown"
+
+
 def test_purge_only_old_terminal(db):
     old, pending = make(db, n=1), make(db, now=1000.0, n=2)
     db.cancel(old.id, "o", 1001.0)

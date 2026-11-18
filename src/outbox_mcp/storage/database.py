@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import os
+import random
 import secrets
 import sqlite3
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -348,6 +350,23 @@ class Database:
     def __init__(self, path: Path) -> None:
         self.path = str(path)
         self._restrict_permissions()
+        # Several processes may open a brand-new database at the same moment (Claude Desktop starts
+        # the server twice). For a few steps, such as switching to WAL, SQLite then answers
+        # "database is locked" at once instead of waiting, and two processes can race on adding a
+        # column. Every step is safe to repeat, so the whole start-up is simply tried again.
+        deadline = time.monotonic() + 15
+        while True:
+            try:
+                self._initialise()
+                return
+            except sqlite3.OperationalError as exc:
+                message = str(exc).lower()
+                # "duplicate column": another process added the column between our check and our ALTER
+                if ("locked" not in message and "duplicate column" not in message) or time.monotonic() > deadline:
+                    raise
+                time.sleep(0.05 + random.random() * 0.1)
+
+    def _initialise(self) -> None:
         with self._connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
@@ -624,10 +643,17 @@ class Database:
             )
             self._audit(conn, now, status, self._draft(row), detail=detail)
 
-    def recover_interrupted(self, now: float) -> int:
-        """Drafts stuck in 'sending' (crash, restart) have an unknown result."""
+    def recover_interrupted(self, now: float, older_than: float = 0.0) -> int:
+        """Drafts stuck in 'sending' (crash, restart) have an unknown result.
+
+        `older_than` leaves alone sends that began less than that many seconds ago: another
+        server process on the same database may be in the middle of one (Claude Desktop can run
+        more than one instance), and a send that is still running must not be marked unknown."""
         with self._tx() as conn:
-            rows = conn.execute("SELECT * FROM drafts WHERE status='sending'").fetchall()
+            rows = conn.execute(
+                "SELECT * FROM drafts WHERE status='sending' AND COALESCE(sending_at, 0) <= ?",
+                (now - older_than,),
+            ).fetchall()
             for row in rows:
                 conn.execute(
                     "UPDATE drafts SET status='unknown', finished_at=?, detail=? WHERE id=?",

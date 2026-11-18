@@ -117,6 +117,30 @@ uv run --env-file .env outbox-mcp
 
 Credentials belong only in `.env` (never committed; it is in `.gitignore`).
 
+### SMTP password in the system keychain
+
+On a desktop account you can keep the SMTP password out of `.env` altogether. Leave `OUTBOX_SMTP_PASSWORD` unset and store the password in the system keychain (macOS Keychain, Windows Credential Manager, or the Secret Service on Linux):
+
+```bash
+uv run --env-file .env outbox-admin smtp-password set      # asks twice, nothing is shown or written to a file
+uv run --env-file .env outbox-admin smtp-password status   # says whether a password is stored, never shows it
+uv run --env-file .env outbox-admin smtp-password delete
+```
+
+The entry is looked up by `OUTBOX_SMTP_HOST` and `OUTBOX_SMTP_USER`. If `OUTBOX_SMTP_PASSWORD` is set in the environment, it takes precedence, which keeps headless servers working as before. With neither, the server stops at start with a plain message and exit code 2.
+
+### Where the data lives
+
+By default the database and the other files sit under their relative names in the working directory. For a desktop account set one absolute folder, `OUTBOX_DATA_DIR`: the database (`outbox.db`), the sign-in database (`auth.db`) and the recipients file (`recipients.json`) then live inside it, and the folder is created with mode `0700`. A path set for a single file still wins for that file. The folder must be absolute, because Claude Desktop starts servers from `/`; the program itself can be installed anywhere and moved later.
+
+### Several instances
+
+Claude Desktop can start the stdio server more than once (one for the chat, one shared by Cowork and Code). That works: all instances use the same data folder and see each other's changes at once (SQLite, write-ahead log). Each instance serves its own local approval page, on the next free port from `OUTBOX_APPROVAL_PORT`; the passkey is bound to `localhost`, so a link from any instance can be approved. A starting instance leaves a send alone that began moments ago, because another instance may still be running it. If an instance ends, links it issued stop working; ask for a new draft link.
+
+### Started by a desktop app
+
+An app that starts the HTTP server as a child process can set `OUTBOX_EXIT_WHEN_STDIN_CLOSES=1` and keep a pipe to the server's standard input. When the app ends, however it ends (quit, crash, kill), the pipe closes and the server stops by itself instead of lingering with the port taken. The option is off by default.
+
 ## Setup (remote, HTTP with sign-in)
 
 ```bash
@@ -191,6 +215,7 @@ Documented on purpose, to be decided later:
 - The desktop app is not reachable without an SSH tunnel on purpose: the admin API is kept off the public internet. This is a real hurdle for people who are not used to a terminal, and it is not solved. The app can copy the tunnel command for you, and the in-app help explains it, nothing more.
 - The desktop app is verified on macOS only (see [Desktop app](#desktop-app)). Windows and Linux builds are prepared but untested.
 - The desktop app has no automatic update and no code signing yet, so macOS and Windows will show warnings for downloaded packages.
+- The keychain, data folder, several-instances and stdin-exit features are verified on macOS only (including a build of the server as a single program started by Claude Desktop). Windows and Linux are untested. The packaged single-program server itself is not part of this repository yet.
 - Contact import reads CSV files with a name and an e-mail column, up to 2000 valid rows per file.
 
 ## Testing against your real mail account

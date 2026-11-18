@@ -9,6 +9,7 @@ from typing import Mapping, Optional
 from urllib.parse import urlsplit
 
 from ..errors import ConfigError
+from ..paths import default_file
 from .passwords import is_valid_hash
 from .redirects import CLAUDE_AI_CALLBACK, parse_allowlist
 
@@ -92,7 +93,7 @@ class AuthConfig:
         return cls(
             base_url=required("OUTBOX_PUBLIC_BASE_URL"),
             password_hash=password_hash,
-            db_path=Path(e.get("OUTBOX_OAUTH_DB_PATH", "").strip() or "auth.db"),
+            db_path=Path(e.get("OUTBOX_OAUTH_DB_PATH", "").strip() or default_file(e, "auth.db")),
             redirect_uris=parse_allowlist(redirects) if redirects else (CLAUDE_AI_CALLBACK,),
             access_token_ttl=positive("OUTBOX_OAUTH_ACCESS_TTL_SECONDS", 3600),
             refresh_token_ttl=positive("OUTBOX_OAUTH_REFRESH_TTL_DAYS", 90) * 86400,

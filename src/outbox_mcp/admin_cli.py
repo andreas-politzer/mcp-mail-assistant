@@ -7,6 +7,7 @@ the database directly and needs no mail credentials. The AI connector has no acc
 from __future__ import annotations
 
 import argparse
+import getpass
 import sys
 import time
 from datetime import datetime, timezone
@@ -51,6 +52,9 @@ def _parser() -> argparse.ArgumentParser:
     scope = sub.add_parser("scope", help="mark an active recipient as your own address or as external")
     scope.add_argument("ref", help="id or address")
     scope.add_argument("value", choices=("own", "external"))
+    pw = sub.add_parser("smtp-password", help="store, check or remove the SMTP password in the system keychain")
+    pw.add_argument("action", choices=["set", "status", "delete"])
+    pw.add_argument("--stdin", action="store_true", help="read the password from standard input (for scripts)")
     sub.add_parser("passkey-enroll", help="print a one-time link to register an approval passkey")
     sub.add_parser("passkey-list", help="show the registered approval passkeys")
     sub.add_parser("passkey-remove", help="remove an approval passkey").add_argument(
@@ -66,13 +70,24 @@ def main(
     env: Optional[Mapping[str, str]] = None,
     stdout: Optional[TextIO] = None,
     input_func: Callable[[str], str] = input,
+    secret_func: Callable[[str], str] = getpass.getpass,
 ) -> int:
     out = stdout or sys.stdout
     environment = env if env is not None else __import__("os").environ
     args = _parser().parse_args(argv)
+    if args.command == "smtp-password":
+        return _smtp_password(args, environment, out, secret_func)
     db_path = args.db or environment.get("OUTBOX_DB_PATH", "").strip()
+    if not db_path and (environment.get("OUTBOX_DATA_DIR") or "").strip():
+        from .paths import default_file
+
+        try:
+            db_path = str(default_file(environment, "outbox.db"))
+        except OutboxError as exc:
+            print(f"Error: {exc}", file=out)
+            return 2
     if not db_path:
-        print("Error: OUTBOX_DB_PATH is not set (or use --db).", file=out)
+        print("Error: OUTBOX_DB_PATH is not set (or use --db, or set OUTBOX_DATA_DIR).", file=out)
         return 2
     database = Database(db_path)
     store = RecipientStore(database)
@@ -118,6 +133,41 @@ def main(
             action = getattr(store, args.command)
             done = action(args.ref, now, SOURCE)
             print(f"{args.command.capitalize()}: {done.name} <{done.address}> [{done.status}]", file=out)
+    except OutboxError as exc:
+        print(f"Error: {exc}", file=out)
+        return 1
+    return 0
+
+
+def _smtp_password(args, environment, out: TextIO, secret_func: Callable[[str], str]) -> int:
+    from . import secrets_store as keychain
+
+    host = (environment.get("OUTBOX_SMTP_HOST") or "").strip()
+    user = (environment.get("OUTBOX_SMTP_USER") or "").strip()
+    if not host or not user:
+        print("Error: OUTBOX_SMTP_HOST and OUTBOX_SMTP_USER must be set.", file=out)
+        return 2
+    label = f"{user}@{host}"
+    try:
+        if args.action == "set":
+            if args.stdin:
+                password = sys.stdin.readline().rstrip("\r\n")
+            else:
+                password = secret_func(f"SMTP password for {label}: ")
+                if secret_func("Repeat: ") != password:
+                    print("The two entries differ. Nothing stored.", file=out)
+                    return 1
+            keychain.set_smtp_password(host, user, password)
+            print(f"Stored the SMTP password for {label} in {keychain.backend_name()}.", file=out)
+        elif args.action == "delete":
+            removed = keychain.delete_smtp_password(host, user)
+            print("Removed from the keychain." if removed else "No password was stored.", file=out)
+        else:
+            if (environment.get("OUTBOX_SMTP_PASSWORD") or "").strip():
+                print("OUTBOX_SMTP_PASSWORD is set in the environment and takes precedence.", file=out)
+            stored = keychain.get_smtp_password(host, user) is not None
+            print(f"Keychain ({keychain.backend_name()}): "
+                  f"{'password stored' if stored else 'no password stored'} for {label}.", file=out)
     except OutboxError as exc:
         print(f"Error: {exc}", file=out)
         return 1

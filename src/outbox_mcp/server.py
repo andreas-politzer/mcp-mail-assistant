@@ -150,7 +150,8 @@ def build_service(config: Config, env=None) -> OutboxService:
     if not store.has_any() and config.recipients_file.exists():
         # First start with the registry: take over the old recipients file once.
         store.import_list_once(RecipientList.from_file(config.recipients_file), time.time())
-    db.recover_interrupted(time.time())
+    # A send that began moments ago may belong to another running instance on this database.
+    db.recover_interrupted(time.time(), older_than=config.smtp_timeout_seconds + 30)
     sender = SmtpClient(
         config.smtp_host, config.smtp_port, config.smtp_user, config.smtp_password,
         config.smtp_security, config.smtp_timeout_seconds, config.smtp_helo,
@@ -178,6 +179,14 @@ def attach_local_approval(service: OutboxService) -> None:
 
 
 def main() -> None:
-    service = build_service(Config.from_env())
+    import sys
+
+    from .errors import ConfigError
+
+    try:
+        service = build_service(Config.from_env())
+    except ConfigError as exc:
+        print(f"Mail Assistant: {exc}", file=sys.stderr)
+        raise SystemExit(2)
     attach_local_approval(service)
     build_server(service).run()

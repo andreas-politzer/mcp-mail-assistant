@@ -8,6 +8,8 @@ Binds to loopback only. Publish it through a tunnel or reverse proxy that serves
 from __future__ import annotations
 
 import os
+import sys
+import threading
 from typing import Mapping, Optional
 
 from .approval.web import build_approval_routes
@@ -55,11 +57,46 @@ def build_app_from_env(env: Optional[Mapping[str, str]] = None):
     return build_http_app(auth_config, AuthStore(auth_config.db_path), service)
 
 
+def _exit_when_stdin_closes(server) -> None:
+    """Stop the server when standard input reaches end of file.
+
+    A desktop app that starts the server keeps a pipe to its standard input. When the app ends,
+    however it ends (quit, crash, kill), the system closes the pipe and the server follows
+    instead of lingering with the port taken.
+    """
+
+    def watch() -> None:
+        try:
+            while sys.stdin.buffer.read(4096):
+                pass
+        except (OSError, ValueError):
+            pass
+        server.should_exit = True
+
+    threading.Thread(target=watch, name="stdin-watch", daemon=True).start()
+
+
 def main() -> None:
     import uvicorn
 
     port = int(os.environ.get("OUTBOX_HTTP_PORT", "8430"))
-    uvicorn.run(build_app_from_env(), host="127.0.0.1", port=port)
+    from .errors import ConfigError
+
+    try:
+        app = build_app_from_env()
+    except ConfigError as exc:
+        print(f"Mail Assistant: {exc}", file=sys.stderr)
+        raise SystemExit(2)
+    if os.environ.get("OUTBOX_EXIT_WHEN_STDIN_CLOSES", "").strip().lower() in {"1", "true", "yes"}:
+        # Off by default: with no input attached (a service, a terminal in the background)
+        # the server would stop at once.
+        server = uvicorn.Server(
+            uvicorn.Config(app, host="127.0.0.1", port=port, timeout_graceful_shutdown=5)
+        )
+        _exit_when_stdin_closes(server)
+        server.run()
+        return
+    uvicorn.run(app, host="127.0.0.1", port=port)
 
 
 if __name__ == "__main__":

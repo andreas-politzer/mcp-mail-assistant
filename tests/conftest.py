@@ -5,6 +5,36 @@ from outbox_mcp.security.recipients import Recipient, RecipientList
 from outbox_mcp.storage.database import Database
 
 
+@pytest.fixture(autouse=True)
+def memory_keychain():
+    import keyring
+    from keyring.backend import KeyringBackend
+
+    class Backend(KeyringBackend):
+        priority = 1
+        store = {}
+
+        def get_password(self, service, username):
+            return self.store.get((service, username))
+
+        def set_password(self, service, username, password):
+            self.store[(service, username)] = password
+
+        def delete_password(self, service, username):
+            import keyring.errors
+
+            if (service, username) not in self.store:
+                raise keyring.errors.PasswordDeleteError("not stored")
+            del self.store[(service, username)]
+
+    previous = keyring.get_keyring()
+    backend = Backend()
+    backend.store = {}
+    keyring.set_keyring(backend)
+    yield backend
+    keyring.set_keyring(previous)
+
+
 class FakeSender:
     def __init__(self):
         self.sent = []

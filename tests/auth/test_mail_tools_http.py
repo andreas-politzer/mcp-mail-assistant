@@ -294,6 +294,8 @@ def test_interrupted_sends_are_marked_unknown_at_start(tmp_path):
     cfg = Config.from_env(env)
     svc = OutboxService(cfg, RecipientList.from_file(cfg.recipients_file), db, type("S", (), {"send": lambda *a: None})())
     draft_id = svc.prepare_email("owner", "Me", "s", "b")["draft_id"]
-    db.claim_for_sending(draft_id, "owner", svc.clock(), cfg.limits)  # now stuck in 'sending'
+    # stuck in 'sending' since well before this start (a send that began moments ago may belong
+    # to another running instance and is left alone)
+    db.claim_for_sending(draft_id, "owner", svc.clock() - 600, cfg.limits)
     build_app_from_env(env)
     assert db.get_draft(draft_id, "owner").status == "unknown"

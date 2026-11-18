@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Mapping, Optional, Tuple
 
 from .errors import ConfigError, ValidationError
+from .paths import default_file
 from .security.rate_limiter import RateLimits
 from .security.validation import validate_address, validate_display_name
 
@@ -31,6 +32,7 @@ class Config:
     smtp_timeout_seconds: float = 30.0
     draft_ttl_seconds: int = 86400
     draft_retention_days: int = 7
+    smtp_password_source: str = "environment"
     max_prepares_per_hour: int = 20
     max_sends_per_hour: int = 3
     max_sends_per_day: int = 10
@@ -110,9 +112,22 @@ class Config:
         if security == "none":
             user = e.get("OUTBOX_SMTP_USER", "").strip()
             password = e.get("OUTBOX_SMTP_PASSWORD", "")
+            password_source = "environment"
         else:
             user = required("OUTBOX_SMTP_USER")
-            password = required("OUTBOX_SMTP_PASSWORD")
+            password = e.get("OUTBOX_SMTP_PASSWORD", "")
+            if password:
+                password_source = "environment"
+            else:
+                from .secrets_store import get_smtp_password
+
+                password = get_smtp_password(host, user) or ""
+                password_source = "keychain"
+                if not password:
+                    raise ConfigError(
+                        "Missing required setting OUTBOX_SMTP_PASSWORD. Set it in the environment, or store "
+                        "it in the system keychain with: outbox-admin smtp-password set"
+                    )
 
         try:
             from_address = validate_address(required("OUTBOX_FROM_ADDRESS"))
@@ -125,12 +140,13 @@ class Config:
             smtp_port=port,
             smtp_user=user,
             smtp_password=password,
+            smtp_password_source=password_source,
             smtp_security=security,
             from_address=from_address,
             from_name=from_name,
             smtp_helo=(e.get("OUTBOX_SMTP_HELO", "").strip() or None),
-            recipients_file=Path(e.get("OUTBOX_RECIPIENTS_FILE", "recipients.json")),
-            db_path=Path(e.get("OUTBOX_DB_PATH", "outbox.db")),
+            recipients_file=Path(e.get("OUTBOX_RECIPIENTS_FILE", "").strip() or default_file(e, "recipients.json")),
+            db_path=Path(e.get("OUTBOX_DB_PATH", "").strip() or default_file(e, "outbox.db")),
             smtp_timeout_seconds=number("OUTBOX_SMTP_TIMEOUT_SECONDS", 30.0, float),
             draft_ttl_seconds=number("OUTBOX_DRAFT_TTL_SECONDS", 86400),
             draft_retention_days=number("OUTBOX_DRAFT_RETENTION_DAYS", 7),
