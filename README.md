@@ -55,7 +55,7 @@ The everyday experience is a natural conversation with Claude: you say who gets 
 
 ## How it works
 
-1. `list_recipients` shows who may receive mail (the active entries of the recipient registry in the database; `recipients.json` is imported once on the first start). `suggest_recipient` puts a new contact on a waiting list and `list_suggestions` shows its status. Only the user can approve a suggestion, with the admin command line `outbox-admin` outside the chat; no tool can.
+1. `list_recipients` shows who may receive mail (the active entries of the recipient registry in the database; `recipients.json` is imported once on the first start). `suggest_recipient` puts a new contact on a waiting list and `list_suggestions` shows its status. Only the user can approve a suggestion, outside the chat, with the admin command line `outbox-admin` or with the admin API and the desktop app; no tool can.
 2. `prepare_email(recipient, subject, text)` stores an **immutable draft** and returns a random draft ID. Nothing is sent.
 3. `send_email(draft_id)` makes a single send attempt for exactly that draft. It is never retried automatically.
 4. `cancel_draft(draft_id)` discards a pending draft.
@@ -73,18 +73,27 @@ What the server enforces by itself:
 
 ## Honest limits
 
-**The server cannot prove that a human said "yes".** The final confirmation of a send happens in the conversation with the assistant. If the assistant is tricked (for example by a malicious web page or document containing instructions), it could call both `prepare_email` and `send_email` itself, and the server cannot tell the difference.
+**The assistant can prepare an email. It cannot approve a send to an external recipient.** What the server can enforce, what it can prove and what stays outside its control differs by recipient type:
+
+| | Own recipient | External recipient |
+| --- | --- | --- |
+| Who confirms the send | You, with a "yes" in the chat | You, with a passkey on a separate page, for this exact draft |
+| Enforced by the server | Allow-list, limits, single attempt, audit log | The same, plus: no send without the approval, which works once |
+| Provable | Nothing about the "yes" | That someone who could unlock the registered passkey approved this draft |
+| Not provable | That a human really said "yes" | That the owner read the text |
+
+**For your own recipients the server cannot prove that a human said "yes".** The final confirmation of a send happens in the conversation with the assistant. If the assistant is tricked (for example by a malicious web page or document containing instructions), it could call both `prepare_email` and `send_email` itself, and the server cannot tell the difference.
 
 What a tricked assistant can and cannot do today:
 
-- It **can** send mail to any approved recipient, with attachments the rules already allow, within the send limits.
-- It **cannot** add recipients, unblock addresses, open folders or raise limits. Those changes exist only in the admin API, which listens on the loopback interface only and has its own passphrase.
+- It **can** send mail to recipients marked `own`, with attachments the rules already allow, within the send limits.
+- It **cannot** send to an `external` recipient without your passkey approval of that exact draft (see below), and it cannot add recipients, unblock addresses, open folders or raise limits. Those changes exist only in the admin API, which listens on the loopback interface only and has its own passphrase.
 
-A mail to one of the owner's own mailboxes can also be forwarded or affect other people, so the planned distinction between own and other recipients ranks the risk; it is not a hard boundary. The allow-list, the limits and the audit log reduce the damage, but they do not remove this risk. "Nothing is sent without your explicit yes" describes the **intended flow**, not a property the server enforces.
+A mail to one of the owner's own mailboxes can also be forwarded or affect other people, so the distinction between own and external recipients ranks the risk; it is not a hard boundary. The allow-list, the limits and the audit log reduce the damage, but they do not remove this risk. "Nothing is sent without your explicit yes" describes the **intended flow**, not a property the server enforces.
 
-**Approval outside the chat (built, not yet in daily use).** Every recipient is either `own` or `external`. For an `external` recipient, `send_email` does nothing until the owner has approved exactly that draft with a passkey (WebAuthn, user verification required) on a separate page of the public process. The approval covers recipient, subject, full text and attachments as shown on the approval page, works once and ends with the draft (ten minutes by default). The assistant gets the link but cannot approve. Own addresses keep the flow above ("yes" in the chat). Without `OUTBOX_APPROVAL_HOST` or without a registered passkey, nothing can be sent to external recipients. See [decision 0006](docs/decisions/0006-approval-outside-the-chat.md).
+**Approval outside the chat (built and tested, not yet in daily use).** Every recipient is either `own` or `external`. For an `external` recipient, `send_email` does nothing until the owner has approved exactly that draft with a passkey (WebAuthn, user verification required) on a separate page of the public process. The approval covers recipient, subject, full text and attachments as shown on the approval page, works once and ends with the draft (ten minutes by default). The assistant gets the link but cannot approve. Own addresses keep the flow above ("yes" in the chat). Without `OUTBOX_APPROVAL_HOST` or without a registered passkey, nothing can be sent to external recipients. See [decision 0006](docs/decisions/0006-approval-outside-the-chat.md).
 
-What this does **not** prove: that the owner read the text. It proves that someone who could unlock the registered passkey (Face ID or device code, or the cloud keychain it syncs through) approved this exact draft. Whoever controls that device or keychain can approve. Until the stage has been tested on a real server and used in daily use, the approved list should still be limited to the owner's own addresses.
+What this does **not** prove: that the owner read the text. It proves that someone who could unlock the registered passkey (Face ID or device code, or the cloud keychain it syncs through) approved this exact draft. Whoever controls that device or keychain can approve. It has been tested for real: on 18 November 2026 on a phone with Face ID against the author's own server, and twice through test instances behind two different tunnel services with a test mailbox. It is not yet in daily use, so keep the list of external recipients short until it has been.
 
 Setup: set `OUTBOX_APPROVAL_HOST` to the public host name of the server (only the name, for example `relay.example.org`; a passkey works on that host only), then run `outbox-admin passkey-enroll` on the server and open the printed one-time link on the device that should hold the passkey (at most two passkeys). `outbox-admin passkey-list` and `passkey-remove` manage them. The approval page sends the mail itself right after the passkey check, whenever you approve (a draft is valid for 24 hours), and shows whether the mail server accepted it; the assistant can ask for the status later ([decision 0009](docs/decisions/0009-approval-page-sends.md)). `OUTBOX_APPROVAL_SENDS=0` brings back the old way, where you tell the assistant and it calls `send_email`; only then the optional `OUTBOX_APPROVAL_WAIT_SECONDS` (at most 50) applies ([decision 0008](docs/decisions/0008-send-waits-for-approval.md)). Mark your own addresses with `outbox-admin scope <address> own`; new recipients start as `external`. **Local desktop use without a domain** is being developed as a laboratory state: the approval page is then served on `http://localhost` by the stdio server itself and works for the person at that computer only (not from a phone). See [decision 0007](docs/decisions/0007-local-approval-page.md).
 
@@ -96,7 +105,7 @@ A stolen SMTP password bypasses this server completely. Use a per-device passwor
 
 ## Operating rules
 
-- **Run only one server instance** (one process, one database file) for now. Starting a second instance would mark the first one's in-flight send as `unknown` at startup, and the single-use guarantee has only been designed and tested for one process.
+- **Several instances on one data folder are fine** (Claude Desktop starts two). They share one SQLite database in write-ahead mode, and a starting instance leaves a send alone that began within the SMTP timeout plus 30 seconds. Details and the known limit are under [Several instances](#several-instances).
 - **File permissions.** Keep secrets readable by your user only:
 
   ```bash
@@ -196,7 +205,7 @@ Nothing is called supported until it has been built and used on that system. The
 
 ## Security model in short
 
-- Claude can only prepare drafts and suggest recipients. Approving a recipient, allowing a file and changing a limit are possible only in the admin API, behind its own passphrase, never through the assistant's connection.
+- Claude can prepare drafts and suggest recipients. It cannot approve a send to an external recipient (that needs your passkey on a separate page), and approving a recipient, allowing a file and changing a limit are possible only in the admin API, behind its own passphrase, never through the assistant's connection.
 - A block always wins over an allowance. Names that look like secrets and hidden files are never transferred. Only `.md` and `.txt` files can be attached.
 - The admin session ends after 20 minutes without input and after 4 hours at the latest. These are the server's defaults. Shutting down the app signs you out first.
 - The activity log shows actions, not message texts, subject lines or private paths.
