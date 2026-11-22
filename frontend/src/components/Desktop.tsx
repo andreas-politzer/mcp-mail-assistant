@@ -55,7 +55,7 @@ export function WallpaperLayer({ wp, idp = 'wp', scale = 1 }: { wp: Wallpaper; i
     return (
       <div
         className="absolute inset-0 pointer-events-none"
-        style={{ backgroundImage: CLOUDS, backgroundRepeat: wp.tiled ? 'repeat' : 'no-repeat', backgroundSize: wp.tiled ? `${440 * scale}px ${330 * scale}px` : '100% 100%' }}
+        style={{ backgroundImage: `${CLOUDS}, linear-gradient(#4a86cc, #9cc9ee)`, backgroundRepeat: wp.tiled ? 'repeat, no-repeat' : 'no-repeat, no-repeat', backgroundSize: wp.tiled ? `${440 * scale}px ${330 * scale}px, 100% 100%` : '100% 100%, 100% 100%' }}
       />
     )
   }
@@ -64,6 +64,9 @@ export function WallpaperLayer({ wp, idp = 'wp', scale = 1 }: { wp: Wallpaper; i
   }
   return null
 }
+
+// Grundfarbe unter dem Hintergrund: Glas-Kacheln spiegeln sie, falls das Bild einen Moment später fertig ist.
+const BASE_COLOR: Record<WallpaperKind, string> = { teal: '#008080', water: '#1f8fd0', clouds: '#6fa6dc', dusk: '#7a2a63' }
 
 export function Desktop({
   children,
@@ -79,7 +82,7 @@ export function Desktop({
   return (
     <div
       className="fixed inset-0 overflow-hidden"
-      style={{ backgroundColor: '#008080' }}
+      style={{ backgroundColor: BASE_COLOR[wallpaper.kind] }}
       onClick={onBackgroundClick}
       onContextMenu={(e) => {
         if (e.target !== e.currentTarget) return
