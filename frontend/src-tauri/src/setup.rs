@@ -206,12 +206,19 @@ pub fn api_request(method: &str, path: &str, body: Option<Value>) -> Result<Valu
     if !matches!(method, "GET" | "POST" | "PUT") {
         return Err("Diese Anfrage ist nicht erlaubt.".into());
     }
-    if !path.starts_with("/admin/") || path.contains("..") || path.contains('\n') || path.len() > 2000 {
-        return Err("Diese Anfrage ist nicht erlaubt.".into());
+    let refuse = || Err("Diese Anfrage ist nicht erlaubt.".to_string());
+    if path.len() > 2000 || path.contains("..") || path.chars().any(|c| c.is_control()) {
+        return refuse();
     }
+    // The route is the part before "?". It may not hold "%", a backslash or "//": the program would be
+    // asked for something these checks never saw. A query may carry "%" (encoded values).
     let route = path.split('?').next().unwrap_or("");
-    if route == "/admin/login" || route == "/admin/logout" {
-        return Err("Diese Anfrage ist nicht erlaubt.".into());
+    if !route.starts_with("/admin/") || route.contains('%') || route.contains('\\') || route.contains("//") {
+        return refuse();
+    }
+    let plain = route.trim_end_matches('/').to_lowercase();
+    if plain == "/admin/login" || plain == "/admin/logout" {
+        return refuse();
     }
     Ok(serde_json::json!({ "method": method, "path": path, "body": body }))
 }
@@ -394,6 +401,12 @@ mod tests {
         assert!(api_request("GET", "/admin/../x", None).is_err());
         assert!(api_request("POST", "/admin/login", None).is_err());
         assert!(api_request("POST", "/admin/logout?x=1", None).is_err());
+        for bad in [
+            "/admin/login/", "/admin/LOGIN", "/admin//login", "//admin/login", "/admin/%6cogin", "/admin/%2e%2e/x",
+            "/admin\\login", "/admin/status\n", "/admin/status\u{0}",
+        ] {
+            assert!(api_request("POST", bad, None).is_err(), "{bad}");
+        }
     }
 
     #[test]

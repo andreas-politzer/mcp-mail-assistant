@@ -94,6 +94,10 @@ def main(
     if args.command == "api":
         from .local_api import serve
 
+        # The answers go to the real standard output only. Anything else that prints (a library, a warning)
+        # lands on the error stream and cannot break the line protocol.
+        if out is sys.stdout:
+            sys.stdout = sys.stderr
         return serve(environment, sys.stdin, out)
 
     def reply(payload: dict) -> int:

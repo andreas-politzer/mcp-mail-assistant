@@ -384,8 +384,13 @@ def test_local_api_refuses_what_is_not_admin_or_is_a_sign_in(tmp_path):
     from outbox_mcp.local_api import LocalApi
 
     api = LocalApi(_api_env(tmp_path))
-    for method, path in [("GET", "/"), ("GET", "/admin/../x"), ("POST", "/admin/login"), ("POST", "/admin/logout"), ("DELETE", "/admin/status")]:
-        assert _ask(api, method, path)["status"] == 400
+    for method, path in [
+        ("GET", "/"), ("GET", "/admin/../x"), ("POST", "/admin/login"), ("POST", "/admin/logout"), ("DELETE", "/admin/status"),
+        ("POST", "/admin/login?x=1"), ("POST", "/admin/login/"), ("POST", "/admin/LOGIN"), ("POST", "/admin//login"),
+        ("POST", "//admin/login"), ("POST", "/admin/%6cogin"), ("POST", "/admin/%2e%2e/x"), ("GET", "/admin\\login"),
+        ("GET", "/admin/status\n"), ("GET", "/admin/status\x00"),
+    ]:
+        assert _ask(api, method, path)["status"] == 400, path
     assert api.handle("nonsense")["status"] == 400
 
 
@@ -443,3 +448,34 @@ def test_the_flag_does_not_disturb_the_mail_server_configuration(env, monkeypatc
     )
     merged = _with_mailbox_file(env)
     assert merged["OUTBOX_SMTP_HOST"] == "smtp.example.org" and "password_stored" not in merged
+
+
+def test_route_check_lets_encoded_query_values_through():
+    from outbox_mcp.local_api import route_allowed
+
+    assert route_allowed("/admin/sources/x/files?cursor=a%2Fb")
+    assert route_allowed("/admin/recipients")
+    assert not route_allowed("/admin/recipients%2f..")
+
+
+def test_local_api_keeps_stray_prints_off_the_protocol(monkeypatch, tmp_path):
+    import io
+    import sys
+
+    from outbox_mcp import local_api, local_cli
+
+    real, err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", real)
+    monkeypatch.setattr(sys, "stderr", err)
+    monkeypatch.setattr(sys, "stdin", io.StringIO('{"method":"GET","path":"/admin/status"}\n'))
+
+    def noisy(self, request):
+        print("a library says hello")
+        return {"status": 200, "data": {"ok": True}}
+
+    monkeypatch.setattr(local_api.LocalApi, "handle", noisy)
+    monkeypatch.setattr(local_api.LocalApi, "__init__", lambda self, env: None)
+    assert local_cli.main(["api"], env=_api_env(tmp_path)) == 0
+    lines = [json.loads(l) for l in real.getvalue().splitlines()]
+    assert lines == [{"ready": True}, {"status": 200, "data": {"ok": True}}]
+    assert "a library says hello" in err.getvalue()

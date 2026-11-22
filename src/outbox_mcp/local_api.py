@@ -32,6 +32,23 @@ _BLOCKED = ("/admin/login", "/admin/logout")
 MAX_LINE = 24 * 1024 * 1024  # a little more than the biggest upload pass the admin application accepts
 
 
+def route_allowed(path: str) -> bool:
+    """Only the admin routes, never login or logout, and no path tricks.
+
+    The route (the part before "?") may not hold "%", a backslash, "//" or "..", and nothing may hold a
+    control character: the application would otherwise be asked for something the checks below never saw.
+    The query may carry "%" (encoded values).
+    """
+    if len(path) > 2000 or any(ord(c) < 32 or ord(c) == 127 for c in path):
+        return False
+    route = path.split("?", 1)[0]
+    if not route.startswith("/admin/") or ".." in path:
+        return False
+    if "%" in route or "\\" in route or "//" in route:
+        return False
+    return route.rstrip("/").lower() not in _BLOCKED
+
+
 async def _call(app: Any, method: str, path: str, body: Optional[bytes], token: Optional[str]) -> Tuple[int, Any]:
     """One request, handed to the ASGI application directly."""
     parts = urlsplit(path)
@@ -96,13 +113,7 @@ class LocalApi:
         if not isinstance(request, dict):
             return {"status": 400, "data": {"error": "bad_request", "message": "Unverständliche Anfrage."}}
         method, path, body = request.get("method"), request.get("path"), request.get("body")
-        if (
-            method not in METHODS
-            or not isinstance(path, str)
-            or not path.startswith("/admin/")
-            or urlsplit(path).path in _BLOCKED
-            or ".." in path
-        ):
+        if method not in METHODS or not isinstance(path, str) or not route_allowed(path):
             return {"status": 400, "data": {"error": "bad_request", "message": "Diese Anfrage ist nicht erlaubt."}}
         raw = None if body is None else json.dumps(body).encode()
         status, data = asyncio.run(_call(self._app, method, path, raw, self._token))
