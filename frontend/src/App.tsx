@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Desktop, type Wallpaper } from './components/Desktop'
 import { Taskbar } from './components/Taskbar'
 import { ConfirmDialog } from './components/ConfirmDialog'
@@ -23,6 +23,12 @@ import { ActivityTile } from './tiles/ActivityTile'
 import type { ConfirmRequest } from './core/types'
 import { Boot } from './boot/Boot'
 import { admin } from './api/admin'
+import { Wizard } from './wizard/Wizard'
+import { mockBackend, type SetupBackend } from './wizard/setupApi'
+import { tauriBackend } from './wizard/tauriBackend'
+import { PasskeysTile } from './local/PasskeysTile'
+import { tauriTransport } from './api/localTransport'
+import { mockLocalBackend, tauriLocalBackend, type LocalBackend } from './local/localApi'
 
 type WinKind = JokeKind | 'clock' | 'sticky' | 'display' | 'run'
 interface Win {
@@ -63,7 +69,7 @@ let nextWinId = 1
 
 // Order of the clickable desktop elements, back to front, when the desktop opens: the playful pieces
 // at the back, the application tiles in front. Clicking an element brings it to the front (see core/stacking.ts).
-const INITIAL_STACK = ['funki', 'clock', 'sticky', 'recipients', 'files', 'settings', 'activity', 'help']
+const INITIAL_STACK = ['funki', 'clock', 'sticky', 'recipients', 'files', 'settings', 'activity', 'passkeys', 'help']
 
 const CHAOS: JokeKind[] = ['chaos-text', 'chaos-sheet', 'chaos-net', 'chaos-note', 'chaos-404']
 
@@ -104,24 +110,33 @@ function defaultCells(): Record<string, Cell> {
   return out
 }
 
-export function DesktopApp() {
+// In the desktop app the desktop also gets the passkey tile and a "Einrichtung" button; `local` carries what they need.
+export interface LocalParts {
+  backend: LocalBackend
+  setup: SetupBackend
+  onRedoSetup: () => void
+}
+
+export function DesktopApp({ local }: { local?: LocalParts } = {}) {
   const [pending, setPending] = useState<ConfirmRequest | null>(null)
   const [showRecipients, setShowRecipients] = useState(true)
   const [showFiles, setShowFiles] = useState(true)
   const [showSettings, setShowSettings] = useState(false)
   const [showActivity, setShowActivity] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [showPasskeys, setShowPasskeys] = useState(false)
   const [selectedIcon, setSelectedIcon] = useState<string | null>(null)
   const [stack, setStack] = useState<string[]>(INITIAL_STACK)
   const front = (id: string) => setStack((prev) => raised(prev, id))
   const [cells, setCells] = useState<Record<string, Cell>>(defaultCells)
-  const [wallpaper, setWallpaper] = useState<Wallpaper>({ kind: 'teal', tiled: true })
+  const [wallpaper, setWallpaper] = useState<Wallpaper>({ kind: 'clouds', tiled: true })
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const recipientsRef = useRef<HTMLDivElement>(null)
   const filesRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
   const activityRef = useRef<HTMLDivElement>(null)
   const helpRef = useRef<HTMLDivElement>(null)
+  const passkeysRef = useRef<HTMLDivElement>(null)
     const timers = useRef<number[]>([])
 
   const [wins, setWins] = useState<Win[]>(defaultWins)
@@ -161,8 +176,22 @@ export function DesktopApp() {
     else open(a)
   }
 
+  const closeTile = (id: string) => {
+    if (id === 'recipients') setShowRecipients(false)
+    else if (id === 'files') setShowFiles(false)
+    else if (id === 'settings') setShowSettings(false)
+    else if (id === 'activity') setShowActivity(false)
+    else if (id === 'passkeys') setShowPasskeys(false)
+    else if (id === 'help') setShowHelp(false)
+  }
+
   const runStart = (c: StartCommand) => {
-    if (c === 'recipients') { setShowRecipients(true); front('recipients') }
+    if (c === 'settings') { setShowSettings(true); front('settings') }
+    else if (c === 'activity') { setShowActivity(true); front('activity') }
+    else if (c === 'passkeys') { setShowPasskeys(true); front('passkeys') }
+    else if (c === 'manual') { setShowHelp(true); front('help') }
+    else if (c === 'setup') local?.onRedoSetup()
+    else if (c === 'recipients') { setShowRecipients(true); front('recipients') }
     else if (c === 'files') { setShowFiles(true); front('files') }
     else if (c === 'chaos') startChaos()
     else if (c === 'tidy') tidy()
@@ -237,16 +266,14 @@ export function DesktopApp() {
           { id: 'files', label: 'Dateien', open: showFiles },
           { id: 'settings', label: 'Einstellungen', open: showSettings },
           { id: 'activity', label: 'Aktivität', open: showActivity },
+          ...(local ? [{ id: 'passkeys', label: 'Passkeys', open: showPasskeys }] : []),
           { id: 'help', label: 'Hilfe & Anleitung', open: showHelp },
         ]}
         onToggle={(id) => {
-          front(id)
-          if (id === 'recipients') setShowRecipients((v) => !v)
-          else if (id === 'files') setShowFiles((v) => !v)
-          else if (id === 'settings') setShowSettings((v) => !v)
-          else if (id === 'help') setShowHelp((v) => !v)
-          else setShowActivity((v) => !v)
+          front(id) // a click on a button of an open window brings it to the front
         }}
+        onClose={closeTile}
+        local={!!local}
         onCommand={runStart}
       />
 
@@ -340,6 +367,23 @@ export function DesktopApp() {
         </DraggableGlass>
       )}
 
+      {local && showPasskeys && (
+        <DraggableGlass
+          containerRef={passkeysRef}
+          zIndex={levelOf(stack, 'passkeys')}
+          onFocus={() => front('passkeys')}
+          title="Passkeys"
+          className="rounded-3xl"
+          initialPosition={{ x: startX + 100, y: 110 }}
+          initialSize={{ width: tileW, height: 380 }}
+          minSize={{ width: 340, height: 220 }}
+          collapsible
+          onClose={() => setShowPasskeys(false)}
+        >
+          <PasskeysTile ask={setPending} local={local.backend} setup={local.setup} />
+        </DraggableGlass>
+      )}
+
       {showHelp && (
         <DraggableGlass
           containerRef={helpRef}
@@ -414,10 +458,53 @@ export function DesktopApp() {
 
 // Start screen first; the desktop only appears after sign-in. If the server ends the session (idle time) or the
 // person signs out, the sign-in comes back on top of the desktop, which stays as it was.
+// The setup wizard comes first, before the sign-in. For now it runs on request (address ?wizard) with a stand-in
+// backend; the real first-start check and the Rust side follow.
+const SETUP_DONE_KEY = 'ma-setup-done'
+// In the desktop app the administration runs locally by default. Whoever uses a server with a tunnel switches once
+// ("Anmeldung am Server") and the choice is kept.
+const MODE_KEY = 'ma-mode'
+function storedMode(): 'local' | 'server' {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'server' ? 'server' : 'local'
+  } catch {
+    return 'local'
+  }
+}
+function storeMode(m: 'local' | 'server') {
+  try {
+    localStorage.setItem(MODE_KEY, m)
+  } catch {
+    /* without storage the default (local) applies at the next start */
+  }
+}
+// Set by the stand-alone demo page, which has no server behind it.
+const isDemo = () => typeof window !== 'undefined' && '__MA_WIZARD_DEMO__' in window
+const inDesktopApp = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+function wantsWizard(): boolean {
+  if (isDemo()) return true
+  // For testing: VITE_FORCE_WIZARD=1 shows the wizard at every start, in the app and in a browser.
+  if (import.meta.env.VITE_FORCE_WIZARD) return true
+  try {
+    // In the desktop app the wizard runs on a first start; in a browser only on request.
+    if (inDesktopApp()) return localStorage.getItem(SETUP_DONE_KEY) === null
+    return new URLSearchParams(window.location.search).has('wizard')
+  } catch {
+    return false
+  }
+}
+
 export default function App() {
+  const [wizard, setWizard] = useState(wantsWizard)
+  const backend: SetupBackend = useMemo(() => (inDesktopApp() ? tauriBackend() : mockBackend()), [])
   const [started, setStarted] = useState(false)
   const [booting, setBooting] = useState(true)
   const [resume, setResume] = useState(false)
+  const [mode, setMode] = useState<'local' | 'server'>(storedMode)
+  const isLocal = inDesktopApp() && mode === 'local'
+  // Set while rendering on purpose: the tiles ask the admin application as soon as they appear.
+  admin.useLocal(isLocal ? tauriTransport : null)
+  const localBackend: LocalBackend = useMemo(() => (inDesktopApp() ? tauriLocalBackend() : mockLocalBackend()), [])
 
   useEffect(
     () =>
@@ -428,11 +515,45 @@ export default function App() {
     [],
   )
 
+  const finishWizard = () => {
+    try {
+      localStorage.setItem(SETUP_DONE_KEY, '1')
+    } catch {
+      /* storage can be unavailable; the wizard is then shown again at the next start */
+    }
+    storeMode('local')
+    setMode('local')
+    setWizard(false)
+  }
+
+  if (wizard) {
+    return (
+      <Wizard backend={backend} onDone={finishWizard} onSkip={inDesktopApp() ? finishWizard : undefined} />
+    )
+  }
+
+  if (isDemo()) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center" style={{ background: 'linear-gradient(#3a6ea5, #9cc7e8)' }}>
+        <div className="p-4 text-[13px]" style={{ width: 380, background: 'var(--face)', border: '2px solid', borderColor: 'var(--bevel-light) var(--bevel-dark) var(--bevel-dark) var(--bevel-light)', color: '#1d1d2b' }}>
+          <div className="font-bold mb-2">Hier endet die Vorschau</div>
+          <div className="mb-3">In der echten App folgt jetzt die Anmeldung und danach der Desktop.</div>
+          <button className="bevel font-bold" onClick={() => setWizard(true)}>Nochmal von vorn</button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <>
-      {started && <DesktopApp />}
+      {started && (
+        <DesktopApp
+          local={isLocal ? { backend: localBackend, setup: backend, onRedoSetup: () => setWizard(true) } : undefined}
+        />
+      )}
       {booting && (
         <Boot
+          local={isLocal}
           key={resume ? 'resume' : 'first'}
           resume={resume}
           onDone={() => {

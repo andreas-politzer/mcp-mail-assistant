@@ -138,6 +138,8 @@ uv run --env-file .env outbox-admin smtp-password status   # says whether a pass
 uv run --env-file .env outbox-admin smtp-password delete
 ```
 
+On macOS the password is handled through the system program `/usr/bin/security`, so rebuilding the app never triggers a device-password dialog. The price: any process of the same user can read it without a dialog (see `docs/decisions/0010-macos-keychain-via-security.md`). `OUTBOX_KEYCHAIN_BACKEND=keyring` switches back.
+
 The entry is looked up by `OUTBOX_SMTP_HOST` and `OUTBOX_SMTP_USER`. If `OUTBOX_SMTP_PASSWORD` is set in the environment, it takes precedence, which keeps headless servers working as before. With neither, the server stops at start with a plain message and exit code 2.
 
 ### Where the data lives

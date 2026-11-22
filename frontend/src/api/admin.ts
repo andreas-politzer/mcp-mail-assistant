@@ -22,7 +22,13 @@ export interface Reply {
   data: any
 }
 
+// In the desktop app the admin application runs inside the bundled program on this computer. The window then
+// asks through this function instead of the network, and there is no sign-in and no token on this side.
+export type Transport = (method: string, path: string, body?: unknown) => Promise<Reply>
+let transport: Transport | null = null
+
 async function request(method: string, path: string, body?: unknown): Promise<Reply> {
+  if (transport) return transport(method, path, body)
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
   const res = await fetch(ADMIN_BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) })
@@ -45,7 +51,12 @@ function endSession() {
 export type Probe = 'up' | 'unreachable' | 'unexpected'
 
 export const admin = {
-  isSignedIn: () => token !== null,
+  // Switches to the local admin application (or back to the network with null).
+  useLocal(t: Transport | null) {
+    transport = t
+  },
+  isLocal: () => transport !== null,
+  isSignedIn: () => token !== null || transport !== null,
 
   // Is anything answering on the tunnel? Without a token the server answers 401, which is the healthy answer here.
   // A refused connection and an origin the server does not allow look the same to the browser (a failed fetch).

@@ -1,11 +1,12 @@
 mod local;
+mod setup;
 
 use local::{Entry, Link, Scan, SentFile, Skipped, TreeItem};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Manager, State};
 use tauri_plugin_dialog::DialogExt;
 
@@ -19,6 +20,8 @@ struct Shared {
     counter: Mutex<u64>,
     /// Serialises changes to the stored links.
     store: Mutex<()>,
+    /// The admin application of the bundled program: one child for the whole session, started on first use.
+    api: Arc<Mutex<Option<setup::ApiSession>>>,
 }
 
 impl Shared {
@@ -178,11 +181,144 @@ async fn local_tree(app: AppHandle, server_id: String, rel: String) -> Result<Ve
         .map_err(|_| "Das Lesen wurde unterbrochen.".to_string())?
 }
 
+/// Starts the bundled server program with `setup <args>` and returns its JSON answer (see setup.rs).
+async fn run_setup(app: AppHandle, args: Vec<String>, stdin_line: Option<String>) -> Result<serde_json::Value, String> {
+    let program = setup::locate(app.path().resource_dir().ok(), setup::dev_override())?;
+    let dir = data_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || setup::run(&program, &dir, &args, stdin_line.as_deref()))
+        .await
+        .map_err(|_| "Der Schritt wurde unterbrochen.".to_string())?
+}
+
+fn program_of(app: &AppHandle) -> Result<PathBuf, String> {
+    setup::locate(app.path().resource_dir().ok(), setup::dev_override())
+}
+
+/// What is already set up on this computer: mailbox settings, stored password, Claude Desktop entry.
+#[tauri::command]
+async fn setup_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    let program = program_of(&app)?;
+    run_setup(app, setup::claude_args("status", &program), None).await
+}
+
+/// Checks the sign-in at the provider and, only if it works, stores the password in the keychain.
+/// The password goes to the child process on standard input and nowhere else.
+#[tauri::command]
+async fn setup_save_mailbox(
+    app: AppHandle,
+    email: String,
+    host: String,
+    port: u16,
+    security: String,
+    password: String,
+) -> Result<serde_json::Value, String> {
+    run_setup(app, setup::save_mailbox_args(&email, &host, port, &security), Some(password)).await
+}
+
+/// Sends one test mail to the person's own address; optionally marks it as an own address.
+#[tauri::command]
+async fn setup_send_test(app: AppHandle, to: String, mark_own: bool) -> Result<serde_json::Value, String> {
+    run_setup(app, setup::send_test_args(&to, mark_own), None).await
+}
+
+/// What connecting Claude Desktop would change. Changes nothing.
+#[tauri::command]
+async fn setup_preview_claude(app: AppHandle) -> Result<serde_json::Value, String> {
+    let program = program_of(&app)?;
+    run_setup(app, setup::claude_args("preview-claude", &program), None).await
+}
+
+/// Adds or updates only the entry of this program in Claude Desktop's configuration (backup first).
+#[tauri::command]
+async fn setup_connect_claude(app: AppHandle) -> Result<serde_json::Value, String> {
+    let program = program_of(&app)?;
+    run_setup(app, setup::claude_args("connect-claude", &program), None).await
+}
+
+/// One-time link to register a passkey on the local approval page (needs Claude Desktop running the server).
+#[tauri::command]
+async fn setup_approval_link(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_setup(app, vec!["approval-link".to_string()], None).await
+}
+
+/// Local administration: the bundled program's `local` command, one JSON answer. No port, no token.
+/// Only the actions listed in `setup::local_admin_args` get through.
+#[tauri::command]
+async fn local_admin(
+    app: AppHandle,
+    action: String,
+    reference: Option<String>,
+    name: Option<String>,
+    address: Option<String>,
+    value: Option<String>,
+    own: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let args = setup::local_admin_args(
+        &action,
+        reference.as_deref(),
+        name.as_deref(),
+        address.as_deref(),
+        value.as_deref(),
+        own.unwrap_or(false),
+    )?;
+    let program = program_of(&app)?;
+    let dir = data_dir(&app)?;
+    tauri::async_runtime::spawn_blocking(move || setup::run_command(&program, "local", &dir, &args, None))
+        .await
+        .map_err(|_| "Der Schritt wurde unterbrochen.".to_string())?
+}
+
+/// One request to the admin application of the bundled program (see `local_api.py`). The program signs in to
+/// itself; the window never sees a token. Starts the child on first use and again if it has ended.
+#[tauri::command]
+async fn local_api(
+    app: AppHandle,
+    state: State<'_, Shared>,
+    method: String,
+    path: String,
+    body: Option<serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let request = setup::api_request(&method, &path, body)?;
+    let program = program_of(&app)?;
+    let dir = data_dir(&app)?;
+    let slot = Arc::clone(&state.api);
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = slot.lock().map_err(|_| "Die lokale Verwaltung ist gestört.".to_string())?;
+        for attempt in 0..2 {
+            if guard.is_none() {
+                *guard = Some(setup::ApiSession::start(&program, &dir)?);
+            }
+            match guard.as_mut().unwrap().ask(&request) {
+                Ok(answer) => return Ok(answer),
+                Err(e) => {
+                    *guard = None; // the child is gone: a new one for the next try
+                    if attempt == 1 {
+                        return Err(e);
+                    }
+                }
+            }
+        }
+        Err("Die lokale Verwaltung antwortet nicht.".to_string())
+    })
+    .await
+    .map_err(|_| "Der Schritt wurde unterbrochen.".to_string())?
+}
+
+/// Opens the passkey enrollment link in the default browser. Refuses every other address.
+#[tauri::command]
+fn open_link(url: String) -> serde_json::Value {
+    match setup::open_in_browser(&url) {
+        Ok(()) => serde_json::json!({ "ok": true }),
+        Err(reason) => serde_json::json!({ "ok": false, "reason": reason }),
+    }
+}
+
 /// Ends the app: forgets everything held in memory (picked places, scans), then exits.
 #[tauri::command]
 fn quit_app(app: AppHandle, state: State<'_, Shared>) {
     state.pending.lock().unwrap().clear();
     state.scans.lock().unwrap().clear();
+    *state.api.lock().unwrap() = None;
     app.exit(0);
 }
 
@@ -199,6 +335,15 @@ pub fn run() {
             local_scan,
             local_read,
             local_tree,
+            setup_status,
+            setup_save_mailbox,
+            setup_send_test,
+            setup_preview_claude,
+            setup_connect_claude,
+            setup_approval_link,
+            local_admin,
+            local_api,
+            open_link,
             quit_app
         ])
         .run(tauri::generate_context!())

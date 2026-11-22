@@ -76,11 +76,13 @@ describe('the desktop', () => {
     expect(Math.max(...levels)).toBeLessThan(70)
   })
 
-  it('brings a tile to the front when it is opened from the task bar', async () => {
+  it('brings a tile to the front when it is opened from the start menu', async () => {
     render(<DesktopApp />)
     await waitFor(() => expect(tile('Empfänger')).not.toBeNull())
     fireEvent.pointerDown(clock())
-    fireEvent.click(screen.getByRole('button', { name: 'Einstellungen' }))
+    fireEvent.click(screen.getByText('✉ Start'))
+    fireEvent.click(screen.getAllByText('Mail Assistant').find((e) => e.className.includes('flex-1'))!)
+    fireEvent.click(screen.getByText('Mail-Einstellungen'))
     await waitFor(() => expect(tile('Einstellungen')).not.toBeNull())
     expect(z(tile('Einstellungen'))).toBeGreaterThan(z(clock()))
   })

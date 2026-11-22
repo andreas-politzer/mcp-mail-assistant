@@ -31,8 +31,14 @@ const OTHERS = [
 
 // The little helper: a chunky first-generation mobile phone with a face.
 // Own drawing. Click it to hear something; click again to send it away.
-export function Assistant({ right = 124, zIndex, onFocus }: { right?: number; zIndex?: number; onFocus?: () => void }) {
-  const [text, setText] = useState<string | null>(null)
+// With `hint` Funki is in guide mode (used by the setup wizard): the bubble shows that text, a click hides or
+// shows it again, and a new hint opens the bubble by itself. Without `hint` he tells jokes as before.
+export function Assistant({ right = 124, zIndex, onFocus, hint }: { right?: number; zIndex?: number; onFocus?: () => void; hint?: string }) {
+  const [joke, setJoke] = useState<string | null>(null)
+  const [hintHidden, setHintHidden] = useState(false)
+  useEffect(() => setHintHidden(false), [hint])
+  const text = hint !== undefined ? (hintHidden ? null : hint) : joke
+  const setText = (v: string | null) => (hint !== undefined ? setHintHidden(v === null) : setJoke(v))
   const [opened, setOpened] = useState(0)
   const [mouthOpen, setMouthOpen] = useState(false)
 
@@ -51,6 +57,7 @@ export function Assistant({ right = 124, zIndex, onFocus }: { right?: number; zI
   }, [text])
 
   const toggle = () => {
+    if (hint !== undefined) return setHintHidden((v) => !v)
     if (text !== null) return setText(null)
     setText(opened === 0 ? FIRST : OTHERS[Math.floor(Math.random() * OTHERS.length)])
     setOpened((n) => n + 1)
@@ -59,7 +66,7 @@ export function Assistant({ right = 124, zIndex, onFocus }: { right?: number; zI
   return (
     <div className="absolute flex items-end gap-2 select-none" data-stack="funki" onPointerDownCapture={onFocus} style={{ right, bottom: 48, zIndex }}>
       {text !== null && (
-        <div className="relative mb-12 max-w-[220px] px-3 py-2 text-[12px] leading-snug" style={{ background: '#ffffe1', color: '#000', border: '1px solid #000', boxShadow: '2px 2px 0 rgba(0,0,0,0.35)' }}>
+        <div data-wide={hint !== undefined} className="relative mb-12 max-w-[220px] data-[wide=true]:max-w-[290px] px-3 py-2 text-[12px] leading-snug" style={{ background: '#ffffe1', color: '#000', border: '1px solid #000', boxShadow: '2px 2px 0 rgba(0,0,0,0.35)' }}>
           {text}
           <div className="absolute -right-[6px] bottom-5 w-3 h-3 rotate-45" style={{ background: '#ffffe1', borderTop: '1px solid #000', borderRight: '1px solid #000' }} />
         </div>

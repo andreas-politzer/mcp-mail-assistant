@@ -45,7 +45,7 @@ describe('recipients against the real admin API', () => {
     expect(asks.length).toBe(0)
   })
 
-  it('blocks for good, unblocks after a confirmation, and a blocked address cannot be added', async () => {
+  it('blocks for good, unblocks after a confirmation back to approved, and a blocked address cannot be added', async () => {
     await api('POST', '/admin/recipients', { name: 'Block Me', address: 'blockme@example.org', aliases: [] })
     mount()
     const row = await screen.findByTestId('recipient-blockme@example.org')
@@ -63,7 +63,7 @@ describe('recipients against the real admin API', () => {
     fireEvent.click(within(blocked).getByText('Sperre aufheben'))
     expect((await nextAsk()).title).toBe('Sperre aufheben?')
     await confirmLast()
-    await waitFor(async () => expect(await statusOf('blockme@example.org')).toBe('removed'))
+    await waitFor(async () => expect(await statusOf('blockme@example.org')).toBe('active'))
   })
 
   it('removes a recipient after a confirmation', async () => {

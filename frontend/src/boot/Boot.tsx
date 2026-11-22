@@ -115,7 +115,9 @@ function Chips({ chips }: { chips: Chip[] }) {
   )
 }
 
-export function Boot({ resume, onDone }: { resume: boolean; onDone: () => void }) {
+// `local`: the admin application runs inside this app. The same show runs, the check asks that application, and there
+// is no tunnel and no sign-in.
+export function Boot({ resume, onDone, local = false }: { resume: boolean; onDone: () => void; local?: boolean }) {
   const [scene, setScene] = useState<Scene>(resume ? 'welcome' : 'power')
   const [chips, setChips] = useState<Chip[]>([])
   const [tunnelOk, setTunnelOk] = useState(false)
@@ -145,6 +147,20 @@ export function Boot({ resume, onDone }: { resume: boolean; onDone: () => void }
   // Is the tunnel up? Sets the tunnel state and a chip.
   const checkTunnel = async (id: number) => {
     setBlock(null)
+    if (local) {
+      const s = await admin.status()
+      if (id !== run.current) return
+      if (s.status === 200) {
+        put(id, { id: 'tunnel', label: 'Verbindung', detail: 'Programm in dieser App', mark: 'ok' })
+        setTunnelOk(true)
+      } else {
+        const why = s.data?.message ?? `HTTP ${s.status}`
+        put(id, { id: 'tunnel', label: 'Verbindung', detail: 'keine Antwort', mark: 'fail' })
+        setBlockWhy(String(why))
+        setBlock('tunnel')
+      }
+      return
+    }
     const p = await admin.probe()
     if (id !== run.current) return
     if (p.result === 'up') {
@@ -279,6 +295,15 @@ export function Boot({ resume, onDone }: { resume: boolean; onDone: () => void }
     }
   }
 
+  // Local: nothing to sign in to. Once the checks are through, the welcome scene goes on by itself.
+  useEffect(() => {
+    if (local && scene === 'welcome' && tunnelOk && !block && !signedIn) {
+      setSignedIn(true)
+      void verify(run.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [local, scene, tunnelOk, block, signedIn])
+
   const byId = (id: string) => chips.find((c) => c.id === id)
   const pre = ['window', 'storage', 'tunnel'].filter((id) => byId(id) && byId(id)!.mark !== 'fail').length
   const timeFrac = skip.current ? 1 : Math.min(1, Math.max(0, (now - startAt.current) / START_MIN_MS))
@@ -286,7 +311,12 @@ export function Boot({ resume, onDone }: { resume: boolean; onDone: () => void }
 
   const panel = block && (
     <div className="absolute left-1/2 -translate-x-1/2 p-4 text-[13px] leading-6" style={{ bottom: '7vh', width: 'min(640px, 92vw)', zIndex: 30, ...FRAME }} role="alert">
-      {block === 'tunnel' ? (
+      {block === 'tunnel' && local ? (
+        <>
+          <div className="font-bold mb-1" style={{ color: '#a01020' }}>Die Verwaltung in dieser App ist nicht angesprungen.</div>
+          <p className="mb-3 text-[12px]" style={{ color: '#4a4a5a' }}>{blockWhy}</p>
+        </>
+      ) : block === 'tunnel' ? (
         <>
           <div className="font-bold mb-1" style={{ color: '#a01020' }}>Die Verwaltung ist nicht erreichbar: {blockWhy}.</div>
           <p className="mb-2">Meistens fehlt der SSH-Tunnel. Öffne ein Terminal und starte ihn. Das Terminal bleibt danach offen und still, das ist richtig:</p>
@@ -303,7 +333,7 @@ export function Boot({ resume, onDone }: { resume: boolean; onDone: () => void }
       )}
       <div className="flex gap-3">
         <button className="bevel" onClick={retry}>Erneut prüfen</button>
-        {block === 'tunnel' && <button className="bevel" onClick={copy}>{copied ? 'Kopiert' : 'Befehl kopieren'}</button>}
+        {block === 'tunnel' && !local && <button className="bevel" onClick={copy}>{copied ? 'Kopiert' : 'Befehl kopieren'}</button>}
       </div>
     </div>
   )

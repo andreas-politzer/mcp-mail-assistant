@@ -52,6 +52,45 @@ export const ENVELOPE = {
   ],
 }
 
+// Postausgang: a tray with a letter lying in it.
+export const OUTBOX = {
+  palette: { K: '#3a3a4a', W: '#ffffff', R: '#e0485a', G: '#aab0b8', D: '#656c75' },
+  rows: [
+    '...KKKKKKKK...',
+    '...KWWWWWWK...',
+    '...KKWWWWKK...',
+    '...KWKKKKWK...',
+    '...KWWWWWRK...',
+    '...KWWWWWRK...',
+    'KKKKKKKKKKKKKK',
+    'KGGGGGGGGGGGGK',
+    'KGDDDDDDDDDDGK',
+    'KGDDDDDDDDDDGK',
+    'KGGGGGGGGGGGGK',
+    'KKKKKKKKKKKKKK',
+  ],
+}
+
+// Magic wand for the setup wizard.
+export const WAND = {
+  palette: { K: '#3a3a4a', P: '#7a4bc8', Y: '#ffd23f', W: '#ffffff' },
+  rows: [
+    '..Y.......Y...',
+    '.YWY.....YWY..',
+    '..Y.....YYWYY.',
+    '..........YWY.',
+    '.......KK.Y...',
+    '......KPPK....',
+    '.....KPPK.....',
+    '....KPPK......',
+    '...KPPK.......',
+    '..KPPK........',
+    '.KPPK.........',
+    '.KPK..........',
+    '..K...........',
+  ],
+}
+
 export const BIN = {
   palette: { K: '#3a3a4a', G: '#aab0b8', D: '#656c75' },
   rows: [

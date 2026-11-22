@@ -100,6 +100,13 @@ export function RecipientsTile({ ask }: { ask: AskConfirm }) {
     if (action === 'unblock' && res.status === 200 && res.data.status === 'confirmation_required') {
       res = await server('POST', `/admin/recipients/${r.id}/unblock`, { confirmation_id: res.data.confirmation_id })
     }
+    // Lifting a block brings the address back to the approved ones, as an external address (mail to it still needs
+    // the passkey). The server itself only removes the block; the window adds the address again, which the server
+    // records as two separate steps.
+    if (action === 'unblock' && res.status === 200) {
+      const added = await server('POST', '/admin/recipients', { name: r.name, address: r.address, aliases: r.aliases })
+      return added.status === 201 || added.status === 200 ? null : problem(added)
+    }
     return res.status === 200 ? null : problem(res)
   }
   const change = async (r: Recipient, action: 'approve' | 'reject' | 'block' | 'remove' | 'unblock', done: string) => {
@@ -118,9 +125,9 @@ export function RecipientsTile({ ask }: { ask: AskConfirm }) {
   const unblock = (r: Recipient) =>
     ask({
       title: 'Sperre aufheben?',
-      body: <>Die Adresse <b>{r.address}</b> ist danach nicht mehr gesperrt. Freigegeben ist sie damit noch nicht. Du kannst sie danach selbst hinzufügen.</>,
+      body: <>Die Adresse <b>{r.address}</b> ist danach nicht mehr gesperrt und steht wieder bei den Freigegebenen, als fremde Adresse (Mails dorthin brauchen deinen Passkey).</>,
       confirmLabel: 'Sperre aufheben',
-      run: () => void change(r, 'unblock', 'Die Sperre ist aufgehoben.'),
+      run: () => void change(r, 'unblock', 'Die Sperre ist aufgehoben, die Adresse ist wieder freigegeben.'),
     })
   const block = (r: Recipient) =>
     ask({

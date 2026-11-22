@@ -17,6 +17,41 @@ _SECURITY_MODES = ("starttls", "ssl", "none")
 _DEFAULT_PORTS = {"starttls": 587, "ssl": 465}
 
 
+_MAILBOX_KEYS = (
+    ("host", ("OUTBOX_SMTP_HOST",)),
+    ("port", ("OUTBOX_SMTP_PORT",)),
+    ("security", ("OUTBOX_SMTP_SECURITY",)),
+    ("email", ("OUTBOX_SMTP_USER", "OUTBOX_FROM_ADDRESS")),
+)
+
+
+def _with_mailbox_file(env: Mapping[str, str]) -> Mapping[str, str]:
+    """Mailbox settings saved by the setup wizard (mailbox.json in the data folder) fill in whatever the
+    environment leaves empty. A setting in the environment always wins. The password is never in that
+    file: it comes from the keychain. Reading it here means a change of mailbox needs no change of the
+    configuration that starts this program, and so no restart of the app that starts it."""
+    raw = (env.get("OUTBOX_DATA_DIR") or "").strip()
+    if not raw:
+        return env
+    import json
+
+    try:
+        data = json.loads((Path(raw).expanduser() / "mailbox.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return env
+    if not isinstance(data, dict):
+        return env
+    merged = dict(env)
+    for key, names in _MAILBOX_KEYS:
+        value = data.get(key)
+        if value in (None, ""):
+            continue
+        for name in names:
+            if not (merged.get(name) or "").strip():
+                merged[name] = str(value)
+    return merged
+
+
 @dataclass(frozen=True)
 class Config:
     smtp_host: str
@@ -58,7 +93,7 @@ class Config:
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "Config":
-        e = os.environ if env is None else env
+        e = _with_mailbox_file(os.environ if env is None else env)
 
         def required(name: str) -> str:
             value = e.get(name, "").strip()

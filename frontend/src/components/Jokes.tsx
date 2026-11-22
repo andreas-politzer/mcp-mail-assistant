@@ -282,8 +282,8 @@ export function Joke({ kind, ...c }: { kind: JokeKind } & Common) {
     case 'doc-oma': return <Typewriter c={c} title="Brief an Oma – Schreibmaschine" text={'Liebe Oma,\n\nich habe jetzt einen Computer, der E-Mails schreibt.\nGeschickt wird aber nur, was ich erlaube.\n\nDein Enkel'} />
     case 'doc-ideas': return <Typewriter c={c} title="Ideen für später – Schreibmaschine" text={'1. Funki ein Hütchen geben\n2. Weltherrschaft (vielleicht)\n3. Backup prüfen'} />
     case 'outbox': return <Note c={c} title="Postausgang" text="Der Postausgang ist leer. Claude schreibt nur, wenn du im Chat Ja sagst." />
-    case 'help': return <Note c={c} title="Hilfe" button="Danke" text="Hilfe? Na ja … Öffne über Start die Empfänger oder Dateien. Alles andere findest du selbst heraus. Oder du fragst Claude." />
-    case 'about': return <Note c={c} title="Über Mail Assistant" button="Schön" text="Mail Assistant · Verwaltung, Prototyp 0.0. Alle Daten sind erfunden. Gebaut mit Claude und viel Geduld." />
+    case 'help': return <Note c={c} title="Hilfe" button="Danke" text="Hilfe? Na ja … Öffne über Start die Empfänger oder Dateien. Alles andere findest du selbst heraus. Oder du fragst Claude oder Funki." />
+    case 'about': return <Note c={c} title="Über Mail Assistant" button="Schön" text="Mail Assistant · Version 0.1. Gebaut mit Claude und viel Geduld." />
     case 'solitaire': return <Note c={c} title="Kartensolitär" button="Ich schaffe das" text="Noch 47 Karten. Sie schaffen das." />
     case 'freecell': return <Note c={c} title="Freie Zellen" text="Alle Zellen sind frei. Nur Ihr Terminkalender nicht." />
     case 'hearts': return <Note c={c} title="Herzblatt" button="Mach ich" text="Sie haben noch keine Herzen gesammelt. Versuchen Sie es mit einer freundlichen Mail." />

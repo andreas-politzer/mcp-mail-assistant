@@ -9,7 +9,7 @@ Decision: recipients who are not the owner's own mailboxes require an approval t
 Condition: other recipients are not enabled until the stage is built and acceptable in daily use. A throw-away prototype outside this repository comes first.
 
 Decided and built:
-- Technology: WebAuthn passkeys (platform authenticator, discoverable, user verification required), verified server-side with `webauthn` (py_webauthn).
+- Technology: WebAuthn passkeys (discoverable, user verification required), verified server-side with `webauthn` (py_webauthn). Since 22 Nov 2026 the kind of authenticator is not restricted: Touch ID, Face ID and Windows Hello stay the default, and a computer without them can use a phone (QR code) or a USB security key. The protection is the same, because the passkey must still be unlocked by the person (user verification stays required). Before, it said "platform authenticator" only, which locked out a desktop computer without a built-in sensor.
 - Origin: the public host of the mail server itself, `https://<OUTBOX_APPROVAL_HOST>`. The passkey is bound to that host name.
 - Representation: `recipients.scope` is `own` or `external` (schema 6; existing active recipients become `own`, everything new starts `external`). Only the admin side changes it; loosening needs a confirmation.
 - Enrollment only through the admin side: a one-time link that lives ten minutes, at most two passkeys.

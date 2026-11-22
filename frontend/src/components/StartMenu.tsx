@@ -1,10 +1,14 @@
-import { useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import {
-  BIN, COFFEE, ENVELOPE, FOLDER, GLOBE, HELP, POWER, PixelSprite,
+  COFFEE, ENVELOPE, FOLDER, GLOBE, HELP, OUTBOX, POWER, WAND, PixelSprite,
 } from './PixelSprite'
 import type { JokeKind } from './Jokes'
 
-export type StartCommand = JokeKind | 'recipients' | 'files' | 'chaos' | 'tidy' | 'clock' | 'sticky' | 'display' | 'run'
+export type StartCommand =
+  | JokeKind
+  | 'recipients' | 'files' | 'chaos' | 'tidy' | 'clock' | 'sticky' | 'display' | 'run'
+  | 'passkeys' | 'activity' | 'settings' | 'manual' | 'setup'
 
 const SAYINGS = [
   'Du hast Post. Vielleicht.',
@@ -38,10 +42,29 @@ const GAMES: Entry[] = [
   { id: 'chess', label: 'Schachclub' },
 ]
 
-const MENU: Entry[] = [
+// The serious corner, right above "Über Mail Assistant" and "Herunterfahren". Passkeys and the setup belong to the
+// desktop app only.
+function mailAssistant(local: boolean): Entry {
+  return {
+    key: 'ma',
+    label: 'Mail Assistant',
+    children: [
+      { id: 'recipients', label: 'Empfänger' },
+      { id: 'files', label: 'Dateien und Anhänge' },
+      ...(local ? [{ id: 'passkeys' as const, label: 'Passkeys' }] : []),
+      { id: 'activity', label: 'Aktivität' },
+      { id: 'settings', label: 'Mail-Einstellungen' },
+      'sep',
+      { id: 'manual', label: 'Hilfe und Anleitung' },
+      ...(local ? ['sep' as const, { id: 'setup' as const, label: 'Einrichtungs-Wizard …', sprite: WAND }] : []),
+    ],
+  }
+}
+
+const menu = (local: boolean): Entry[] => [
   { id: 'recipients', label: 'Meine Empfänger', sprite: ENVELOPE },
   { id: 'files', label: 'Meine Dateien', sprite: FOLDER },
-  { id: 'outbox', label: 'Postausgang', sprite: BIN },
+  { id: 'outbox', label: 'Postausgang', sprite: OUTBOX },
   { id: 'internet', label: 'Internet-Erkunder', sprite: GLOBE },
   'sep',
   {
@@ -77,6 +100,7 @@ const MENU: Entry[] = [
   { id: 'help', label: 'Hilfe? Na ja …', sprite: HELP },
   { id: 'run', label: 'Ausführen …' },
   'sep',
+  mailAssistant(local),
   { id: 'about', label: 'Über Mail Assistant' },
   { id: 'shutdown', label: 'Herunterfahren …', sprite: POWER },
 ]
@@ -92,6 +116,26 @@ const SEP = (
   <div className="h-px mx-1 my-0.5" style={{ background: 'var(--bevel-dark)', boxShadow: '0 1px 0 #fff' }} />
 )
 const HOVER = 'hover:bg-[#0a246a] hover:text-white'
+
+// A sub menu opens to the right of its row. If it would reach under the task bar, it moves up until its last row
+// is visible, as the old menus did.
+function SubMenu({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [shift, setShift] = useState(0)
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const limit = window.innerHeight - 44 // the task bar is 36 high
+    const over = rect.bottom + shift - limit
+    if (over > 0) setShift(Math.min(over, Math.max(0, rect.top + shift - 32))) // never above the top strip
+  }, [shift])
+  return (
+    <div ref={ref} className="absolute py-1" style={{ left: '100%', top: -4 - shift, width: 210, zIndex: 92, maxHeight: 'calc(100vh - 80px)', overflowY: 'auto', ...PANEL }}>
+      {children}
+    </div>
+  )
+}
 
 interface ListProps {
   entries: Entry[]
@@ -122,9 +166,9 @@ function List({ entries, depth, open, setOpen, run }: ListProps) {
                 <span>▸</span>
               </button>
               {isOpen && (
-                <div className="absolute py-1" style={{ left: '100%', top: -4, width: 210, zIndex: 92, ...PANEL }}>
+                <SubMenu>
                   <List entries={e.children} depth={depth + 1} open={open} setOpen={setOpen} run={run} />
-                </div>
+                </SubMenu>
               )}
             </div>
           )
@@ -146,7 +190,7 @@ function List({ entries, depth, open, setOpen, run }: ListProps) {
 }
 
 // Start menu in the classic style: grey panel, vertical title strip, cascading sub menus.
-export function StartMenu({ onCommand, onClose }: { onCommand: (c: StartCommand) => void; onClose: () => void }) {
+export function StartMenu({ onCommand, onClose, local = false }: { onCommand: (c: StartCommand) => void; onClose: () => void; local?: boolean }) {
   const [saying] = useState(() => SAYINGS[Math.floor(Math.random() * SAYINGS.length)])
   const [open, setOpen] = useState<string[]>([])
   const run = (id: StartCommand) => {
@@ -165,7 +209,7 @@ export function StartMenu({ onCommand, onClose }: { onCommand: (c: StartCommand)
         <div className="flex-1 py-1">
           <div className="px-2 py-1 text-[11px] italic opacity-80" onMouseEnter={() => setOpen([])}>Willkommen zurück, Internetreisender!</div>
           {SEP}
-          <List entries={MENU} depth={0} open={open} setOpen={setOpen} run={run} />
+          <List entries={menu(local)} depth={0} open={open} setOpen={setOpen} run={run} />
           <div className="px-2 pt-1 pb-0.5 text-[10px] italic opacity-70 border-t border-black/20 mt-1" onMouseEnter={() => setOpen([])}>{saying}</div>
         </div>
       </div>

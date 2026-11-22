@@ -33,7 +33,6 @@ from webauthn import (
 )
 from webauthn.helpers import options_to_json
 from webauthn.helpers.structs import (
-    AuthenticatorAttachment,
     AuthenticatorSelectionCriteria,
     PublicKeyCredentialDescriptor,
     ResidentKeyRequirement,
@@ -224,7 +223,6 @@ class ApprovalService:
             challenge=challenge,
             exclude_credentials=existing or None,
             authenticator_selection=AuthenticatorSelectionCriteria(
-                authenticator_attachment=AuthenticatorAttachment.PLATFORM,
                 resident_key=ResidentKeyRequirement.REQUIRED,
                 user_verification=UserVerificationRequirement.REQUIRED,
             ),
