@@ -142,7 +142,7 @@ The entry is looked up by `OUTBOX_SMTP_HOST` and `OUTBOX_SMTP_USER`. If `OUTBOX_
 
 ### Where the data lives
 
-By default the database and the other files sit under their relative names in the working directory. For a desktop account set one absolute folder, `OUTBOX_DATA_DIR`: the database (`outbox.db`), the sign-in database (`auth.db`) and the recipients file (`recipients.json`) then live inside it, and the folder is created with mode `0700`. A path set for a single file still wins for that file. The folder must be absolute, because Claude Desktop starts servers from `/`; the program itself can be installed anywhere and moved later.
+By default the database and the other files sit under their relative names in the working directory. For a desktop account set one absolute folder, `OUTBOX_DATA_DIR`: the database (`outbox.db`), the sign-in database (`auth.db`) and the recipients file (`recipients.json`) then live inside it, and the folder is created with mode `0700`. A path set for a single file still wins for that file. The admin API (`outbox-admin-api`) reads the same setting, so it finds the database without `OUTBOX_DB_PATH`. The folder must be absolute, because Claude Desktop starts servers from `/`; the program itself can be installed anywhere and moved later.
 
 ### Several instances
 

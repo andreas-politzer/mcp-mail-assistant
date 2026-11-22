@@ -10,6 +10,7 @@ from typing import Mapping, Optional, Tuple
 
 from ..auth.passwords import is_valid_hash
 from ..errors import ConfigError
+from ..paths import default_file
 
 DEFAULT_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 
@@ -34,7 +35,9 @@ class AdminConfig:
         e = os.environ if env is None else env
         db = e.get("OUTBOX_DB_PATH", "").strip()
         if not db:
-            raise ConfigError("Missing required setting OUTBOX_DB_PATH.")
+            if not (e.get("OUTBOX_DATA_DIR") or "").strip():
+                raise ConfigError("Missing required setting OUTBOX_DB_PATH (or OUTBOX_DATA_DIR).")
+            db = str(default_file(e, "outbox.db"))  # the same file the mail server uses
         stored = e.get("OUTBOX_ADMIN_PASSPHRASE_HASH", "").strip()
         if not is_valid_hash(stored):
             raise ConfigError(
