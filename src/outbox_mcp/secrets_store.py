@@ -17,12 +17,15 @@ Set OUTBOX_KEYCHAIN_BACKEND=keyring to use `keyring` on macOS as well.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
-from typing import Optional
+import time
+from typing import Iterator, Optional
 
 from .errors import ConfigError
 
@@ -30,6 +33,11 @@ SERVICE = "mail-assistant"
 SECURITY = "/usr/bin/security"
 _PREFIX = "ma1:"  # stored value = prefix + hex of the UTF-8 password, so it is always plain ASCII
 _LOCK = threading.Lock()  # one keychain access at a time inside a process
+MAX_PASSWORD_BYTES = 1024
+LOCK_WAIT_SECONDS = 30.0
+READ_TIMEOUT = 30  # Claude Desktop starts the server and waits; do not hang longer than it does
+WRITE_TIMEOUT = 60
+_LOCKED_MESSAGE = "The keychain is locked. Unlock it (sign in to the Mac) and try again."
 
 
 def account_name(host: str, user: str) -> str:
@@ -53,11 +61,43 @@ def _use_security() -> bool:
     )
 
 
-def _run(args: list[str], stdin: Optional[str] = None) -> "subprocess.CompletedProcess[str]":
-    # Generous timeout: reading an item made by another program shows a device-password dialog once.
+def _lock_file() -> str:
+    folder = os.environ.get("OUTBOX_DATA_DIR", "").strip()
+    if folder and os.path.isdir(folder):
+        return os.path.join(folder, ".keychain.lock")
+    return os.path.join(tempfile.gettempdir(), f"mail-assistant-keychain-{os.getuid()}.lock")
+
+
+@contextlib.contextmanager
+def _exclusive() -> Iterator[None]:
+    """One keychain change at a time: across threads and across the processes of this app (wizard,
+    server started by Claude Desktop, command line). A second process waits briefly instead of racing."""
+    import fcntl
+
+    with _LOCK:
+        fd = os.open(_lock_file(), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            deadline = time.monotonic() + LOCK_WAIT_SECONDS
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise ConfigError("Another part of the app is using the keychain. Try again in a moment.") from None
+                    time.sleep(0.05)
+            try:
+                yield
+            finally:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _run(args: list[str], stdin: Optional[str] = None, timeout: int = WRITE_TIMEOUT) -> "subprocess.CompletedProcess[str]":
     try:
         return subprocess.run(
-            [SECURITY, *args], input=stdin, capture_output=True, text=True, timeout=120, check=False
+            [SECURITY, *args], input=stdin, capture_output=True, text=True, timeout=timeout, check=False
         )
     except subprocess.TimeoutExpired:
         raise ConfigError(
@@ -67,8 +107,16 @@ def _run(args: list[str], stdin: Optional[str] = None) -> "subprocess.CompletedP
         raise ConfigError("The keychain program could not be started.") from None
 
 
+def _not_found(done: "subprocess.CompletedProcess[str]") -> bool:
+    return done.returncode == 44 or "could not be found" in done.stderr
+
+
+def _is_locked(done: "subprocess.CompletedProcess[str]") -> bool:
+    return done.returncode == 36 or "interaction is not allowed" in done.stderr.lower()
+
+
 def _quote(value: str) -> str:
-    if re.search(r'["\\\n\r]', value):
+    if re.search(r'["\\\n\r\x00]', value) or any(ord(c) < 32 for c in value):
         raise ConfigError("The mailbox address or server contains characters the keychain cannot take.")
     return f'"{value}"'
 
@@ -85,46 +133,84 @@ def _decode_legacy(raw: str) -> str:
     return raw
 
 
-def _sec_get(account: str) -> Optional[str]:
-    done = _run(["find-generic-password", "-s", SERVICE, "-a", account, "-w"])
-    if done.returncode != 0:
-        if done.returncode == 44 or "could not be found" in done.stderr:
-            return None
-        raise ConfigError("The keychain could not be read. Unlock it and try again.")
-    raw = done.stdout.rstrip("\n")
+def _decode(raw: str) -> tuple[str, bool]:
+    """The password in a stored value, and whether it was an old `keyring` value (no prefix)."""
     if raw.startswith(_PREFIX):
         try:
-            return bytes.fromhex(raw[len(_PREFIX):]).decode("utf-8")
+            return bytes.fromhex(raw[len(_PREFIX):]).decode("utf-8"), False
         except ValueError:
             raise ConfigError("The stored password is damaged. Enter it again.") from None
-    password = _decode_legacy(raw)
-    # An item made by another program (older `keyring` entry) asks for the device password on every
-    # read by a new program. Re-save it once as our own item, then it never asks again.
-    try:
-        _sec_set(account, password)
-    except ConfigError:
-        pass
+    return _decode_legacy(raw), True
+
+
+def _sec_read(account: str) -> tuple[Optional[str], bool]:
+    """(password or None, was it an old value). Never changes anything."""
+    done = _run(["find-generic-password", "-s", SERVICE, "-a", account, "-w"], timeout=READ_TIMEOUT)
+    if done.returncode != 0:
+        if _not_found(done):
+            return None, False
+        if _is_locked(done):
+            raise ConfigError(_LOCKED_MESSAGE)
+        raise ConfigError("The keychain could not be read. Unlock it and try again.")
+    return _decode(done.stdout.rstrip("\n"))
+
+
+def _sec_get(account: str) -> Optional[str]:
+    password, legacy = _sec_read(account)
+    if password is None:
+        # Another process may be writing right now (delete, then add): look once more.
+        time.sleep(0.2)
+        password, legacy = _sec_read(account)
+    if password is not None and legacy:
+        # An item made by another program (older `keyring` entry) asks for the device password on every
+        # read by a new program. Re-save it once as our own item, then it never asks again.
+        try:
+            _sec_set(account, password, legacy=True)
+        except ConfigError:
+            pass
     return password
 
 
 def _sec_delete(account: str) -> bool:
-    done = _run(["delete-generic-password", "-s", SERVICE, "-a", account])
-    if done.returncode == 0:
-        return True
-    if done.returncode == 44 or "could not be found" in done.stderr:
-        return False
-    raise ConfigError("The keychain refused the change. Unlock it and try again.")
+    """Removes every entry of this account (a delete takes one match per call). True if any was removed."""
+    removed = False
+    for _ in range(10):
+        done = _run(["delete-generic-password", "-s", SERVICE, "-a", account])
+        if done.returncode == 0:
+            removed = True
+            continue
+        if _not_found(done):
+            return removed
+        if _is_locked(done):
+            raise ConfigError(_LOCKED_MESSAGE)
+        raise ConfigError("The keychain refused the change. Unlock it and try again.")
+    raise ConfigError("The keychain still holds entries after ten deletions. Remove them in Keychain Access.")
 
 
-def _sec_set(account: str, password: str) -> None:
-    # Delete first: an item made by another program (older `keyring` entry) cannot be updated by
-    # `security`, but it can be replaced. The password goes over stdin, never into the process list.
-    _sec_delete(account)
+def _sec_add(account: str, password: str, update: bool) -> bool:
     value = (_PREFIX + password.encode("utf-8").hex()).encode("ascii").hex()
-    line = f"add-generic-password -s {_quote(SERVICE)} -a {_quote(account)} -X {value}\n"
+    flag = "-U " if update else ""
+    line = f"add-generic-password {flag}-s {_quote(SERVICE)} -a {_quote(account)} -X {value}\n"
     _run(["-i"], stdin=line)
-    if _sec_get(account) != password:  # `security -i` hides failures in its exit code
-        raise ConfigError("The keychain refused the password.")
+    stored, legacy = _sec_read(account)  # `security -i` hides failures in its exit code
+    return stored == password and not legacy
+
+
+def _sec_set(account: str, password: str, legacy: bool = False) -> None:
+    # An item that security made itself can be updated in place: nothing is deleted, so a failure cannot
+    # lose the old password. An item made by another program (older `keyring` entry) cannot be updated;
+    # it is replaced, and the new one is written up to three times before giving up.
+    if not legacy:
+        if _sec_add(account, password, update=True):
+            return
+        current, old_value = _sec_read(account)
+        if current is not None and not old_value:
+            raise ConfigError("The keychain could not update the password. The old one is kept.")
+    _sec_delete(account)
+    for _ in range(3):
+        if _sec_add(account, password, update=False):
+            return
+    raise ConfigError("The keychain refused the password.")
 
 
 def backend_name() -> str:
@@ -145,22 +231,28 @@ def _unavailable(exc: Exception) -> ConfigError:
 def get_smtp_password(host: str, user: str) -> Optional[str]:
     """The stored password, or None when none is stored or no keychain exists."""
     if _use_security():
-        with _LOCK:
+        with _exclusive():
             return _sec_get(account_name(host, user))
     kr = _keyring()
     try:
-        return kr.get_password(SERVICE, account_name(host, user))
+        value = kr.get_password(SERVICE, account_name(host, user))
     except kr.errors.NoKeyringError:
         return None
     except kr.errors.KeyringError as exc:
         raise ConfigError(f"The keychain could not be read ({exc.__class__.__name__}). Unlock it and try again.") from None
+    if value is not None and value.startswith(_PREFIX):
+        # Written on macOS through /usr/bin/security and now read through keyring (switched back).
+        return _decode(value)[0]
+    return value
 
 
 def set_smtp_password(host: str, user: str, password: str) -> None:
     if not password:
         raise ConfigError("The password is empty.")
+    if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
+        raise ConfigError(f"The password is longer than {MAX_PASSWORD_BYTES} bytes, which the keychain step does not take.")
     if _use_security():
-        with _LOCK:
+        with _exclusive():
             _sec_set(account_name(host, user), password)
         return
     kr = _keyring()
@@ -175,7 +267,7 @@ def set_smtp_password(host: str, user: str, password: str) -> None:
 def delete_smtp_password(host: str, user: str) -> bool:
     """True when an entry was removed, False when there was none."""
     if _use_security():
-        with _LOCK:
+        with _exclusive():
             return _sec_delete(account_name(host, user))
     kr = _keyring()
     try:

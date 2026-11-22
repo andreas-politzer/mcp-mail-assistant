@@ -106,3 +106,25 @@ export async function clickRow(path: string, button: string) {
   fireEvent.click(within(row).getByText(button))
 }
 
+/**
+ * Clicks a row button and waits for the effect. A row can be replaced by the refresh that follows a
+ * synchronisation just before the click lands; the click then hits a detached element and is lost. When
+ * the expected effect does not show up, the row is looked up again and clicked again (a button that is no
+ * longer there means the first click worked).
+ */
+export async function clickRowThen(path: string, button: string, check: () => void | Promise<void>, attempts = 5) {
+  let last: unknown
+  for (let i = 0; i < attempts; i++) {
+    const row = await node(path)
+    const target = within(row).queryByText(button)
+    if (target) fireEvent.click(target)
+    try {
+      await waitFor(check, { timeout: 2000 })
+      return
+    } catch (e) {
+      last = e
+    }
+  }
+  throw last
+}
+

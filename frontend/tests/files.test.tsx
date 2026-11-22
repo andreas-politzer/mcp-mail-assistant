@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import {
-  addFolderSource, api, asks, clickRow, confirmLast, nextAsk, currentPaths, fake, makeDir, mountFiles, node,
+  addFolderSource, api, asks, clickRow, clickRowThen, confirmLast, nextAsk, currentPaths, fake, makeDir, mountFiles, node,
   openSource, realFetch, sourceByLabel, storedFiles, useSignedInServer,
 } from './support/harness'
 
@@ -30,7 +30,7 @@ async function setUp(label: string, files = PROJECT_FILES) {
 const text = (el: HTMLElement) => (el.textContent ?? '').replace(/\s+/g, ' ').trim()
 
 async function allowAndSync(dirLabel: string, folder = 'Projekte') {
-  await clickRow(folder, 'Freigeben')
+  await clickRowThen(folder, 'Freigeben', () => { expect(asks.length).toBeGreaterThan(0) })
   await confirmLast()
   fireEvent.click(await screen.findByText('Mit diesem Computer abgleichen'))
   await screen.findByText('Vorschau des Abgleichs')
@@ -74,7 +74,7 @@ describe('sources and the tree', () => {
   it('shows permissions: allow a folder, block inside it, block always wins, unblock asks first', async () => {
     await setUp('Rechte')
     const src = (await sourceByLabel('Rechte'))!
-    await clickRow('Projekte', 'Freigeben')
+    await clickRowThen('Projekte', 'Freigeben', () => { expect(asks.length).toBeGreaterThan(0) })
     expect((await nextAsk()).title).toBe('Ordner freigeben?')
     await confirmLast()
     expect(text(await node('Projekte'))).toContain('erlaubt')
@@ -82,15 +82,14 @@ describe('sources and the tree', () => {
     fireEvent.click(within(await node('Projekte')).getByLabelText('aufklappen'))
     expect(text(await node('Projekte/Sub'))).toContain('erlaubt über „Projekte“')
     // blocking is immediate and needs no confirmation
-    await clickRow('Projekte/Sub', 'Sperren')
-    await waitFor(() => expect(text(screen.getByTestId('node-Projekte/Sub'))).toContain('gesperrt'))
+    await clickRowThen('Projekte/Sub', 'Sperren', () => { expect(text(screen.getByTestId('node-Projekte/Sub'))).toContain('gesperrt') })
     await new Promise((r) => setTimeout(r, 400))
     expect(asks.length).toBe(0)
     // allowing the parent again does not undo the block below it
     const ev = await api('POST', `/admin/sources/${src.id}/evaluate`, { paths: ['Projekte/Sub/b.md', 'Projekte/a.md'] })
     expect(ev.data.results.map((r: { state: string }) => r.state)).toEqual(['denied', 'allowed'])
     // lifting the block loosens: it asks
-    await clickRow('Projekte/Sub', 'Sperre aufheben')
+    await clickRowThen('Projekte/Sub', 'Sperre aufheben', () => { expect(asks.length).toBeGreaterThan(0) })
     expect((await nextAsk()).title).toBe('Sperre aufheben?')
     await confirmLast()
     const ev2 = await api('POST', `/admin/sources/${src.id}/evaluate`, { paths: ['Projekte/Sub/b.md'] })
@@ -239,8 +238,7 @@ describe('synchronisation', () => {
     expect((await currentPaths(src.id)).sort()).toEqual(['2026 Paper.md', 'MOC.md', 'Sub/c.md'])
     expect(dir).toBeTruthy()
     // a block inside still wins, and it removes the copies at once
-    await clickRow('Sub', 'Sperren')
-    await waitFor(async () => expect((await currentPaths(src.id)).sort()).toEqual(['2026 Paper.md', 'MOC.md']))
+    await clickRowThen('Sub', 'Sperren', async () => expect((await currentPaths(src.id)).sort()).toEqual(['2026 Paper.md', 'MOC.md']))
     // blocking everything removes all copies
     fireEvent.click(within(screen.getByTestId('root-rule')).getByText('Alles sperren'))
     await waitFor(async () => expect(await currentPaths(src.id)).toEqual([]))
@@ -335,8 +333,7 @@ describe('synchronisation', () => {
     await runSync()
     const src = (await sourceByLabel('Einzel'))!
     expect(await currentPaths(src.id)).toEqual(['Plan.md'])
-    await clickRow('Plan.md', 'Sperren')
-    await waitFor(async () => expect(await currentPaths(src.id)).toEqual([]))
+    await clickRowThen('Plan.md', 'Sperren', async () => expect(await currentPaths(src.id)).toEqual([]))
     await screen.findByText(/gesperrt/)
   })
 
@@ -346,8 +343,9 @@ describe('synchronisation', () => {
     await allowAndSync('Sperre')
     await runSync()
     expect((await currentPaths(src.id)).length).toBe(2)
-    await clickRow('Projekte', 'Sperren')
-    await screen.findByText(/2 Dateien auf dem Server gelöscht/)
+    await clickRowThen('Projekte', 'Sperren', async () => {
+      await screen.findByText(/2 Dateien auf dem Server gelöscht/, undefined, { timeout: 1500 })
+    })
     expect(await currentPaths(src.id)).toEqual([])
   })
 })
