@@ -16,7 +16,7 @@ Working end to end for the author, built in stages. Be clear about what is and i
 | --- | --- |
 | Core: drafts, single send attempt per draft, recipient allow-list, limits, audit log | Built and covered by automated tests. A real test mail to the author's own address was sent through Infomaniak SMTP (STARTTLS, port 587). |
 | OAuth sign-in (authorization server and token check, [security model](docs/oauth-security.md)) | Implemented and covered by automated tests, including parallel access. The login redirect was checked once in a real Chromium browser. |
-| Remote access (HTTP transport with the sign-in wired to the mail tools) | Runs on the author's own server behind a Cloudflare Tunnel and is reachable from the internet; without a token every request is refused (checked from outside: HTTP 401). Covered by automated tests with a fake sender: drafts belong to the token's owner, a slow mail server does not block the sign-in page. See [docs/operations.md](docs/operations.md). |
+| Remote access (HTTP transport with the sign-in wired to the mail tools) | Runs on the author's own server behind a Cloudflare Tunnel and is reachable from the internet; without a token the mail endpoint refuses every request (checked from outside: HTTP 401); only the passkey approval pages are open, because the passkey is their proof. Covered by automated tests with a fake sender: drafts belong to the token's owner, a slow mail server does not block the sign-in page. See [docs/operations.md](docs/operations.md). |
 | Connection to a real assistant app (Claude custom connector) | **Used for real** on Claude desktop, on mobile in a text chat and in a live voice chat: draft, read-out, spoken confirmation, send, test mails arrived with correct umlauts. Reconnecting after a restart worked without a new sign-in. What was observed and what is still open: [docs/oauth-security.md](docs/oauth-security.md#verified-with-a-real-claude-connector-14-november-2026). |
 | Backup and restore | Hourly encrypted backup of the data directory (databases via SQLite snapshots, configuration). The first automatic run of the timer was verified, and a restore was tested once (databases open and pass `integrity_check`, config files identical). See [docs/operations.md](docs/operations.md#backup). |
 | Markdown attachments from an allowed notes folder | **Used for real**: a note was attached and sent from a voice chat, and later a recipe note from another allowed folder arrived intact (see [docs/architecture.md](docs/architecture.md)). |
@@ -57,17 +57,17 @@ The everyday experience is a natural conversation with Claude: you say who gets 
 
 1. `list_recipients` shows who may receive mail (the active entries of the recipient registry in the database; `recipients.json` is imported once on the first start). `suggest_recipient` puts a new contact on a waiting list and `list_suggestions` shows its status. Only the user can approve a suggestion, outside the chat, with the admin command line `outbox-admin` or with the admin API and the desktop app; no tool can.
 2. `prepare_email(recipient, subject, text)` stores an **immutable draft** and returns a random draft ID. Nothing is sent.
-3. `send_email(draft_id)` makes a single send attempt for exactly that draft. It is never retried automatically.
-4. `cancel_draft(draft_id)` discards a pending draft.
+3. `send_email(draft_id)` makes a single send attempt for exactly that draft. It is never retried automatically. For an `external` recipient it does not send: the owner approves the draft with a passkey on a separate page, which then sends the mail itself (see [Honest limits](#honest-limits)).
+4. `cancel_draft(draft_id)` discards a pending draft. `draft_status(draft_id)` shows where a draft stands, and `list_attachments` lists the files the user has allowed as attachments (`prepare_email` takes an optional `attachments` list). That makes eight tools in all.
 
 What the server enforces by itself:
 
 - A draft cannot be changed after it was prepared, and each draft gets only a single send attempt. (The application never changes drafts, and database triggers additionally reject changes and invalid status transitions. This guards against bugs, not against someone with write access to the database file, who could remove the triggers.)
-- Drafts expire (default 10 minutes).
+- Drafts expire (default 24 hours, `OUTBOX_DRAFT_TTL_SECONDS`).
 - Recipients must be on the allow-list; no free-form addresses, no CC/BCC, fixed sender.
 - Subject and text are checked against header injection and control characters.
 - Limits for preparing and sending (defaults: 3 sends/hour, 10/day).
-- An append-only audit log (database triggers reject updates and deletes). It stores recipient address and subject **in plain text**, but not the message text; instead it keeps a SHA-256 hash that covers recipient address, subject and text. The log is never purged. As with drafts, these triggers protect against application-level changes, not against someone with direct access to the database file, who could remove them.
+- An append-only audit log (database triggers reject updates and deletes). It stores recipient address and subject **in plain text**, but not the message text; instead it keeps a SHA-256 hash that covers recipient address, subject, text and the names and hashes of the attachments. The log is never purged. As with drafts, these triggers protect against application-level changes, not against someone with direct access to the database file, who could remove them.
 - If the result of sending is unclear (connection dropped after the message was handed over), the draft is marked `unknown` and is **never retried automatically**.
 - STARTTLS never silently falls back to plain text.
 
@@ -91,11 +91,11 @@ What a tricked assistant can and cannot do today:
 
 A mail to one of the owner's own mailboxes can also be forwarded or affect other people, so the distinction between own and external recipients ranks the risk; it is not a hard boundary. The allow-list, the limits and the audit log reduce the damage, but they do not remove this risk. "Nothing is sent without your explicit yes" describes the **intended flow**, not a property the server enforces.
 
-**Approval outside the chat (built and tested, not yet in daily use).** Every recipient is either `own` or `external`. For an `external` recipient, `send_email` does nothing until the owner has approved exactly that draft with a passkey (WebAuthn, user verification required) on a separate page of the public process. The approval covers recipient, subject, full text and attachments as shown on the approval page, works once and ends with the draft (ten minutes by default). The assistant gets the link but cannot approve. Own addresses keep the flow above ("yes" in the chat). Without `OUTBOX_APPROVAL_HOST` or without a registered passkey, nothing can be sent to external recipients. See [decision 0006](docs/decisions/0006-approval-outside-the-chat.md).
+**Approval outside the chat (built and tested, not yet in daily use).** Every recipient is either `own` or `external`. For an `external` recipient, `send_email` does nothing until the owner has approved exactly that draft with a passkey (WebAuthn, user verification required) on a separate page of the public process. The approval covers recipient, subject, full text and attachments as shown on the approval page, works once and ends with the draft (24 hours by default, `OUTBOX_DRAFT_TTL_SECONDS`). The assistant gets the link but cannot approve. Own addresses keep the flow above ("yes" in the chat). Without `OUTBOX_APPROVAL_HOST` or without a registered passkey, nothing can be sent to external recipients. See [decision 0006](docs/decisions/0006-approval-outside-the-chat.md).
 
 What this does **not** prove: that the owner read the text. It proves that someone who could unlock the registered passkey (Face ID or device code, or the cloud keychain it syncs through) approved this exact draft. Whoever controls that device or keychain can approve. It has been tested for real: on 18 November 2026 on a phone with Face ID against the author's own server, and twice through test instances behind two different tunnel services with a test mailbox. It is not yet in daily use, so keep the list of external recipients short until it has been.
 
-Setup: set `OUTBOX_APPROVAL_HOST` to the public host name of the server (only the name, for example `relay.example.org`; a passkey works on that host only), then run `outbox-admin passkey-enroll` on the server and open the printed one-time link on the device that should hold the passkey (at most two passkeys). `outbox-admin passkey-list` and `passkey-remove` manage them. The approval page sends the mail itself right after the passkey check, whenever you approve (a draft is valid for 24 hours), and shows whether the mail server accepted it; the assistant can ask for the status later ([decision 0009](docs/decisions/0009-approval-page-sends.md)). `OUTBOX_APPROVAL_SENDS=0` brings back the old way, where you tell the assistant and it calls `send_email`; only then the optional `OUTBOX_APPROVAL_WAIT_SECONDS` (at most 50) applies ([decision 0008](docs/decisions/0008-send-waits-for-approval.md)). Mark your own addresses with `outbox-admin scope <address> own`; new recipients start as `external`. **Local desktop use without a domain** is being developed as a laboratory state: the approval page is then served on `http://localhost` by the stdio server itself and works for the person at that computer only (not from a phone). See [decision 0007](docs/decisions/0007-local-approval-page.md).
+Setup: set `OUTBOX_APPROVAL_HOST` to the public host name of the server (only the name, for example `relay.example.org`; a passkey works on that host only), then run `outbox-admin passkey-enroll` on the server and open the printed one-time link on the device that should hold the passkey (at most two passkeys). `outbox-admin passkey-list` and `passkey-remove` manage them. The approval page sends the mail itself right after the passkey check, whenever you approve (a draft is valid for 24 hours), and shows whether the mail server accepted it; the assistant can ask for the status later ([decision 0009](docs/decisions/0009-approval-page-sends.md)). `OUTBOX_APPROVAL_SENDS=0` brings back the old way, where you tell the assistant and it calls `send_email`; only then the optional `OUTBOX_APPROVAL_WAIT_SECONDS` (at most 50) applies ([decision 0008](docs/decisions/0008-send-waits-for-approval.md)). Mark your own addresses with `outbox-admin scope <address> own`; new recipients start as `external`. **Local desktop use without a domain** is being developed as a laboratory state: with `OUTBOX_APPROVAL_HOST=localhost` and `OUTBOX_APPROVAL_PORT` (required, 1024 to 65535) the approval page is served on `http://localhost:<port>` by the stdio server itself and works for the person at that computer only (not from a phone). See [decision 0007](docs/decisions/0007-local-approval-page.md).
 
 The admin service binds to `127.0.0.1` in code. Whoever runs it must not create a public route to it (see [decision 0003](docs/decisions/0003-admin-access-never-through-the-public-tunnel.md)). This repository cannot check the tunnel configuration of a given installation.
 
@@ -123,6 +123,8 @@ cp .env.example .env              # fill in your SMTP settings
 cp recipients.example.json recipients.json   # imported once on the first start; later use outbox-admin
 uv run --env-file .env outbox-mcp
 ```
+
+**Before the first mail:** every recipient from `recipients.json` starts as `external`, and an `external` recipient needs a passkey approval (see [Honest limits](#honest-limits)). Without `OUTBOX_APPROVAL_HOST` and a registered passkey, nothing can be sent to them. For your own addresses, mark them once: `uv run --env-file .env outbox-admin scope you@example.org own`. Then "yes" in the chat is enough for those.
 
 Credentials belong only in `.env` (never committed; it is in `.gitignore`).
 
@@ -263,10 +265,15 @@ The tests use a fake sender and a local test SMTP server; no real mail is sent.
 src/outbox_mcp/
   admin/             admin API (`outbox-admin-api`): its own sign-in, recipients, sources, settings, activity
   server.py          MCP tools (thin shell, stdio)
+  approval/          passkey approval: enrollment and approval pages, local page for the stdio server, waiting send
   admin_cli.py       `outbox-admin`: approve, add, block recipients (outside the chat)
   http_server.py     HTTP entry point: sign-in plus the mail tools
   service.py         prepare / send / cancel logic
   config.py          settings from environment
+  paths.py           the data folder (`OUTBOX_DATA_DIR`) and the default file locations
+  secrets_store.py   SMTP password in the system keychain
+  sources.py         allowed note folders and the files offered as attachments
+  errors.py          error types shared by the modules
   security/          validation, attachment policy, recipient list, limits
   storage/           SQLite drafts, attachments, audit log, recipient registry
   mail/              message building, SMTP client
