@@ -120,3 +120,120 @@ def test_admin_status_mentions_environment_precedence():
 def test_admin_needs_host_and_user():
     code, text = _admin("smtp-password", "status", env={})
     assert code == 2
+
+
+# --- macOS: /usr/bin/security instead of keyring -------------------------------------------
+
+import re as _re
+import subprocess as _sp
+
+
+class FakeSecurity:
+    """In-memory stand-in for /usr/bin/security: add via stdin (-X hex), find -w, delete."""
+
+    def __init__(self):
+        self.items: dict[tuple[str, str], bytes] = {}
+        self.calls: list[list[str]] = []
+        self.stdin: list[str] = []
+
+    def __call__(self, args, stdin=None):
+        self.calls.append(list(args))
+        if stdin is not None:
+            self.stdin.append(stdin)
+        done = lambda code, out="", err="": _sp.CompletedProcess(args, code, out, err)
+        if args[0] == "-i":
+            m = _re.fullmatch(r'add-generic-password -s "(.*)" -a "(.*)" -X ([0-9a-f]+)\n', stdin)
+            assert m, stdin
+            self.items[(m[1], m[2])] = bytes.fromhex(m[3])
+            return done(0)
+        key = (args[args.index("-s") + 1], args[args.index("-a") + 1])
+        if args[0] == "find-generic-password":
+            if key not in self.items:
+                return done(44, err="The specified item could not be found in the keychain.")
+            data = self.items[key]
+            try:
+                text = data.decode("ascii")
+                ok = text.isprintable()
+            except UnicodeDecodeError:
+                ok = False
+            return done(0, (text if ok else data.hex()) + "\n")
+        if args[0] == "delete-generic-password":
+            if key not in self.items:
+                return done(44, err="The specified item could not be found in the keychain.")
+            del self.items[key]
+            return done(0)
+        raise AssertionError(args)
+
+
+@pytest.fixture
+def mac(monkeypatch):
+    fake = FakeSecurity()
+    monkeypatch.setattr(secrets_store.sys, "platform", "darwin")
+    monkeypatch.setattr(secrets_store.os.path, "exists", lambda p: True)
+    monkeypatch.delenv("OUTBOX_KEYCHAIN_BACKEND", raising=False)
+    monkeypatch.setattr(secrets_store, "_run", fake)
+    return fake
+
+
+def test_mac_round_trip_with_odd_characters_and_no_keyring(mac, monkeypatch):
+    from keyring.backends import fail
+    keyring.set_keyring(fail.Keyring())  # proves keyring is not touched on macOS
+    for pw in ['Äö ü"x\'$HOME \\ 12!', "abcd", "deadbeef", "plain", "ß"]:
+        secrets_store.set_smtp_password("h.example.org", "u@example.org", pw)
+        assert secrets_store.get_smtp_password("h.example.org", "u@example.org") == pw
+    assert secrets_store.backend_name() == "macos.security"
+    assert secrets_store.delete_smtp_password("h.example.org", "u@example.org") is True
+    assert secrets_store.delete_smtp_password("h.example.org", "u@example.org") is False
+    assert secrets_store.get_smtp_password("h.example.org", "u@example.org") is None
+
+
+def test_mac_password_goes_over_stdin_not_into_arguments(mac):
+    secrets_store.set_smtp_password("h.example.org", "u@example.org", "SECRET-pw")
+    assert not any("SECRET-pw" in a or "SECRET-pw".encode().hex() in a for c in mac.calls for a in c)
+    assert "SECRET-pw" not in "".join(mac.stdin)
+
+
+def test_mac_replaces_an_older_keyring_item_and_reads_legacy_values(mac):
+    account = secrets_store.account_name("h.example.org", "u@example.org")
+    mac.items[(secrets_store.SERVICE, account)] = "alt".encode()
+    assert secrets_store.get_smtp_password("h.example.org", "u@example.org") == "alt"
+    # reading migrated it: it is now our own item and reads the same
+    assert mac.items[(secrets_store.SERVICE, account)].startswith(b"ma1:")
+    assert secrets_store.get_smtp_password("h.example.org", "u@example.org") == "alt"
+    mac.items[(secrets_store.SERVICE, account)] = "Äö".encode()  # non-ASCII comes back as hex
+    assert secrets_store.get_smtp_password("h.example.org", "u@example.org") == "Äö"
+    secrets_store.set_smtp_password("h.example.org", "u@example.org", "neu")
+    assert secrets_store.get_smtp_password("h.example.org", "u@example.org") == "neu"
+
+
+def test_mac_failed_write_is_reported(mac, monkeypatch):
+    real = mac.__call__
+    monkeypatch.setattr(secrets_store, "_run", lambda a, stdin=None: _sp.CompletedProcess(a, 0, "", "") if a[0] == "-i" else real(a, stdin))
+    with pytest.raises(ConfigError):
+        secrets_store.set_smtp_password("h.example.org", "u@example.org", "x")
+
+
+def test_mac_rejects_addresses_the_keychain_cannot_quote(mac):
+    with pytest.raises(ConfigError):
+        secrets_store.set_smtp_password("h.example.org", 'u"@example.org', "x")
+
+
+def test_mac_can_be_switched_back_to_keyring(mac, monkeypatch):
+    monkeypatch.setenv("OUTBOX_KEYCHAIN_BACKEND", "keyring")
+    assert secrets_store._use_security() is False
+
+
+def test_mac_a_slow_keychain_gives_a_clear_message(mac, monkeypatch):
+    def slow(args, stdin=None):
+        raise ConfigError("The keychain did not answer in time.")
+    monkeypatch.setattr(secrets_store, "_run", slow)
+    with pytest.raises(ConfigError):
+        secrets_store.get_smtp_password("h.example.org", "u@example.org")
+
+
+def test_run_turns_a_timeout_into_a_config_error(monkeypatch):
+    def boom(*a, **k):
+        raise _sp.TimeoutExpired("security", 1)
+    monkeypatch.setattr(secrets_store.subprocess, "run", boom)
+    with pytest.raises(ConfigError, match="did not answer"):
+        secrets_store._run(["find-generic-password"])

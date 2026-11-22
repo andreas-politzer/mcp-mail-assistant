@@ -6,7 +6,9 @@ from outbox_mcp.storage.database import Database
 
 
 @pytest.fixture(autouse=True)
-def memory_keychain():
+def memory_keychain(monkeypatch):
+    # Tests must never touch the real macOS keychain: use the in-memory keyring backend everywhere.
+    monkeypatch.setenv("OUTBOX_KEYCHAIN_BACKEND", "keyring")
     import keyring
     from keyring.backend import KeyringBackend
 
