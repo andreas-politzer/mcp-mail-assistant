@@ -220,6 +220,8 @@ def test_the_bundle_entry_point_runs_setup_commands(tmp_path):
     done = subprocess.run([sys.executable, "-I", str(entry), "setup", "status"], capture_output=True, text=True, env=run_env, timeout=60)
     assert done.returncode == 0, done.stderr
     assert json.loads(done.stdout) == {"ok": True, "mailbox": None, "password_stored": False, "claude_connected": False, "passkeys": 0, "install_problem": None}
+    shown = subprocess.run([sys.executable, "-I", str(entry), "version"], capture_output=True, text=True, env=run_env, timeout=60)
+    assert shown.returncode == 0 and shown.stdout.strip() not in ("", "unknown")
     bad = subprocess.run([sys.executable, "-I", str(entry), "nope"], capture_output=True, text=True, env=run_env, timeout=60)
     assert bad.returncode == 2
 

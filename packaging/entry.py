@@ -26,10 +26,13 @@ def main() -> int:
     if command == "version":
         from importlib.metadata import PackageNotFoundError, version
 
-        try:
-            print(version("outbox-mcp"))
-        except PackageNotFoundError:
-            print("unknown")
+        for name in ("mcp-mail-assistant", "outbox-mcp"):  # the distribution is called mcp-mail-assistant
+            try:
+                print(version(name))
+                return 0
+            except PackageNotFoundError:
+                continue
+        print("unknown")
         return 0
     if command == "serve":
         from outbox_mcp.http_server import main as run

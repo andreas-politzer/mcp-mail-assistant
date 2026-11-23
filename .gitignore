@@ -28,3 +28,5 @@ dist/
 desktop-spike/
 # Claude outputs: review notes, patches and archives from the working sessions
 Claude outputs/
+frontend/src-tauri/resources/
+packaging/build/
