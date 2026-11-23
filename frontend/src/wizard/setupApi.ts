@@ -49,8 +49,15 @@ export type TunnelOutcome =
   // `url`: a Tailscale page where the person has to switch something on first.
   | { ok: false; reason: string; url?: string }
 
+export type DisableOutcome =
+  // `removed`: there was something to remove. `notes`: plain German remarks (e.g. Tailscale was not reachable).
+  | { ok: true; removed: boolean; funnel_closed: boolean; notes: string[] }
+  | { ok: false; reason: string }
+
 export interface RemoteStatus {
   enabled: boolean
+  // Any leftover of phone use, also half of it: the way back is offered as long as this is true.
+  traces: boolean
   address: string | null
   // True while only a throw-away passphrase exists (nobody can sign in yet).
   passphrase_placeholder: boolean
@@ -80,6 +87,9 @@ export interface SetupBackend {
   tunnelEnable(address: string): Promise<TunnelOutcome>
   // Phone use: is the service set up, what is its address, and is its passphrase still the throw-away one?
   remoteStatus(): Promise<RemoteStatus>
+  // The way back to "only this computer": Funnel off, service removed, phone sign-ins ended. Mailbox, recipients
+  // and passkeys stay. Safe to repeat.
+  tunnelDisable(): Promise<DisableOutcome>
   // A new sign-in passphrase for the phone, returned exactly once. Earlier sign-ins end; only its hash is stored.
   newPassphrase(): Promise<{ ok: true; passphrase: string; address: string } | { ok: false; reason: string }>
 }
@@ -89,6 +99,7 @@ const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
 // Stand-in for the browser and for tests. Password "falsch" simulates a rejected sign-in,
 // a test address starting with "fehler" simulates a failed send.
 export function mockBackend(delay = 700): SetupBackend {
+  let phoneOn = true // the demo has phone use switched on until the way back is walked
   let passkeys = 0 // the demo "registers" a passkey as soon as the link is opened
   return {
     async status() {
@@ -145,8 +156,14 @@ export function mockBackend(delay = 700): SetupBackend {
       await wait(delay)
       return { ok: true, address, passphrase_placeholder: true }
     },
+    async tunnelDisable() {
+      await wait(delay)
+      const removed = phoneOn
+      phoneOn = false
+      return { ok: true, removed, funnel_closed: removed, notes: [] }
+    },
     async remoteStatus() {
-      return { enabled: true, address: 'https://mein-mac.example.ts.net', passphrase_placeholder: true }
+      return { enabled: phoneOn, traces: phoneOn, address: 'https://mein-mac.example.ts.net', passphrase_placeholder: true }
     },
     async newPassphrase() {
       await wait(delay / 3)

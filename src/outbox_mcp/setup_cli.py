@@ -14,6 +14,7 @@
     setup remote-disable                     (stops the service, removes its files; recipients and passkeys stay)
     setup tunnel-status                      (Tailscale state and the public address; changes nothing)
     setup tunnel-enable --command PATH --url https://...      (service + Funnel + check; the URL is the confirmed one)
+    setup tunnel-disable                     (the way back: Funnel off, service removed, phone sign-ins ended)
 
 The data folder comes from OUTBOX_DATA_DIR. Exit code is 0 whenever the answer is JSON ({"ok": false,
 "reason": "..."} included); 2 for a malformed command line. The password is read from the first line of
@@ -51,6 +52,7 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("remote-disable")
     sub.add_parser("remote-status").add_argument("--command", dest="program", default="")
     sub.add_parser("tunnel-status")
+    sub.add_parser("tunnel-disable")
     sub.add_parser("passphrase-new").add_argument("--command", dest="program", required=True)
     te = sub.add_parser("tunnel-enable")
     te.add_argument("--command", dest="program", required=True)
@@ -101,6 +103,8 @@ def main(
             return reply({"ok": True, "removed": remote.disable(environment)})
         if args.command == "tunnel-status":
             return reply({"ok": True, **tunnel.status()})
+        if args.command == "tunnel-disable":
+            return reply({"ok": True, **tunnel.disable(environment)})
         if args.command == "tunnel-enable":
             return reply({"ok": True, **tunnel.enable(environment, args.program, args.url)})
         if args.command == "passphrase-new":

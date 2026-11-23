@@ -13,6 +13,10 @@ interface Reply {
   address?: string | null
   passphrase_placeholder?: boolean
   enabled?: boolean
+  traces?: boolean
+  removed?: boolean
+  funnel_closed?: boolean
+  notes?: string[]
   passphrase?: string
 }
 
@@ -71,8 +75,13 @@ export function tauriBackend(): SetupBackend {
     },
     async remoteStatus() {
       const r = (await call<Reply>('setup_remote_status')) as Reply
-      if (!r.ok) return { enabled: false, address: null, passphrase_placeholder: true }
-      return { enabled: r.enabled === true, address: r.address ?? null, passphrase_placeholder: r.passphrase_placeholder !== false }
+      if (!r.ok) return { enabled: false, traces: false, address: null, passphrase_placeholder: true }
+      return { enabled: r.enabled === true, traces: r.traces === true || r.enabled === true, address: r.address ?? null, passphrase_placeholder: r.passphrase_placeholder !== false }
+    },
+    async tunnelDisable() {
+      const r = (await call<Reply>('setup_tunnel_disable')) as Reply
+      if (!r.ok) return { ok: false as const, reason: r.reason ?? FAILED }
+      return { ok: true as const, removed: r.removed === true, funnel_closed: r.funnel_closed === true, notes: r.notes ?? [] }
     },
     async newPassphrase() {
       const r = (await call<Reply>('setup_passphrase_new')) as Reply

@@ -44,7 +44,8 @@ class Tailscale:
     """The few things the program is asked, answered the way the real one does (as far as known)."""
 
     def __init__(self, backend="Running", dns=f"{HOST}.", config=None, needs_admin=False, funnel_fails=False,
-                 funnel_json_unsupported=False):
+                 funnel_json_unsupported=False, off_fails=False, off_times_out=False, off_does_nothing=False):
+        self.off_fails, self.off_times_out, self.off_does_nothing = off_fails, off_times_out, off_does_nothing
         self.backend, self.dns, self.config = backend, dns, config if config is not None else {}
         self.needs_admin, self.funnel_fails = needs_admin, funnel_fails
         self.funnel_json_unsupported = funnel_json_unsupported
@@ -69,7 +70,18 @@ class Tailscale:
                 return Result(1, "", "error: something went wrong\nsecond line")
             self.config = serve_config()
             return Result(0, "Available on the internet:\n")
+        if rest == ["funnel", "--https=443", "off"]:
+            if self.off_times_out:
+                return Result(-1, "", "", True)
+            if self.off_fails:
+                return Result(1, "", "error: no such handler\nsecond line")
+            if not self.off_does_nothing:
+                self.config = {}
+            return Result(0, "")
         raise AssertionError(f"unexpected call {rest}")
+
+    def turned_funnel_off(self):
+        return ["funnel", "--https=443", "off"] in self.calls
 
     def started_funnel(self):
         return ["funnel", "--bg", str(remote.PORT)] in self.calls
@@ -577,3 +589,204 @@ def test_cli_reports_other_problems_without_a_link(env, program, monkeypatch):
     out = io.StringIO()
     setup_cli.main(["tunnel-enable", "--command", program, "--url", ADDRESS], env=env, stdout=out)
     assert json.loads(out.getvalue()) == {"ok": False, "reason": "Tailscale ist ausgeschaltet."}
+
+
+# --- the way back --------------------------------------------------------------------------------
+
+def read_remote_file(env):
+    return os.path.exists(os.path.join(env["OUTBOX_DATA_DIR"], remote.REMOTE_FILE))
+
+
+def switched_on(env, program, ts=None):
+    """The state after the tunnel step: service, settings file and a public Funnel."""
+    ts = ts or Tailscale()
+    lc = Launchctl()
+    enable(env, program, ts, lc)
+    assert read_remote_file(env) and remote.plist_path(env).exists() and ts.config
+    return ts
+
+
+def disable(env, ts, launchctl=None, **kw):
+    kw.setdefault("revoke", lambda e, message=None: None)
+    return tunnel.disable(env, run=ts, launchctl=launchctl or Launchctl(), uid=501, tailscale=kw.pop("tailscale", TS),
+                          platform="darwin", sleep=lambda s: None, **kw)
+
+
+def test_the_way_back_closes_the_door_first_and_removes_everything_of_ours(env, program):
+    ts = switched_on(env, program)
+    events = []
+    lc = Launchctl()
+    real = ts.__call__
+    ts_run = lambda a, t: (events.append("funnel-off") if a[1:] == ["funnel", "--https=443", "off"] else None) or real(a, t)
+
+    def launchctl(args):
+        if args[1] == "bootout":
+            events.append("bootout")
+        return lc(args)
+
+    def revoke(e, message=None):
+        events.append(("revoke", read_remote_file(e), remote.plist_path(e).exists()))
+
+    answer = tunnel.disable(env, run=ts_run, launchctl=launchctl, uid=501, tailscale=TS, platform="darwin",
+                            sleep=lambda s: None, revoke=revoke)
+    assert answer == {"removed": True, "funnel_closed": True, "notes": []}
+    # Funnel first, then the service stops, then the sign-ins end while the settings file is still there.
+    assert events == ["funnel-off", "bootout", ("revoke", True, True)]
+    assert ts.config == {} and not read_remote_file(env) and not remote.plist_path(env).exists()
+    assert os.path.exists(os.path.join(env["OUTBOX_DATA_DIR"], "mailbox.json"))  # the mailbox stays
+
+
+def test_a_private_serve_rule_of_ours_is_switched_off_too(env, program):
+    ts = Tailscale(config=serve_config(funnel=False))
+    answer = disable(env, ts)
+    assert answer["funnel_closed"] is True and ts.turned_funnel_off() and ts.config == {}
+
+
+def test_without_tailscale_the_rest_is_still_removed(env, program, monkeypatch):
+    switched_on(env, program)
+    monkeypatch.setattr(tunnel, "find_tailscale", lambda: None)
+    ts = Tailscale()
+    answer = disable(env, ts, tailscale=None)
+    assert answer["removed"] is True and answer["funnel_closed"] is False
+    assert len(answer["notes"]) == 1 and "Tailscale war nicht erreichbar" in answer["notes"][0]
+    assert ts.calls == [] and not read_remote_file(env) and not remote.plist_path(env).exists()
+
+
+@pytest.mark.parametrize("backend", ["Stopped", "NeedsLogin", "Starting"])
+def test_tailscale_that_is_off_or_signed_out_does_not_block_the_way_back(env, program, backend):
+    switched_on(env, program)
+    ts = Tailscale(backend=backend)
+    answer = disable(env, ts)
+    assert answer["removed"] is True and answer["funnel_closed"] is False and answer["notes"]
+    assert not ts.turned_funnel_off() and not read_remote_file(env) and not remote.plist_path(env).exists()
+
+
+def test_tailscale_that_cannot_be_read_does_not_block_the_way_back(env, program):
+    switched_on(env, program)
+    answer = disable(env, lambda a, t: Result(1, "", GUI_ERROR))
+    assert answer["removed"] is True and answer["notes"] and not read_remote_file(env)
+
+
+def test_somebody_elses_rule_is_never_touched(env, program):
+    switched_on(env, program)
+    other = Tailscale(config=serve_config(proxy="http://127.0.0.1:3000"))
+    answer = disable(env, other)
+    assert answer["funnel_closed"] is False and not other.turned_funnel_off()
+    assert any("nicht von Mail Assistant" in n for n in answer["notes"])
+    assert other.config == serve_config(proxy="http://127.0.0.1:3000")  # unchanged
+    assert not read_remote_file(env) and not remote.plist_path(env).exists()
+
+
+def test_a_configuration_that_is_not_understood_is_never_touched(env, program):
+    switched_on(env, program)
+    ts = Tailscale(config=[1, 2])
+    answer = disable(env, ts)
+    assert not ts.turned_funnel_off() and any("nicht lesen" in n for n in answer["notes"])
+    assert not read_remote_file(env)
+
+
+@pytest.mark.parametrize("kwargs, text", [
+    ({"off_fails": True}, "konnte den Funnel nicht ausschalten"),
+    ({"off_times_out": True}, "nicht rechtzeitig"),
+    ({"off_does_nothing": True}, "noch als eingeschaltet"),
+])
+def test_a_real_error_with_our_own_funnel_stops_before_anything_else_changes(env, program, kwargs, text):
+    switched_on(env, program)
+    ts = Tailscale(config=serve_config(), **kwargs)
+    lc = Launchctl()
+    called = []
+    with pytest.raises(SetupError, match=text) as caught:
+        disable(env, ts, lc, revoke=lambda e, message=None: called.append(1))
+    assert "nichts weiter verändert" in str(caught.value)
+    assert "bootout" not in lc.verbs() and called == []
+    assert read_remote_file(env) and remote.plist_path(env).exists()
+
+
+def test_when_ending_the_sign_ins_fails_the_files_stay_and_asking_again_finishes(env, program):
+    switched_on(env, program)
+    ts = Tailscale(config=serve_config())
+
+    def broken(e, message=None):
+        raise SetupError(message)
+
+    with pytest.raises(SetupError, match="Klicke gleich noch einmal"):
+        disable(env, ts, revoke=broken)
+    assert ts.config == {} and read_remote_file(env) and remote.plist_path(env).exists()  # door closed, files stay
+    again = disable(env, ts)
+    assert again["removed"] is True and not read_remote_file(env) and not remote.plist_path(env).exists()
+
+
+def test_asking_when_nothing_is_there_changes_nothing_and_says_so(env):
+    ts = Tailscale()
+    assert disable(env, ts) == {"removed": False, "funnel_closed": False, "notes": []}
+    assert not ts.turned_funnel_off()
+
+
+def test_a_half_finished_state_is_cleaned_up_by_the_next_click(env, program):
+    ts = switched_on(env, program)
+    os.unlink(os.path.join(env["OUTBOX_DATA_DIR"], remote.REMOTE_FILE))  # only the service file is left, and the Funnel
+    answer = disable(env, ts)
+    assert answer["removed"] is True and answer["funnel_closed"] is True and not remote.plist_path(env).exists()
+    # and a Funnel on its own, with no file at all:
+    lonely = Tailscale(config=serve_config())
+    assert disable(env, lonely) == {"removed": True, "funnel_closed": True, "notes": []}
+
+
+def test_the_way_back_can_be_walked_again_after_it_is_done(env, program):
+    ts = switched_on(env, program)
+    disable(env, ts)
+    enable(env, program, ts, Launchctl())
+    assert ts.config and read_remote_file(env) and remote.plist_path(env).exists()
+
+
+def test_the_real_ending_of_sign_ins_is_used_by_default(env, program, tmp_path):
+    from outbox_mcp.auth.store import AuthStore
+
+    db = tmp_path / "auth.db"
+    store = AuthStore(db)
+    env = {**env, "OUTBOX_OAUTH_DB_PATH": str(db)}
+    switched_on(env, program)
+    seen = []
+    original = AuthStore.revoke_all
+    AuthStore.revoke_all = lambda self: seen.append("revoked") or original(self)
+    try:
+        tunnel.disable(env, run=Tailscale(config=serve_config()), launchctl=Launchctl(), uid=501, tailscale=TS,
+                       platform="darwin", sleep=lambda s: None)
+    finally:
+        AuthStore.revoke_all = original
+    assert seen == ["revoked"] and store is not None
+
+
+def test_not_on_a_mac_nothing_is_done(env):
+    with pytest.raises(SetupError, match="nur für den Mac"):
+        tunnel.disable(env, platform="linux")
+
+
+def test_the_status_shows_a_trace_while_anything_is_left(env, program):
+    ts = Tailscale()
+    state = lambda: remote.status(env, program, run=Launchctl(), uid=501, platform="darwin")
+    assert state()["traces"] is False
+    switched_on(env, program, ts)
+    assert state()["traces"] is True
+    os.unlink(os.path.join(env["OUTBOX_DATA_DIR"], remote.REMOTE_FILE))
+    assert state()["traces"] is True and state()["enabled"] is False  # the plist is left: still offered
+    remote.plist_path(env).unlink()
+    assert state()["traces"] is False
+
+
+def test_cli_tunnel_disable_prints_one_line_of_json(env, monkeypatch):
+    monkeypatch.setattr(tunnel, "disable", lambda e: {"removed": True, "funnel_closed": True, "notes": []})
+    out = io.StringIO()
+    assert setup_cli.main(["tunnel-disable"], env=env, stdout=out) == 0
+    assert json.loads(out.getvalue()) == {"ok": True, "removed": True, "funnel_closed": True, "notes": []}
+    assert out.getvalue().count("\n") == 1
+
+
+def test_cli_tunnel_disable_reports_a_refusal_in_german(env, monkeypatch):
+    def refuse(e):
+        raise SetupError("Tailscale konnte den Funnel nicht ausschalten.")
+
+    monkeypatch.setattr(tunnel, "disable", refuse)
+    out = io.StringIO()
+    setup_cli.main(["tunnel-disable"], env=env, stdout=out)
+    assert json.loads(out.getvalue()) == {"ok": False, "reason": "Tailscale konnte den Funnel nicht ausschalten."}

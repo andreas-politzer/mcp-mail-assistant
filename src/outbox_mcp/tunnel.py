@@ -265,6 +265,16 @@ def start_funnel(run: Runner, tailscale: str) -> None:
         raise SetupError("Tailscale konnte den Funnel nicht einschalten." + _details(done.err, done.out))
 
 
+def stop_funnel(run: Runner, tailscale: str) -> None:
+    """`tailscale funnel --https=443 off`: removes only the rule on the HTTPS port, never the whole configuration
+    (`funnel reset` would also wipe rules of other programs on other ports)."""
+    done = run([tailscale, "funnel", f"--https={HTTPS_PORT}", "off"], 25.0)
+    if done.timed_out:
+        raise SetupError("Tailscale hat nicht rechtzeitig geantwortet. Es wurde nichts weiter verändert. Versuche es gleich noch einmal.")
+    if done.code != 0:
+        raise SetupError("Tailscale konnte den Funnel nicht ausschalten. Es wurde nichts weiter verändert." + _details(done.err, done.out))
+
+
 # ---------------------------------------------------------------- looking at the result
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -386,3 +396,74 @@ def enable(
         raise SetupError("Tailscale meldet den Funnel nicht als eingeschaltet. Klicke gleich noch einmal auf „Erneut prüfen“.")
     check_address(info["address"], fetch=fetch, sleep=sleep)
     return {"address": info["address"], "passphrase_placeholder": placeholder}
+
+
+# ---------------------------------------------------------------- the way back
+
+_NOTE_NO_TAILSCALE = (
+    "Tailscale war nicht erreichbar (nicht installiert, ausgeschaltet oder abgemeldet). Der Funnel wurde deshalb nicht "
+    "angefasst. Schaltest du Tailscale später wieder ein und der Funnel läuft noch, dann ist hinter der Adresse nichts mehr: "
+    "Der Hintergrunddienst ist ja entfernt."
+)
+_NOTE_FUNNEL_OTHER = "Auf der HTTPS-Freigabe von Tailscale liegt eine Regel, die nicht von Mail Assistant stammt. Sie blieb unberührt."
+_NOTE_FUNNEL_UNKNOWN = "Der Zustand der Tailscale-Freigaben ließ sich nicht lesen. Der Funnel blieb aus Vorsicht unberührt."
+
+
+def disable(
+    env: Mapping[str, str],
+    *,
+    run: Optional[Runner] = None,
+    launchctl: Optional[remote.Runner] = None,
+    uid: Optional[int] = None,
+    tailscale: Optional[str] = None,
+    platform: Optional[str] = None,
+    sleep: Callable[[float], None] = time.sleep,
+    port_busy: Optional[Callable[[], bool]] = None,
+    revoke: Optional[Callable[..., None]] = None,
+) -> dict:
+    """The way back to "only this computer". The order: first the door to the outside (Funnel), then the service,
+    then every phone sign-in, last the settings file.
+
+    - Tailscale not there, off or signed out: the Funnel step is skipped (said in `notes`), the rest runs, so
+      nobody is stuck with a service they cannot remove.
+    - A rule on the HTTPS port that is not ours, or one we cannot read, is never touched.
+    - A real error while switching OUR Funnel off stops everything before anything else changed.
+    - Every step can be repeated; a half-finished run is finished by asking again.
+    Kept: mailbox, recipients, passkeys (also the phone's: the passkey list can remove it), Tailscale itself."""
+    run = run or _run
+    _require_mac(platform)
+    notes = []
+    closed = False
+    tailscale = tailscale or find_tailscale()
+    if tailscale is None:
+        notes.append(_NOTE_NO_TAILSCALE)
+    else:
+        info = inspect(run, tailscale)
+        if info["state"] != "ready":
+            notes.append(_NOTE_NO_TAILSCALE)
+        else:
+            host = info["address"].split("//", 1)[1]
+            funnel = funnel_state(run, tailscale, host)
+            if funnel in ("ours", "ours_private"):
+                stop_funnel(run, tailscale)
+                if funnel_state(run, tailscale, host) != "off":
+                    raise SetupError("Tailscale meldet den Funnel noch als eingeschaltet. Es wurde nichts weiter verändert. Versuche es gleich noch einmal.")
+                closed = True
+            elif funnel == "other":
+                notes.append(_NOTE_FUNNEL_OTHER)
+            elif funnel == "unknown":
+                notes.append(_NOTE_FUNNEL_UNKNOWN)
+
+    drop = revoke or remote._revoke_logins
+    removed = remote.disable(
+        env,
+        run=launchctl,
+        uid=uid,
+        platform="darwin",
+        sleep=sleep,
+        port_busy=port_busy or remote._port_busy,
+        before_removal=lambda: drop(
+            env, "Die Anmeldungen am Handy lassen sich nicht beenden. Der Dienst ist gestoppt. Klicke gleich noch einmal."
+        ),
+    )
+    return {"removed": bool(removed or closed), "funnel_closed": closed, "notes": notes}

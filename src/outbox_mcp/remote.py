@@ -291,9 +291,12 @@ def disable(
     platform: Optional[str] = None,
     sleep: Callable[[float], None] = time.sleep,
     port_busy: Callable[[], bool] = _port_busy,
+    before_removal: Optional[Callable[[], None]] = None,
 ) -> bool:
     """Stop the service and remove its files. Recipients, passkeys and the mailbox stay.
     Returns only when the service is really gone and its port is free again.
+    `before_removal` runs once the service is stopped and before any file goes; if it raises, the files stay,
+    so asking again finishes the job.
     True when there was something to remove; asking twice is not an error."""
     run = run or _run
     _require_mac(platform)
@@ -303,6 +306,8 @@ def disable(
     _bootout(run, uid)
     if not _wait_until_stopped(run, uid, sleep, port_busy):
         raise SetupError("Der Hintergrunddienst hat sich nicht rechtzeitig beendet. Versuche es in einem Moment noch einmal.")
+    if before_removal is not None:
+        before_removal()
     for path in (plist, _folder(env) / REMOTE_FILE):
         try:
             path.unlink()
@@ -346,6 +351,8 @@ def status(
             running = any(line.strip() == "state = running" for line in (done.stdout or "").splitlines())
     return {
         "supported": True,
+        # Any leftover of phone use (also half of it): the way back is offered as long as one is there.
+        "traces": plist.exists() or data is not None,
         "enabled": configured and program is not None,
         "loaded": loaded,
         "running": running,
@@ -368,7 +375,7 @@ def generate_passphrase() -> str:
     return "-".join("".join(secrets.choice(PASSPHRASE_ALPHABET) for _ in range(5)) for _ in range(5))
 
 
-def _revoke_logins(env: Mapping[str, str]) -> None:
+def _revoke_logins(env: Mapping[str, str], failure: Optional[str] = None) -> None:
     """Forget every connector sign-in and token (Claude on the phone must sign in again). Nothing to do while
     nobody has ever signed in (no database yet)."""
     from .auth.store import AuthStore
@@ -381,7 +388,7 @@ def _revoke_logins(env: Mapping[str, str]) -> None:
         AuthStore(path).revoke_all()
     except Exception:
         raise SetupError(
-            "Die bisherigen Anmeldungen am Handy lassen sich nicht beenden. Die Passphrase wurde nicht geändert."
+            failure or "Die bisherigen Anmeldungen am Handy lassen sich nicht beenden. Die Passphrase wurde nicht geändert."
         ) from None
 
 

@@ -277,6 +277,13 @@ async fn setup_tunnel_enable(app: AppHandle, address: String) -> Result<serde_js
     run_setup(app, setup::tunnel_enable_args(&program, &address), None).await
 }
 
+/// The way back to "only this computer": Funnel off, background service removed, phone sign-ins ended.
+/// Mailbox, recipients and passkeys stay.
+#[tauri::command]
+async fn setup_tunnel_disable(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_setup(app, vec!["tunnel-disable".to_string()], None).await
+}
+
 /// Local administration: the bundled program's `local` command, one JSON answer. No port, no token.
 /// Only the actions listed in `setup::local_admin_args` get through.
 #[tauri::command]
@@ -383,6 +390,7 @@ pub fn run() {
             setup_passphrase_new,
             setup_tunnel_status,
             setup_tunnel_enable,
+            setup_tunnel_disable,
             local_admin,
             local_api,
             open_link,

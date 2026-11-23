@@ -98,10 +98,26 @@ describe('the desktop backend for the phone sign-in', () => {
 
   it('reads the phone state and treats anything unclear as "not set up, throw-away passphrase"', async () => {
     invoke.mockResolvedValue({ ok: true, enabled: true, address: 'https://mac.example.ts.net', passphrase_placeholder: false })
-    expect(await tauriBackend().remoteStatus()).toEqual({ enabled: true, address: 'https://mac.example.ts.net', passphrase_placeholder: false })
+    expect(await tauriBackend().remoteStatus()).toEqual({ enabled: true, traces: true, address: 'https://mac.example.ts.net', passphrase_placeholder: false })
     invoke.mockResolvedValue({ ok: true, enabled: false, address: null })
-    expect(await tauriBackend().remoteStatus()).toEqual({ enabled: false, address: null, passphrase_placeholder: true })
+    expect(await tauriBackend().remoteStatus()).toEqual({ enabled: false, traces: false, address: null, passphrase_placeholder: true })
     invoke.mockRejectedValue(new Error('boom'))
-    expect(await tauriBackend().remoteStatus()).toEqual({ enabled: false, address: null, passphrase_placeholder: true })
+    expect(await tauriBackend().remoteStatus()).toEqual({ enabled: false, traces: false, address: null, passphrase_placeholder: true })
+  })
+  it('reads a leftover of phone use even when the service is not set up', async () => {
+    invoke.mockResolvedValue({ ok: true, enabled: false, traces: true, address: null, passphrase_placeholder: true })
+    expect((await tauriBackend().remoteStatus()).traces).toBe(true)
+  })
+
+  it('walks the way back through one command and passes the program\'s answer on', async () => {
+    invoke.mockResolvedValue({ ok: true, removed: true, funnel_closed: true, notes: ['Hinweis.'] })
+    expect(await tauriBackend().tunnelDisable()).toEqual({ ok: true, removed: true, funnel_closed: true, notes: ['Hinweis.'] })
+    expect(invoke).toHaveBeenCalledWith('setup_tunnel_disable', undefined)
+    invoke.mockResolvedValue({ ok: true })
+    expect(await tauriBackend().tunnelDisable()).toEqual({ ok: true, removed: false, funnel_closed: false, notes: [] })
+    invoke.mockResolvedValue({ ok: false, reason: 'Tailscale konnte den Funnel nicht ausschalten.' })
+    expect(await tauriBackend().tunnelDisable()).toEqual({ ok: false, reason: 'Tailscale konnte den Funnel nicht ausschalten.' })
+    invoke.mockRejectedValue('Der Schritt wurde unterbrochen.')
+    expect(await tauriBackend().tunnelDisable()).toEqual({ ok: false, reason: 'Der Schritt wurde unterbrochen.' })
   })
 })

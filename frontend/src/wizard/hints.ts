@@ -11,6 +11,7 @@ export const HINTS: Record<StepId, string[]> = {
   where: [
     'Willkommen! Für fast alle passt die erste Antwort: „Nur an diesem Computer“. Sie braucht keine Adresse im Internet und kein zweites Konto.',
     'Vom Handy aus geht später auch. Dafür braucht dein Computer einen Tunnel, also eine Adresse, unter der das Internet ihn findet. Das richten wir dann in Ruhe ein.',
+    'Und es geht auch wieder zurück: Wähle „Nur an diesem Computer“. Ist noch ein Handy-Zugang eingerichtet, kannst du ihn dort abschalten.',
   ],
   mailbox: [
     'Das ist die Adresse, von der aus deine Mails rausgehen. Nicht die deines Chefs. Auch nicht meine, ich bin ein Telefon.',

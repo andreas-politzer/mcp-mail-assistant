@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Assistant } from '../components/Assistant'
 import { HINTS, STEPS, STEPS_PHONE, type StepId } from './hints'
 import { PRESETS, guessPreset, looksLikeAddress, presetFor, unsupportedReason, type Security } from './presets'
-import type { SetupBackend, TunnelStatus } from './setupApi'
+import type { RemoteStatus, SetupBackend, TunnelStatus } from './setupApi'
 
 // Setup wizard in the classic window style. It comes before the sign-in: a new installation has neither a
 // server nor a passphrase yet. Whoever also wants the phone gets one more step: the tunnel (Tailscale Funnel).
@@ -63,6 +63,11 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   const [phoneKeysBefore, setPhoneKeysBefore] = useState(0)
   const [phoneKeyDone, setPhoneKeyDone] = useState(false)
   const [phoneKeyStatus, setPhoneKeyStatus] = useState<Status>(IDLE)
+  const [phoneState, setPhoneState] = useState<RemoteStatus | null>(null)
+  const [offConfirmed, setOffConfirmed] = useState(false)
+  const [offStatus, setOffStatus] = useState<Status>(IDLE)
+  const [offNotes, setOffNotes] = useState<string[]>([])
+  const [offDone, setOffDone] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
   const [copyFailed, setCopyFailed] = useState(false)
   const pwInput = useRef<HTMLInputElement>(null)
@@ -132,6 +137,15 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
       setPasskeys(st.passkeys)
       if (st.passkeys > 0) setPkStatus({ kind: 'ok', text: 'Ein Passkey ist schon registriert.' })
     })
+    return () => {
+      alive = false
+    }
+  }, [backend])
+
+  // Is something of the phone use still there? Then the way back is offered on the first page.
+  useEffect(() => {
+    let alive = true
+    void backend.remoteStatus().then((r) => alive && setPhoneState(r))
     return () => {
       alive = false
     }
@@ -220,6 +234,38 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
       setTunnelResult({ kind: 'fail', text: r.reason })
       setTunnelAdmin(r.url ?? null)
     }
+  }
+
+  // The way back to "only this computer". Needs the tick; the program does the work in a safe order and can be
+  // asked again after an error.
+  const turnOffPhone = async () => {
+    if (!offConfirmed || offStatus.kind === 'busy') return
+    setOffStatus({ kind: 'busy' })
+    const r = await backend.tunnelDisable()
+    if (!r.ok) {
+      setOffStatus({ kind: 'fail', text: r.reason })
+      return
+    }
+    setOffNotes(r.notes)
+    setOffDone(true)
+    setOffConfirmed(false)
+    // Whatever the phone path had set up in this window is gone now; a later new setup starts clean.
+    setTunnel(null)
+    setTunnelConfirmed(false)
+    setTunnelResult(IDLE)
+    setLoginUsed(false)
+    setLoginExisting(false)
+    setPhoneAddress(null)
+    setPhoneKeyLink(null)
+    setPhoneKeyDone(false)
+    setPhoneKeyStatus(IDLE)
+    setPhoneState(await backend.remoteStatus())
+    setOffStatus({
+      kind: 'ok',
+      text: r.removed
+        ? 'Der Handy-Zugang ist abgeschaltet. Dein Computer ist wieder nur für dich erreichbar.'
+        : 'Es war nichts mehr eingerichtet. Du bist schon bei „Nur an diesem Computer“.',
+    })
   }
 
   // Copy only on a click, never on its own. A refused copy is said out loud.
@@ -409,7 +455,51 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               )}
               {where === 'phone' && (
                 <div className="mt-2 p-2 text-[12px]" style={{ background: '#ffffe1', border: '1px solid #000' }}>
-                  Zwischenstand: Tunnel, Anmeldung und Passkey fürs Handy lassen sich schon einrichten. Das Abschalten des Tunnels hier im Wizard folgt noch. Wer nur diesen Computer braucht, wählt „Nur an diesem Computer“.
+                  Zwischenstand: Tunnel, Anmeldung und Passkey fürs Handy lassen sich einrichten. Abschalten kannst du den Handy-Zugang später hier, indem du „Nur an diesem Computer“ wählst.
+                </div>
+              )}
+              {where === 'here' && (phoneState?.traces || offDone) && (
+                <div className="mt-2 p-2 text-[12px]" style={{ border: '2px groove #fff' }} aria-label="Handy-Zugang abschalten">
+                  {offDone ? null : (
+                    <>
+                      <div className="font-bold mb-1">
+                        {phoneState?.enabled ? 'Der Handy-Zugang ist noch eingerichtet.' : 'Es gibt noch Reste eines Handy-Zugangs.'}
+                      </div>
+                      <div className="mb-1">Wenn du ihn abschaltest:</div>
+                      <ul className="list-disc pl-5 mb-2">
+                        <li>Die öffentliche Adresse wird abgeschaltet. Die Claude-App auf dem Handy erreicht deinen Computer dann nicht mehr.</li>
+                        <li>Alle Anmeldungen am Handy enden, die Passphrase wird ungültig.</li>
+                        <li>Die Adresse ist an Passkey und Connector gebunden. Schaltest du den Handy-Zugang später wieder ein, brauchst du eine neue Passphrase, einen neuen Connector-Eintrag und einen neuen Passkey am Handy.</li>
+                        <li>Den Connector-Eintrag in claude.ai kann diese App nicht löschen. Entferne ihn dort selbst unter Einstellungen → Connectors.</li>
+                        <li>Dein alter Handy-Passkey bleibt in der Passkey-Kachel der Verwaltung gespeichert. Dort kannst du ihn bei Bedarf entfernen (es sind insgesamt höchstens 2 Passkeys möglich).</li>
+                      </ul>
+                      <div className="mb-2">Postfach, Empfänger und der Passkey dieses Computers bleiben. An Tailscale selbst ändert sich nichts.</div>
+                      <label className="flex gap-2 mb-2 cursor-pointer">
+                        <input type="checkbox" checked={offConfirmed} disabled={offStatus.kind === 'busy'} onChange={(e) => setOffConfirmed(e.target.checked)} />
+                        <span>Ja, den Handy-Zugang abschalten.</span>
+                      </label>
+                      <div className="flex justify-end">
+                        <button type="button" className="bevel font-bold" disabled={!offConfirmed || offStatus.kind === 'busy'} onClick={() => void turnOffPhone()}>
+                          Handy-Zugang abschalten
+                        </button>
+                      </div>
+                      {!offConfirmed && offStatus.kind !== 'busy' && <div className="mt-1 text-right">Setze zuerst das Häkchen.</div>}
+                    </>
+                  )}
+                  {statusLine(offStatus)}
+                  {offNotes.map((n) => (
+                    <div key={n} className="mt-1">{n}</div>
+                  ))}
+                  {offDone && (
+                    <div className="mt-2">
+                      <div className="mb-1">Entferne jetzt noch den Connector „Mail Assistant“ in claude.ai, falls du ihn dort eingetragen hattest.</div>
+                      <div className="flex justify-end">
+                        <button type="button" className="bevel" onClick={() => void backend.openLink('https://claude.ai/settings/connectors')}>
+                          Einstellungen öffnen
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </>
