@@ -7,6 +7,9 @@
     setup connect-claude --command /absolute/path/to/this/program
     setup disconnect-claude                  (removes only our own entry from Claude Desktop's settings)
     setup approval-link                      (one-time link to register a passkey on the local approval page)
+    setup remote-status [--command PATH]     (phone use: is the background service set up and running?)
+    setup remote-enable --command PATH --url https://...      (passphrase on stdin)
+    setup remote-disable                     (stops the service, removes its files; recipients and passkeys stay)
 
 The data folder comes from OUTBOX_DATA_DIR. Exit code is 0 whenever the answer is JSON ({"ok": false,
 "reason": "..."} included); 2 for a malformed command line. The password is read from the first line of
@@ -21,7 +24,7 @@ import os
 import sys
 from typing import List, Mapping, Optional, TextIO
 
-from . import secrets_store, setup_tasks as tasks
+from . import remote, secrets_store, setup_tasks as tasks
 from .errors import OutboxError
 
 
@@ -40,6 +43,11 @@ def _parser() -> argparse.ArgumentParser:
     t.add_argument("--mark-own", action="store_true")
     sub.add_parser("approval-link")
     sub.add_parser("disconnect-claude")
+    sub.add_parser("remote-disable")
+    sub.add_parser("remote-status").add_argument("--command", dest="program", default="")
+    re_ = sub.add_parser("remote-enable")
+    re_.add_argument("--command", dest="program", required=True)
+    re_.add_argument("--url", required=True)
     for name in ("preview-claude", "connect-claude"):
         sub.add_parser(name).add_argument("--command", dest="program", required=True)
     return p
@@ -73,6 +81,13 @@ def main(
             return reply({"ok": True, "url": tasks.approval_link(environment)})
         if args.command == "disconnect-claude":
             return reply({"ok": True, "removed": tasks.disconnect_claude(environment)})
+        if args.command == "remote-status":
+            return reply({"ok": True, **remote.status(environment, args.program)})
+        if args.command == "remote-enable":
+            line = (stdin or sys.stdin).readline().rstrip("\r\n")
+            return reply({"ok": True, **remote.enable(environment, args.program, args.url, line)})
+        if args.command == "remote-disable":
+            return reply({"ok": True, "removed": remote.disable(environment)})
         if args.command == "preview-claude":
             return reply({"ok": True, "lines": tasks.preview_claude(environment, args.program)})
         tasks.connect_claude(environment, args.program)

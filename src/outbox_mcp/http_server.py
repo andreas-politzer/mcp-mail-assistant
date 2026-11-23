@@ -17,6 +17,7 @@ from .auth.app import create_authenticated_app
 from .auth.config import AuthConfig
 from .auth.store import AuthStore
 from .config import Config
+from .remote import with_remote_file
 from .server import build_service, owner_from_token, register_tools
 from .service import OutboxService
 
@@ -44,7 +45,9 @@ def build_http_app(
 
 
 def build_app_from_env(env: Optional[Mapping[str, str]] = None):
-    e = os.environ if env is None else env
+    # remote.json (public address, passphrase hash) and mailbox.json (read in Config) fill in what the
+    # environment leaves empty; the environment always wins.
+    e = with_remote_file(os.environ if env is None else env)
     auth_config = AuthConfig.from_env(e)
     service = build_service(Config.from_env(e), e)
     if service.approval is not None and service.approval.config.is_local:

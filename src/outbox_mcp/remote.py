@@ -1,0 +1,284 @@
+"""Phone use: the settings file of the public (HTTP) server and the background service that runs it.
+
+remote.json lives in the data folder, next to mailbox.json. It holds the public address and the hash of
+the sign-in passphrase, never the passphrase itself. The server reads it at start (`with_remote_file`), so
+the background service needs nothing but the program and OUTBOX_DATA_DIR.
+
+On macOS the service is a LaunchAgent of the user (no administrator rights). The tunnel is not part of
+it: that is a separate step.
+
+Messages in `reason` fields are shown to the person in the wizard (German); everything else is English.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import plistlib
+import subprocess
+import sys
+from pathlib import Path
+from typing import Callable, Mapping, Optional
+from urllib.parse import urlsplit
+
+from .auth.passwords import hash_password, is_valid_hash
+from .setup_tasks import SetupError, _folder, _write_private, install_problem, load_mailbox
+
+REMOTE_FILE = "remote.json"
+LABEL = "de.politzer.mailassistant.remote"
+MIN_PASSPHRASE = 12
+MAX_PASSPHRASE_BYTES = 1024
+_LAUNCHCTL = "/bin/launchctl"
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+Runner = Callable[[list], "subprocess.CompletedProcess"]
+
+
+# ---------------------------------------------------------------- the settings file, read by the server
+
+def with_remote_file(env: Mapping[str, str]) -> Mapping[str, str]:
+    """Fill in what the environment leaves empty from remote.json. A setting in the environment always wins.
+
+    The approval host is the host name of the public address, taken from the file, so the two can never differ."""
+    raw = (env.get("OUTBOX_DATA_DIR") or "").strip()
+    if not raw:
+        return env
+    try:
+        data = json.loads((Path(raw).expanduser() / REMOTE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return env
+    if not isinstance(data, dict):
+        return env
+    merged = dict(env)
+    address = data.get("public_base_url")
+    if isinstance(address, str) and address.strip() and not (merged.get("OUTBOX_PUBLIC_BASE_URL") or "").strip():
+        merged["OUTBOX_PUBLIC_BASE_URL"] = address.strip()
+        host = urlsplit(address.strip()).hostname
+        if host and not (merged.get("OUTBOX_APPROVAL_HOST") or "").strip():
+            merged["OUTBOX_APPROVAL_HOST"] = host.lower()
+    digest = data.get("password_hash")
+    if isinstance(digest, str) and digest.strip() and not (merged.get("OUTBOX_OAUTH_PASSWORD_HASH") or "").strip():
+        merged["OUTBOX_OAUTH_PASSWORD_HASH"] = digest.strip()
+    return merged
+
+
+def _read_remote(env: Mapping[str, str]) -> Optional[dict]:
+    try:
+        data = json.loads((_folder(env) / REMOTE_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+# ---------------------------------------------------------------- checks
+
+def clean_address(value: str) -> str:
+    """The public address as https://host, or SetupError."""
+    text = (value or "").strip()
+    try:
+        parts = urlsplit(text)
+        host = (parts.hostname or "").lower()
+        port = parts.port
+    except ValueError:
+        raise SetupError("Die Adresse ist ungültig. Sie sieht so aus: https://dein-mac.dein-netz.ts.net") from None
+    if parts.scheme != "https" or not host:
+        raise SetupError("Die Adresse muss mit https:// beginnen, zum Beispiel https://dein-mac.dein-netz.ts.net")
+    if host in _LOCAL_HOSTS or host.endswith(".local"):
+        raise SetupError("Das ist eine Adresse nur für diesen Computer. Das Handy braucht die öffentliche Adresse des Tunnels.")
+    if parts.query or parts.fragment or parts.path not in ("", "/") or "@" in parts.netloc or port is not None:
+        raise SetupError("Die Adresse darf nur der Name sein, ohne Pfad, Port oder Zusätze.")
+    return f"https://{host}"
+
+
+def check_passphrase(passphrase: str) -> None:
+    if len(passphrase) < MIN_PASSPHRASE:
+        raise SetupError(f"Die Passphrase ist zu kurz. Sie braucht mindestens {MIN_PASSPHRASE} Zeichen.")
+    if len(passphrase.encode("utf-8")) > MAX_PASSPHRASE_BYTES:
+        raise SetupError("Die Passphrase ist zu lang.")
+    if passphrase != passphrase.strip():
+        raise SetupError("Die Passphrase darf nicht mit einem Leerzeichen beginnen oder enden.")
+
+
+def _home(env: Mapping[str, str]) -> Path:
+    return Path(env.get("HOME") or Path.home())
+
+
+def plist_path(env: Mapping[str, str]) -> Path:
+    return _home(env) / "Library" / "LaunchAgents" / f"{LABEL}.plist"
+
+
+def log_folder(env: Mapping[str, str]) -> Path:
+    return _home(env) / "Library" / "Logs" / "Mail Assistant"
+
+
+def _require_mac(platform: Optional[str]) -> None:
+    if (platform or sys.platform) != "darwin":
+        raise SetupError("Der Handy-Betrieb ist in dieser Version nur für den Mac eingerichtet.")
+
+
+def _check_program(command: str) -> None:
+    if not command or not os.path.isabs(command):
+        raise SetupError("Der Pfad des Mail-Assistant-Programms fehlt.")
+    problem = install_problem(command)
+    if problem:
+        raise SetupError(problem)
+    if not os.path.isfile(command) or not os.access(command, os.X_OK):
+        raise SetupError("Das Mail-Assistant-Programm wurde unter diesem Pfad nicht gefunden.")
+
+
+def build_plist(env: Mapping[str, str], command: str) -> dict:
+    """Only the program and the data folder. Everything else the server reads from the data folder, so
+    a later change needs no change here. No secret is in this file."""
+    logs = log_folder(env)
+    return {
+        "Label": LABEL,
+        "ProgramArguments": [command, "serve"],
+        "EnvironmentVariables": {"OUTBOX_DATA_DIR": str(_folder(env))},
+        "RunAtLoad": True,
+        # Start again after a crash, but not after a clean stop; and never faster than every 10 seconds,
+        # so a wrong setting does not make the service restart in a tight loop.
+        "KeepAlive": {"SuccessfulExit": False},
+        "ThrottleInterval": 10,
+        "StandardOutPath": str(logs / "remote.log"),
+        "StandardErrorPath": str(logs / "remote-error.log"),
+    }
+
+
+# ---------------------------------------------------------------- launchctl
+
+def _run(args: list) -> "subprocess.CompletedProcess":
+    return subprocess.run(args, capture_output=True, text=True, timeout=20)
+
+
+def _domain(uid: int) -> str:
+    return f"gui/{uid}"
+
+
+def _bootout(run: Runner, uid: int) -> None:
+    """Stop and unregister the service. 'Not loaded' is not an error."""
+    run([_LAUNCHCTL, "bootout", f"{_domain(uid)}/{LABEL}"])
+
+
+def _bootstrap(run: Runner, uid: int, plist: Path) -> None:
+    done = run([_LAUNCHCTL, "bootstrap", _domain(uid), str(plist)])
+    if done.returncode != 0:
+        detail = " ".join((done.stderr or done.stdout or "").split())[:160]
+        raise SetupError(
+            "macOS konnte den Hintergrunddienst nicht starten."
+            + (f" Details: {detail}" if detail else "")
+        )
+
+
+# ---------------------------------------------------------------- the three commands
+
+def enable(
+    env: Mapping[str, str],
+    command: str,
+    address: str,
+    passphrase: str,
+    *,
+    run: Optional[Runner] = None,
+    uid: Optional[int] = None,
+    platform: Optional[str] = None,
+) -> dict:
+    """Save address and passphrase hash, set up the background service and start it."""
+    run = run or _run
+    _require_mac(platform)
+    _check_program(command)
+    if load_mailbox(env) is None:
+        raise SetupError("Das Postfach ist noch nicht eingerichtet.")
+    base = clean_address(address)
+    check_passphrase(passphrase)
+    uid = os.getuid() if uid is None else uid
+    plist = plist_path(env)
+    try:
+        log_folder(env).mkdir(parents=True, exist_ok=True)
+        if os.name == "posix":
+            os.chmod(log_folder(env), 0o700)  # the logs hold one-time links
+        plist.parent.mkdir(parents=True, exist_ok=True)
+        _write_private(
+            _folder(env) / REMOTE_FILE,
+            json.dumps({"public_base_url": base, "password_hash": hash_password(passphrase)}, indent=2) + "\n",
+        )
+        _write_private(plist, plistlib.dumps(build_plist(env, command)).decode("utf-8"))
+    except OSError:
+        raise SetupError("Die Einstellungen für den Handy-Betrieb lassen sich nicht speichern.") from None
+    _bootout(run, uid)  # a second call restarts the service with the new settings
+    try:
+        _bootstrap(run, uid, plist)
+    except SetupError:
+        _bootout(run, uid)
+        try:
+            plist.unlink()
+        except OSError:
+            pass
+        raise
+    return {"address": base, "log": str(log_folder(env) / "remote.log")}
+
+
+def disable(
+    env: Mapping[str, str],
+    *,
+    run: Optional[Runner] = None,
+    uid: Optional[int] = None,
+    platform: Optional[str] = None,
+) -> bool:
+    """Stop the service and remove its files. Recipients, passkeys and the mailbox stay.
+    True when there was something to remove; asking twice is not an error."""
+    run = run or _run
+    _require_mac(platform)
+    uid = os.getuid() if uid is None else uid
+    plist = plist_path(env)
+    had = plist.exists() or (_folder(env) / REMOTE_FILE).exists()
+    _bootout(run, uid)
+    for path in (plist, _folder(env) / REMOTE_FILE):
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            raise SetupError("Eine Datei des Handy-Betriebs lässt sich nicht löschen.") from None
+    return had
+
+
+def status(
+    env: Mapping[str, str],
+    command: str = "",
+    *,
+    run: Optional[Runner] = None,
+    uid: Optional[int] = None,
+    platform: Optional[str] = None,
+) -> dict:
+    """The real state. Never contains the hash or the passphrase."""
+    run = run or _run
+    if (platform or sys.platform) != "darwin":
+        return {"supported": False, "enabled": False}
+    uid = os.getuid() if uid is None else uid
+    plist = plist_path(env)
+    data = _read_remote(env)
+    address = data.get("public_base_url") if data else None
+    configured = bool(data) and isinstance(address, str) and is_valid_hash(data.get("password_hash"))
+    program = None
+    try:
+        program = plistlib.loads(plist.read_bytes())["ProgramArguments"][0]
+    except (OSError, ValueError, KeyError, IndexError, TypeError, plistlib.InvalidFileException):
+        pass
+    loaded = running = False
+    if program is not None:
+        try:
+            done = run([_LAUNCHCTL, "print", f"{_domain(uid)}/{LABEL}"])
+        except (OSError, subprocess.SubprocessError):
+            done = None
+        if done is not None and done.returncode == 0:
+            loaded = True
+            running = any(line.strip() == "state = running" for line in (done.stdout or "").splitlines())
+    return {
+        "supported": True,
+        "enabled": configured and program is not None,
+        "loaded": loaded,
+        "running": running,
+        "address": address if configured else None,
+        "program_ok": program is not None and os.path.isfile(program),
+        "program_matches": bool(command) and program == command,
+        "log": str(log_folder(env) / "remote.log"),
+    }
