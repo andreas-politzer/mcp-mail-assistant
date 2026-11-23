@@ -267,7 +267,7 @@ describe('the wizard (desktop path)', () => {
     fireEvent.click(screen.getByLabelText(/Auch vom Handy aus/))
     expect(screen.getByText(/Zwischenstand/)).toBeTruthy()
     expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false)
-    expect(screen.getByText(/Schritt 1 von 8/)).toBeTruthy()
+    expect(screen.getByText(/Schritt 1 von 10/)).toBeTruthy()
   })
 
   it('offers the access ways for the phone: Tailscale now, ngrok and Cloudflare marked as coming', () => {
@@ -355,8 +355,22 @@ describe('the tunnel step (phone path)', () => {
   const ADDRESS = 'https://mein-mac.example.ts.net'
 
   // A computer that is set up completely, so the steps before the tunnel can be passed quickly.
+  // The computer already has one passkey. A phone passkey appears (the count goes up) once a phone link was made,
+  // unless a test says the person did not finish on the phone.
+  let phoneKeyAppears = true
+  afterEach(() => {
+    phoneKeyAppears = true
+  })
+
   function ready(backend: SetupBackend) {
-    backend.status = async () => ({ mailbox: { email: 'ich@web.de', host: 'smtp.web.de', port: 587, security: 'starttls' }, password_stored: true, claude_connected: true, passkeys: 1 })
+    let keys = 1
+    const makeLink = backend.approvalLink.bind(backend)
+    backend.approvalLink = async (phone) => {
+      const r = await makeLink(phone)
+      if (phone && r.ok && phoneKeyAppears) keys += 1
+      return r
+    }
+    backend.status = async () => ({ mailbox: { email: 'ich@web.de', host: 'smtp.web.de', port: 587, security: 'starttls' }, password_stored: true, claude_connected: true, passkeys: keys })
     return backend
   }
 
@@ -380,7 +394,7 @@ describe('the tunnel step (phone path)', () => {
     const backend = mockBackend(0)
     const enable = vi.spyOn(backend, 'tunnelEnable')
     await toTunnel(backend)
-    expect(screen.getByText(/Schritt 7 von 8/)).toBeTruthy()
+    expect(screen.getByText(/Schritt 7 von 10/)).toBeTruthy()
     await waitFor(() => expect(screen.getByLabelText('Öffentliche Adresse').textContent).toBe(ADDRESS))
     const button = screen.getByText('Tunnel einschalten') as HTMLButtonElement
     expect(button.disabled).toBe(true)
@@ -394,8 +408,171 @@ describe('the tunnel step (phone path)', () => {
     expect(screen.getByRole('status').textContent).toMatch(/von diesem Computer aus/)
     expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false)
     next()
+    expect(screen.getByText('Anmeldung vom Handy')).toBeTruthy()
+  })
+
+  const PASS = 'ABCDE-FGHJK-MNPQR-STUVW-XYZ23'
+
+  async function toPhoneLogin(backend: SetupBackend) {
+    await toTunnel(backend)
+    await waitFor(() => screen.getByLabelText('Öffentliche Adresse'))
+    fireEvent.click(screen.getByLabelText(/darf öffentlich sichtbar sein/))
+    fireEvent.click(screen.getByText('Tunnel einschalten'))
+    await waitFor(() => screen.getByText(/Der Tunnel steht/))
+    next()
+    await waitFor(() => screen.getByText('Anmeldung vom Handy'))
+  }
+
+  function clipboard() {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    return writeText
+  }
+
+  it('shows the new passphrase once, copies only on a click and needs the "saved" tick before it goes on', async () => {
+    const writeText = clipboard()
+    const backend = mockBackend(0)
+    const create = vi.spyOn(backend, 'newPassphrase')
+    await toPhoneLogin(backend)
+    expect(screen.getByText(/Schritt 8 von 10/)).toBeTruthy()
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByLabelText('Passphrase')).toBeNull()
+    fireEvent.click(screen.getByText('Passphrase erzeugen'))
+    await waitFor(() => expect(screen.getByLabelText('Passphrase').textContent).toBe(PASS))
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(writeText).not.toHaveBeenCalled() // never on its own
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getAllByText('Kopieren')[0])
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(PASS))
+    await waitFor(() => expect(screen.getAllByText('Kopiert').length).toBe(1))
+    fireEvent.click(screen.getByLabelText(/Passphrase gespeichert/))
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('tells how to connect Claude: the settings page, the address with /mcp, the passphrase on sign-in', async () => {
+    const writeText = clipboard()
+    const backend = mockBackend(0)
+    const open = vi.spyOn(backend, 'openLink')
+    await toPhoneLogin(backend)
+    expect(screen.queryByLabelText('Adresse für den Connector')).toBeNull() // nothing to connect before there is a passphrase
+    fireEvent.click(screen.getByText('Passphrase erzeugen'))
+    await waitFor(() => screen.getByLabelText('Adresse für den Connector'))
+    expect(screen.getByLabelText('Adresse für den Connector').textContent).toBe(`${ADDRESS}/mcp`)
+    fireEvent.click(screen.getByText('Einstellungen öffnen'))
+    expect(open).toHaveBeenCalledWith('https://claude.ai/settings/connectors')
+    fireEvent.click(screen.getAllByText('Kopieren')[1])
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${ADDRESS}/mcp`))
+    expect(screen.getByText(/nach der Passphrase/)).toBeTruthy()
+  })
+
+  it('forgets the passphrase when the step is left', async () => {
+    const backend = mockBackend(0)
+    await toPhoneLogin(backend)
+    fireEvent.click(screen.getByText('Passphrase erzeugen'))
+    await waitFor(() => screen.getByLabelText('Passphrase'))
+    fireEvent.click(screen.getByLabelText(/Passphrase gespeichert/))
+    next()
+    await waitFor(() => screen.getByText('Freigabe vom Handy (Passkey)'))
+    fireEvent.click(screen.getByText('Zurück'))
+    await waitFor(() => screen.getByText('Anmeldung vom Handy'))
+    expect(screen.queryByText(PASS)).toBeNull()
+    expect(screen.queryByLabelText('Passphrase')).toBeNull()
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('warns before replacing a real passphrase, and lets the person go on without a new one', async () => {
+    const backend = mockBackend(0)
+    backend.remoteStatus = async () => ({ enabled: true, address: ADDRESS, passphrase_placeholder: false })
+    await toPhoneLogin(backend)
+    await waitFor(() => screen.getByText(/Es gibt schon eine Passphrase/))
+    expect(screen.getByText(/die alte ungültig/)).toBeTruthy()
+    expect(screen.getByText('Neue Passphrase erzeugen')).toBeTruthy()
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.getByLabelText('Adresse für den Connector')).toBeTruthy()
+  })
+
+  it('shows the reason when no passphrase could be made, and when copying is refused', async () => {
+    const backend = mockBackend(0)
+    backend.newPassphrase = async () => ({ ok: false, reason: 'Der Tunnel ist noch nicht eingerichtet. Schalte ihn zuerst ein.' })
+    await toPhoneLogin(backend)
+    fireEvent.click(screen.getByText('Passphrase erzeugen'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/noch nicht eingerichtet/))
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
+    cleanup()
+
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn().mockRejectedValue(new Error('no')) }, configurable: true })
+    await toPhoneLogin(mockBackend(0))
+    fireEvent.click(screen.getByText('Passphrase erzeugen'))
+    await waitFor(() => screen.getByLabelText('Passphrase'))
+    fireEvent.click(screen.getAllByText('Kopieren')[0])
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Kopieren hat nicht geklappt/))
+  })
+
+  async function toPhoneKey(backend: SetupBackend) {
+    await toPhoneLogin(backend)
+    fireEvent.click(screen.getByText('Passphrase erzeugen'))
+    await waitFor(() => screen.getByLabelText('Passphrase'))
+    fireEvent.click(screen.getByLabelText(/Passphrase gespeichert/))
+    next()
+    await waitFor(() => screen.getByText('Freigabe vom Handy (Passkey)'))
+  }
+
+  it('makes a one-time link for the phone, and goes on only when a new passkey has appeared', async () => {
+    clipboard()
+    const backend = mockBackend(0)
+    const link = vi.spyOn(backend, 'approvalLink')
+    await toPhoneKey(backend)
+    expect(screen.getByText(/Schritt 9 von 10/)).toBeTruthy()
+    fireEvent.click(screen.getByText('Prüfen'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Erzeuge zuerst den Link/))
+    fireEvent.click(screen.getByText('Link erzeugen'))
+    await waitFor(() => screen.getByLabelText('Link fürs Handy'))
+    expect(link).toHaveBeenCalledWith(true)
+    expect(screen.getByLabelText('Link fürs Handy').textContent).toBe(`${ADDRESS}/passkey/enroll/demo`)
+    expect(screen.getByRole('status').textContent).toMatch(/einmal, 10 Minuten/)
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByText('Prüfen'))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/Passkey am Handy ist registriert/))
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('does not count the passkey of the computer: an unchanged number is not a phone passkey', async () => {
+    phoneKeyAppears = false
+    const backend = mockBackend(0)
+    await toPhoneKey(backend)
+    fireEvent.click(screen.getByText('Link erzeugen'))
+    await waitFor(() => screen.getByLabelText('Link fürs Handy'))
+    fireEvent.click(screen.getByText('Prüfen'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/noch kein neuer Passkey/))
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('says what to do when the limit of two passkeys is reached, and lets the person skip the step', async () => {
+    const backend = mockBackend(0)
+    backend.approvalLink = async () => ({ ok: false, reason: 'Es sind schon zwei Passkeys eingerichtet, mehr geht nicht. Entferne zuerst einen alten in der Verwaltung (Kachel „Passkeys“).' })
+    await toPhoneKey(backend)
+    fireEvent.click(screen.getByText('Link erzeugen'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/zwei Passkeys.*Kachel/))
+    expect(screen.queryByLabelText('Link fürs Handy')).toBeNull()
+    fireEvent.click(screen.getByText('Später'))
+    expect(screen.getByText('Fertig eingerichtet')).toBeTruthy()
+    expect(screen.getByText(/Passkey am Handy noch nicht eingerichtet/)).toBeTruthy()
+  })
+
+  it('ends with what the phone needs: the test mail in the Claude app, the Mac as server, no Claude Desktop test', async () => {
+    clipboard()
+    await toPhoneKey(mockBackend(0))
+    fireEvent.click(screen.getByText('Link erzeugen'))
+    await waitFor(() => screen.getByLabelText('Link fürs Handy'))
+    fireEvent.click(screen.getByText('Prüfen'))
+    await waitFor(() => screen.getByText(/Passkey am Handy ist registriert/))
+    next()
+    expect(screen.getByText('Fertig eingerichtet')).toBeTruthy()
     expect(screen.getByText(/Tunnel steht: https:\/\/mein-mac/)).toBeTruthy()
+    expect(screen.getByText(/Passphrase festgelegt/)).toBeTruthy()
+    expect(screen.getByText(/Passkey am Handy eingerichtet/)).toBeTruthy()
     expect(screen.getByText(/in der Claude-App/)).toBeTruthy()
+    expect(screen.getByText(/persönlicher Mail-Server/)).toBeTruthy()
     expect(screen.queryByText(/Schreib Claude in Claude Desktop/)).toBeNull()
   })
 

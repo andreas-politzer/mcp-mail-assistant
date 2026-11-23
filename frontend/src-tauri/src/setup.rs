@@ -143,9 +143,14 @@ pub fn is_tailscale_link(url: &str) -> bool {
     }
 }
 
+/// Where the person adds the connector for the phone: exactly this one page of Claude, nothing else of it.
+pub fn is_claude_connectors_link(url: &str) -> bool {
+    url == "https://claude.ai/settings/connectors"
+}
+
 /// Opens the link in the computer's default browser.
 pub fn open_in_browser(url: &str) -> Result<(), String> {
-    if !is_enroll_link(url) && !is_tailscale_link(url) {
+    if !is_enroll_link(url) && !is_tailscale_link(url) && !is_claude_connectors_link(url) {
         return Err("Dieser Link darf von hier aus nicht geöffnet werden.".into());
     }
     #[cfg(target_os = "macos")]
@@ -296,6 +301,14 @@ pub fn claude_args(action: &str, program: &Path) -> Vec<String> {
     vec![action.to_string(), format!("--command={}", program.display())]
 }
 
+pub fn approval_link_args(phone: bool) -> Vec<String> {
+    let mut v = vec!["approval-link".to_string()];
+    if phone {
+        v.push("--phone".into());
+    }
+    v
+}
+
 pub fn tunnel_enable_args(program: &Path, address: &str) -> Vec<String> {
     vec!["tunnel-enable".into(), format!("--command={}", program.display()), format!("--url={address}")]
 }
@@ -352,6 +365,36 @@ mod tests {
         assert!(!is_tailscale_link(&too_long));
         // Whatever is_tailscale_link refuses, open_in_browser refuses as well.
         assert!(open_in_browser("https://tailscale.com/downloads-evil").is_err());
+    }
+
+    #[test]
+    fn the_approval_link_asks_for_the_phone_page_only_when_told_to() {
+        assert_eq!(approval_link_args(false), vec!["approval-link"]);
+        assert_eq!(approval_link_args(true), vec!["approval-link", "--phone"]);
+    }
+
+    #[test]
+    fn the_new_passphrase_command_carries_only_the_program() {
+        let a = claude_args("passphrase-new", Path::new("/Applications/Mail Assistant.app/Contents/MacOS/x"));
+        assert_eq!(a[0], "passphrase-new");
+        assert_eq!(a.len(), 2);
+    }
+
+    #[test]
+    fn only_the_connector_settings_page_of_claude_may_be_opened() {
+        assert!(is_claude_connectors_link("https://claude.ai/settings/connectors"));
+        for bad in [
+            "http://claude.ai/settings/connectors",
+            "https://claude.ai/settings/connectors/",
+            "https://claude.ai/settings/connectors?x=1",
+            "https://claude.ai/settings",
+            "https://claude.ai.evil.com/settings/connectors",
+            "https://claude.ai@evil.com/settings/connectors",
+            "https://evil.com/?https://claude.ai/settings/connectors",
+        ] {
+            assert!(!is_claude_connectors_link(bad), "{bad}");
+            assert!(open_in_browser(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

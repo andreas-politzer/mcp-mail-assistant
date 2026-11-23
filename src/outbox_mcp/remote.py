@@ -184,6 +184,8 @@ def enable(
     run: Optional[Runner] = None,
     uid: Optional[int] = None,
     platform: Optional[str] = None,
+    sleep: Optional[Callable[[float], None]] = None,
+    port_busy: Optional[Callable[[], bool]] = None,
 ) -> dict:
     """Save address and passphrase hash, set up the background service and start it.
 
@@ -200,6 +202,11 @@ def enable(
         check_passphrase(passphrase)
     uid = os.getuid() if uid is None else uid
     plist = plist_path(env)
+    # A second call restarts the service with the new settings. launchd ends the old instance in the background,
+    # so wait until it is really gone; starting the new one too early fails with "Input/output error".
+    _bootout(run, uid)
+    if not _wait_until_stopped(run, uid, sleep or time.sleep, port_busy or _port_busy):
+        raise SetupError("Der Hintergrunddienst hat sich nicht rechtzeitig beendet. Versuche es in einem Moment noch einmal.")
     try:
         log_folder(env).mkdir(parents=True, exist_ok=True)
         if os.name == "posix":
@@ -222,9 +229,12 @@ def enable(
         _write_private(plist, plistlib.dumps(build_plist(env, command)).decode("utf-8"))
     except OSError:
         raise SetupError("Die Einstellungen für den Handy-Betrieb lassen sich nicht speichern.") from None
-    _bootout(run, uid)  # a second call restarts the service with the new settings
     try:
-        _bootstrap(run, uid, plist)
+        try:
+            _bootstrap(run, uid, plist)
+        except SetupError:
+            (sleep or time.sleep)(1.0)  # launchd can still be busy with the old instance: one more try
+            _bootstrap(run, uid, plist)
     except SetupError:
         _bootout(run, uid)
         try:
@@ -345,3 +355,90 @@ def status(
         "passphrase_placeholder": bool(data and data.get("passphrase_placeholder")),
         "log": str(log_folder(env) / "remote.log"),
     }
+
+
+# ---------------------------------------------------------------- sign-in for the phone (passphrase, passkey)
+
+# 31 characters: no 0/O, 1/I/L. Five groups of five give about 124 bits, readable and typeable on a phone.
+PASSPHRASE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+
+def generate_passphrase() -> str:
+    """A new random sign-in passphrase such as `K7M2P-X9QRT-...`. Shown once, only its hash is stored."""
+    return "-".join("".join(secrets.choice(PASSPHRASE_ALPHABET) for _ in range(5)) for _ in range(5))
+
+
+def _revoke_logins(env: Mapping[str, str]) -> None:
+    """Forget every connector sign-in and token (Claude on the phone must sign in again). Nothing to do while
+    nobody has ever signed in (no database yet)."""
+    from .auth.store import AuthStore
+    from .paths import default_file
+
+    path = Path((env.get("OUTBOX_OAUTH_DB_PATH") or "").strip() or default_file(env, "auth.db"))
+    if not path.exists():
+        return
+    try:
+        AuthStore(path).revoke_all()
+    except Exception:
+        raise SetupError(
+            "Die bisherigen Anmeldungen am Handy lassen sich nicht beenden. Die Passphrase wurde nicht geändert."
+        ) from None
+
+
+def renew_passphrase(
+    env: Mapping[str, str],
+    command: str,
+    *,
+    run: Optional[Runner] = None,
+    uid: Optional[int] = None,
+    platform: Optional[str] = None,
+    revoke: Optional[Callable[[Mapping[str, str]], None]] = None,
+) -> dict:
+    """Make a new sign-in passphrase for the phone and return it once. Every earlier sign-in ends first (the
+    old passphrase's tokens would otherwise live on for up to 90 days); then the hash is replaced and the
+    background service restarted, so it loads the new hash."""
+    state = status(env, command, run=run, uid=uid, platform=platform)
+    if not state.get("supported"):
+        raise SetupError("Der Handy-Betrieb ist hier noch nicht möglich.")
+    if not state.get("enabled") or not state.get("address"):
+        raise SetupError("Der Tunnel ist noch nicht eingerichtet. Schalte ihn zuerst ein.")
+    passphrase = generate_passphrase()
+    (revoke or _revoke_logins)(env)
+    answer = enable(env, command, state["address"], passphrase, run=run, uid=uid, platform=platform)
+    return {"passphrase": passphrase, "address": answer["address"]}
+
+
+def passkey_link(
+    env: Mapping[str, str],
+    *,
+    run: Optional[Runner] = None,
+    uid: Optional[int] = None,
+    platform: Optional[str] = None,
+) -> str:
+    """One-time link to register a passkey on the phone, on the public approval page. The passkey belongs to
+    the host name of the public address, so it has to be created there, on the phone itself. The page is part of
+    the background service, which therefore has to be running."""
+    from .approval.service import ApprovalConfig, ApprovalService
+    from .paths import default_file
+    from .storage.database import Database
+
+    state = status(env, "", run=run, uid=uid, platform=platform)
+    if not state.get("supported"):
+        raise SetupError("Der Handy-Betrieb ist hier noch nicht möglich.")
+    if not state.get("enabled") or not state.get("address"):
+        raise SetupError("Der Tunnel ist noch nicht eingerichtet. Schalte ihn zuerst ein.")
+    if not state.get("running"):
+        raise SetupError("Der Hintergrunddienst läuft nicht. Schalte den Tunnel noch einmal ein.")
+    host = urlsplit(state["address"]).hostname or ""
+    merged = dict(env)
+    merged["OUTBOX_APPROVAL_HOST"] = host
+    merged.pop("OUTBOX_APPROVAL_PORT", None)
+    config = ApprovalConfig.from_env(merged)
+    service = ApprovalService(Database(str(default_file(env, "outbox.db"))), config, time.time)
+    token = service.create_enrollment()
+    if token is None:
+        raise SetupError(
+            "Es sind schon zwei Passkeys eingerichtet, mehr geht nicht. Entferne zuerst einen alten "
+            "in der Verwaltung (Kachel „Passkeys“)."
+        )
+    return service.enrollment_url(token)

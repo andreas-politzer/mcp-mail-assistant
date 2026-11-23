@@ -241,10 +241,26 @@ async fn setup_disconnect_claude(app: AppHandle) -> Result<serde_json::Value, St
     run_setup(app, vec!["disconnect-claude".to_string()], None).await
 }
 
-/// One-time link to register a passkey on the local approval page (needs Claude Desktop running the server).
+/// One-time link to register a passkey. Default: on the local approval page (needs Claude Desktop running the
+/// server). With `phone`: on the public page, to be opened on the phone (needs the background service).
 #[tauri::command]
-async fn setup_approval_link(app: AppHandle) -> Result<serde_json::Value, String> {
-    run_setup(app, vec!["approval-link".to_string()], None).await
+async fn setup_approval_link(app: AppHandle, phone: Option<bool>) -> Result<serde_json::Value, String> {
+    run_setup(app, setup::approval_link_args(phone.unwrap_or(false)), None).await
+}
+
+/// Phone use: is the service set up and running, and is there a real sign-in passphrase yet? Never the passphrase.
+#[tauri::command]
+async fn setup_remote_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    let program = program_of(&app)?;
+    run_setup(app, setup::claude_args("remote-status", &program), None).await
+}
+
+/// Makes a new sign-in passphrase for the phone and returns it exactly once. It is shown in the window and
+/// kept nowhere else; the program stores only its hash.
+#[tauri::command]
+async fn setup_passphrase_new(app: AppHandle) -> Result<serde_json::Value, String> {
+    let program = program_of(&app)?;
+    run_setup(app, setup::claude_args("passphrase-new", &program), None).await
 }
 
 /// Phone use, tunnel card: Tailscale's state and the public address, shown before anything changes.
@@ -324,7 +340,8 @@ async fn local_api(
     .map_err(|_| "Der Schritt wurde unterbrochen.".to_string())?
 }
 
-/// Opens the passkey enrollment link or a Tailscale page in the default browser. Refuses every other address.
+/// Opens the passkey enrollment link, a Tailscale page or Claude's connector settings in the default browser.
+/// Refuses every other address.
 #[tauri::command]
 fn open_link(url: String) -> serde_json::Value {
     match setup::open_in_browser(&url) {
@@ -362,6 +379,8 @@ pub fn run() {
             setup_connect_claude,
             setup_disconnect_claude,
             setup_approval_link,
+            setup_remote_status,
+            setup_passphrase_new,
             setup_tunnel_status,
             setup_tunnel_enable,
             local_admin,

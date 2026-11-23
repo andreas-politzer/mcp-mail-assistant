@@ -49,6 +49,13 @@ export type TunnelOutcome =
   // `url`: a Tailscale page where the person has to switch something on first.
   | { ok: false; reason: string; url?: string }
 
+export interface RemoteStatus {
+  enabled: boolean
+  address: string | null
+  // True while only a throw-away passphrase exists (nobody can sign in yet).
+  passphrase_placeholder: boolean
+}
+
 export interface SetupBackend {
   // The real state, so the wizard only asks for what is missing.
   status(): Promise<SetupStatus>
@@ -62,14 +69,19 @@ export interface SetupBackend {
   connectClaude(): Promise<Outcome>
   // Removes only our own entry from Claude Desktop's configuration (after a backup copy). Fine if there is none.
   disconnectClaude(): Promise<Outcome>
-  // One-time link to register a passkey on the local approval page. Only works once Claude Desktop runs the server.
-  approvalLink(): Promise<{ ok: true; url: string } | { ok: false; reason: string }>
+  // One-time link to register a passkey on the local approval page (needs Claude Desktop running the server).
+  // With `phone`: on the public page instead, to be opened on the phone itself.
+  approvalLink(phone?: boolean): Promise<{ ok: true; url: string } | { ok: false; reason: string }>
   // Opens that link in the browser of this computer (the enrollment link and a few Tailscale pages only).
   openLink(url: string): Promise<Outcome>
   // Phone use: Tailscale's state and the public address, shown before anything changes. Changes nothing.
   tunnelStatus(): Promise<TunnelStatus>
   // Starts the service, switches the Funnel on and tries the address. `address` is the one the person confirmed.
   tunnelEnable(address: string): Promise<TunnelOutcome>
+  // Phone use: is the service set up, what is its address, and is its passphrase still the throw-away one?
+  remoteStatus(): Promise<RemoteStatus>
+  // A new sign-in passphrase for the phone, returned exactly once. Earlier sign-ins end; only its hash is stored.
+  newPassphrase(): Promise<{ ok: true; passphrase: string; address: string } | { ok: false; reason: string }>
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -113,8 +125,12 @@ export function mockBackend(delay = 700): SetupBackend {
       await wait(delay)
       return { ok: true }
     },
-    async approvalLink() {
+    async approvalLink(phone) {
       await wait(delay / 3)
+      if (phone) {
+        passkeys += 1 // the demo "registers" the phone's passkey as soon as the link exists
+        return { ok: true, url: 'https://mein-mac.example.ts.net/passkey/enroll/demo' }
+      }
       return { ok: true, url: 'http://localhost:47821/passkey/enroll/demo' }
     },
     async openLink() {
@@ -128,6 +144,13 @@ export function mockBackend(delay = 700): SetupBackend {
     async tunnelEnable(address) {
       await wait(delay)
       return { ok: true, address, passphrase_placeholder: true }
+    },
+    async remoteStatus() {
+      return { enabled: true, address: 'https://mein-mac.example.ts.net', passphrase_placeholder: true }
+    },
+    async newPassphrase() {
+      await wait(delay / 3)
+      return { ok: true, passphrase: 'ABCDE-FGHJK-MNPQR-STUVW-XYZ23', address: 'https://mein-mac.example.ts.net' }
     },
   }
 }

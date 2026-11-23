@@ -16,36 +16,55 @@ from outbox_mcp import remote, setup_cli
 from outbox_mcp.auth.passwords import verify_password
 from outbox_mcp.setup_tasks import SetupError
 
+REAL_PORT_BUSY = remote._port_busy
 PASSPHRASE = "eine-lange-passphrase-123"
 ADDRESS = "https://mein-mac.example.ts.net"
 
 
 class Launchctl:
-    def __init__(self, bootstrap_fails=False, state="running", stays_listed=False):
+    """lag: the old instance stays listed for that many looks after bootout, and bootstrap fails meanwhile (as
+    launchd really does while it is still taking the old one down). bootstrap_failures: the first n starts fail."""
+
+    def __init__(self, bootstrap_fails=False, state="running", stays_listed=False, lag=0, bootstrap_failures=0):
         self.calls = []
         self.bootstrap_fails = bootstrap_fails
         self.state = state
         self.loaded = True  # a service that is already there; bootout takes it away, bootstrap brings it back
         self.stays_listed = stays_listed
+        self.lag = lag
+        self.draining = 0
+        self.failures_left = bootstrap_failures
 
     def __call__(self, args):
         self.calls.append(list(args))
         verb = args[1]
         if verb == "bootout":
-            self.loaded = self.stays_listed
+            self.loaded = self.stays_listed or self.lag > 0
+            self.draining = self.lag
             return subprocess.CompletedProcess(args, 3, "", "Boot-out failed: 3: No such process")
-        if verb == "bootstrap" and self.bootstrap_fails:
+        if verb == "bootstrap" and (self.bootstrap_fails or (self.loaded and self.lag) or self.failures_left > 0):
+            self.failures_left = max(0, self.failures_left - 1)
             return subprocess.CompletedProcess(args, 5, "", "Bootstrap failed: 5: Input/output error")
         if verb == "bootstrap":
             self.loaded = True
         if verb == "print":
             if not self.loaded:
                 return subprocess.CompletedProcess(args, 113, "", "Could not find service")
+            if self.draining > 0:
+                self.draining -= 1
+                if self.draining == 0:
+                    self.loaded = False  # gone after this look
             return subprocess.CompletedProcess(args, 0, f"{remote.LABEL} = {{\n\tstate = {self.state}\n}}\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
     def verbs(self):
         return [c[1] for c in self.calls]
+
+
+@pytest.fixture(autouse=True)
+def _port_is_free(monkeypatch):
+    """Where the server really runs, 8430 answers. A test must never wait for, or depend on, that."""
+    monkeypatch.setattr(remote, "_port_busy", lambda port=remote.PORT: False)
 
 
 @pytest.fixture
@@ -67,6 +86,8 @@ def program(tmp_path):
 
 
 def enable(env, program, launchctl, **kw):
+    kw.setdefault("sleep", lambda seconds: None)
+    kw.setdefault("port_busy", lambda: False)
     return remote.enable(env, program, kw.pop("address", ADDRESS), kw.pop("passphrase", PASSPHRASE),
                          run=launchctl, uid=501, platform="darwin", **kw)
 
@@ -184,12 +205,12 @@ def test_enable_writes_hash_not_passphrase_and_a_slim_plist(env, program):
 def test_enable_stops_the_old_service_before_it_starts_the_new_one(env, program):
     lc = Launchctl()
     enable(env, program, lc)
-    assert lc.verbs() == ["bootout", "bootstrap"]
+    assert lc.verbs() == ["bootout", "print", "bootstrap"]  # looks until it is gone, then starts
     assert lc.calls[0][2] == f"gui/501/{remote.LABEL}"
-    assert lc.calls[1][2:] == ["gui/501", str(remote.plist_path(env))]
-    assert lc.calls[0][0] == lc.calls[1][0] == "/bin/launchctl"
+    assert lc.calls[2][2:] == ["gui/501", str(remote.plist_path(env))]
+    assert lc.calls[0][0] == lc.calls[2][0] == "/bin/launchctl"
     enable(env, program, lc)  # again: restart with the new settings
-    assert lc.verbs() == ["bootout", "bootstrap"] * 2
+    assert lc.verbs() == ["bootout", "print", "bootstrap"] * 2
 
 
 def test_the_passphrase_never_appears_in_a_command(env, program):
@@ -203,7 +224,7 @@ def test_a_failed_start_leaves_no_service_behind(env, program):
     with pytest.raises(SetupError, match="nicht starten.*Input/output error"):
         enable(env, program, lc)
     assert not remote.plist_path(env).exists()
-    assert lc.verbs() == ["bootout", "bootstrap", "bootout"]
+    assert lc.verbs() == ["bootout", "print", "bootstrap", "bootstrap", "bootout"]  # one more try, then clean up
 
 
 @pytest.mark.parametrize("what", ["address", "passphrase"])
@@ -356,8 +377,8 @@ def test_the_real_port_check_sees_a_listener():
         probe.bind(("127.0.0.1", 0))
         probe.listen()
         port = probe.getsockname()[1]
-        assert remote._port_busy(port) is True
-    assert remote._port_busy(port) is False
+        assert REAL_PORT_BUSY(port) is True
+    assert REAL_PORT_BUSY(port) is False
 
 
 # --- the passphrase placeholder ------------------------------------------------------------
@@ -431,3 +452,198 @@ def test_cli_reports_a_problem_as_json(env, program, monkeypatch):
     assert code == 0
     answer = json.loads(out.getvalue())
     assert answer["ok"] is False and "https" in answer["reason"]
+
+
+# --- a new passphrase for the phone ---------------------------------------------------------
+
+def renew(env, program, launchctl, **kw):
+    kw.setdefault("revoke", lambda e: None)
+    return remote.renew_passphrase(env, program, run=launchctl, uid=501, platform="darwin", **kw)
+
+
+def test_a_generated_passphrase_is_long_random_and_easy_to_read():
+    first, second = remote.generate_passphrase(), remote.generate_passphrase()
+    assert first != second
+    groups = first.split("-")
+    assert len(groups) == 5 and all(len(g) == 5 for g in groups)
+    assert set(first.replace("-", "")) <= set(remote.PASSPHRASE_ALPHABET)
+    assert not set("0O1IL") & set(remote.PASSPHRASE_ALPHABET)
+    remote.check_passphrase(first)  # passes the rules for a chosen passphrase
+
+
+def test_renewing_returns_the_passphrase_once_and_stores_only_its_hash(env, program):
+    enable(env, program, Launchctl(), passphrase=None)
+    assert read_remote(env)["passphrase_placeholder"] is True
+    answer = renew(env, program, Launchctl())
+    assert answer["address"] == ADDRESS
+    stored = read_remote(env)
+    assert stored["passphrase_placeholder"] is False
+    assert verify_password(answer["passphrase"], stored["password_hash"])
+    assert answer["passphrase"] not in json.dumps(stored)
+    assert answer["passphrase"] not in json.dumps(remote.status(env, program, run=Launchctl(), uid=501, platform="darwin"))
+
+
+def test_renewing_ends_every_earlier_sign_in_before_the_new_hash_takes_over(env, program):
+    enable(env, program, Launchctl(), passphrase=None)
+    lc = Launchctl()
+    seen = []
+    renew(env, program, lc, revoke=lambda e: seen.append(("bootout" in lc.verbs(), read_remote(env)["passphrase_placeholder"])))
+    assert seen == [(False, True)]  # service not yet restarted and hash not yet replaced when the tokens go
+    assert lc.verbs().count("bootstrap") == 1  # restarted afterwards, so it loads the new hash
+
+
+def test_renewing_replaces_a_real_passphrase_too(env, program):
+    enable(env, program, Launchctl())
+    old = read_remote(env)["password_hash"]
+    answer = renew(env, program, Launchctl())
+    assert read_remote(env)["password_hash"] != old
+    assert not verify_password(PASSPHRASE, read_remote(env)["password_hash"])
+    assert verify_password(answer["passphrase"], read_remote(env)["password_hash"])
+
+
+def test_renewing_needs_the_tunnel_step_first_and_changes_nothing(env, program):
+    called = []
+    with pytest.raises(SetupError, match="Tunnel"):
+        renew(env, program, Launchctl(), revoke=lambda e: called.append(1))
+    assert called == [] and not os.path.exists(os.path.join(env["OUTBOX_DATA_DIR"], "remote.json"))
+
+
+def test_if_the_sign_ins_cannot_be_ended_the_passphrase_stays_as_it_was(env, program):
+    enable(env, program, Launchctl(), passphrase=None)
+    before = read_remote(env)
+
+    def broken(_env):
+        raise SetupError("Die bisherigen Anmeldungen am Handy lassen sich nicht beenden.")
+
+    with pytest.raises(SetupError, match="beenden"):
+        renew(env, program, Launchctl(), revoke=broken)
+    assert read_remote(env) == before
+
+
+def test_other_systems_cannot_renew(env, program):
+    with pytest.raises(SetupError, match="noch nicht möglich"):
+        remote.renew_passphrase(env, program, run=Launchctl(), uid=501, platform="linux")
+
+
+def test_the_real_revoke_empties_the_sign_in_database_and_ignores_a_missing_one(env, tmp_path):
+    import sqlite3
+
+    from outbox_mcp.auth.store import AuthStore
+
+    path = tmp_path / "auth.db"
+    assert remote._revoke_logins({**env, "OUTBOX_OAUTH_DB_PATH": str(path)}) is None
+    assert not path.exists()  # nobody ever signed in: nothing is created either
+    store = AuthStore(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute("INSERT INTO clients(client_id, info_json, created_at) VALUES ('c', '{}', 1)")
+    assert store.counts()["clients"] == 1
+    remote._revoke_logins({**env, "OUTBOX_OAUTH_DB_PATH": str(path)})
+    assert store.counts()["clients"] == 0
+
+
+# --- the passkey link for the phone ---------------------------------------------------------
+
+def link(env, launchctl, **kw):
+    return remote.passkey_link(env, run=launchctl, uid=501, platform="darwin", **kw)
+
+
+def test_the_phone_link_points_at_the_public_address_and_is_a_one_time_token(env, program):
+    import sqlite3
+
+    enable(env, program, Launchctl(), passphrase=None)
+    url = link(env, Launchctl())
+    assert url.startswith("https://mein-mac.example.ts.net/passkey/enroll/")
+    token = url.rsplit("/", 1)[1]
+    assert len(token) >= 30
+    db = os.path.join(env["OUTBOX_DATA_DIR"], "outbox.db")
+    with sqlite3.connect(db) as conn:
+        rows = conn.execute("SELECT token_hash, expires_at - created_at FROM passkey_enrollments").fetchall()
+    assert len(rows) == 1 and token not in rows[0][0] and rows[0][1] == 600  # only a hash is stored, ten minutes
+
+
+def test_a_leftover_local_setting_cannot_turn_the_phone_link_into_a_local_one(env, program):
+    enable(env, program, Launchctl(), passphrase=None)
+    polluted = {**env, "OUTBOX_APPROVAL_HOST": "localhost", "OUTBOX_APPROVAL_PORT": "47821"}
+    assert link(polluted, Launchctl()).startswith("https://mein-mac.example.ts.net/")
+
+
+def test_the_phone_link_needs_the_tunnel_and_a_running_service(env, program):
+    with pytest.raises(SetupError, match="Tunnel"):
+        link(env, Launchctl())
+    enable(env, program, Launchctl(), passphrase=None)
+    with pytest.raises(SetupError, match="läuft nicht"):
+        link(env, Launchctl(state="waiting"))
+    with pytest.raises(SetupError, match="noch nicht möglich"):
+        remote.passkey_link(env, run=Launchctl(), uid=501, platform="linux")
+
+
+def test_with_two_passkeys_the_link_says_what_to_do_instead_of_failing_silently(env, program):
+    import sqlite3
+
+    enable(env, program, Launchctl(), passphrase=None)
+    link(env, Launchctl())  # creates the database
+    db = os.path.join(env["OUTBOX_DATA_DIR"], "outbox.db")
+    with sqlite3.connect(db) as conn:
+        for n in range(2):
+            conn.execute(
+                "INSERT INTO passkey_credentials(credential_id, public_key, created_at) VALUES (?, x'00', 1)", (f"id{n}",)
+            )
+    with pytest.raises(SetupError, match="zwei Passkeys.*Passkeys“"):
+        link(env, Launchctl())
+
+
+def test_cli_prints_the_new_passphrase_once_and_the_phone_link(env, program, monkeypatch):
+    lc = Launchctl()
+    monkeypatch.setattr(remote, "_run", lc)
+    monkeypatch.setattr(remote.sys, "platform", "darwin")
+    monkeypatch.setattr(remote.os, "getuid", lambda: 501)
+    monkeypatch.setattr(remote, "_revoke_logins", lambda e: None)
+    enable(env, program, lc, passphrase=None)
+    out = io.StringIO()
+    assert setup_cli.main(["passphrase-new", "--command", program], env=env, stdout=out) == 0
+    answer = json.loads(out.getvalue())
+    assert answer["ok"] is True and len(answer["passphrase"].split("-")) == 5 and answer["address"] == ADDRESS
+    assert verify_password(answer["passphrase"], read_remote(env)["password_hash"])
+    out = io.StringIO()
+    assert setup_cli.main(["approval-link", "--phone"], env=env, stdout=out) == 0
+    answer = json.loads(out.getvalue())
+    assert answer["ok"] is True and answer["url"].startswith("https://mein-mac.example.ts.net/passkey/enroll/")
+
+
+def test_cli_reports_a_missing_tunnel_for_the_new_passphrase_as_json(env, program, monkeypatch):
+    monkeypatch.setattr(remote.sys, "platform", "darwin")
+    out = io.StringIO()
+    assert setup_cli.main(["passphrase-new", "--command", program], env=env, stdout=out) == 0
+    answer = json.loads(out.getvalue())
+    assert answer["ok"] is False and "Tunnel" in answer["reason"]
+
+
+# --- restarting a running service ----------------------------------------------------------
+
+def test_a_restart_waits_until_launchd_has_really_ended_the_old_service(env, program):
+    enable(env, program, Launchctl())
+    pauses = []
+    lc = Launchctl(lag=3)  # the old instance is still listed for three more looks, and bootstrap fails meanwhile
+    enable(env, program, lc, sleep=pauses.append)
+    assert lc.verbs()[0] == "bootout" and lc.verbs()[-1] == "bootstrap"
+    assert lc.verbs().count("print") == 4 and lc.verbs().count("bootstrap") == 1
+    assert len(pauses) == 3
+    assert remote.status(env, program, run=Launchctl(), uid=501, platform="darwin")["running"] is True
+
+
+def test_a_service_that_does_not_leave_changes_nothing(env, program):
+    enable(env, program, Launchctl())
+    before = (read_remote(env), remote.plist_path(env).read_bytes())
+    lc = Launchctl(stays_listed=True)
+    with pytest.raises(SetupError, match="nicht rechtzeitig"):
+        enable(env, program, lc, passphrase="eine-ganz-andere-passphrase-1")
+    assert "bootstrap" not in lc.verbs()
+    assert (read_remote(env), remote.plist_path(env).read_bytes()) == before  # old hash and service file stay
+
+
+def test_one_failed_start_is_tried_once_more_after_a_pause(env, program):
+    pauses = []
+    lc = Launchctl(bootstrap_failures=1)
+    enable(env, program, lc, sleep=pauses.append)
+    assert lc.verbs().count("bootstrap") == 2 and pauses == [1.0]
+    assert remote.plist_path(env).exists()

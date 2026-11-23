@@ -53,8 +53,21 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   const [tunnelResult, setTunnelResult] = useState<Status>(IDLE)
   const [tunnelAdmin, setTunnelAdmin] = useState<string | null>(null)
   const [tunnelTried, setTunnelTried] = useState(false)
+  const [loginPassphrase, setLoginPassphrase] = useState<string | null>(null)
+  const [loginSaved, setLoginSaved] = useState(false)
+  const [loginExisting, setLoginExisting] = useState(false)
+  const [loginUsed, setLoginUsed] = useState(false)
+  const [loginStatus, setLoginStatus] = useState<Status>(IDLE)
+  const [phoneAddress, setPhoneAddress] = useState<string | null>(null)
+  const [phoneKeyLink, setPhoneKeyLink] = useState<string | null>(null)
+  const [phoneKeysBefore, setPhoneKeysBefore] = useState(0)
+  const [phoneKeyDone, setPhoneKeyDone] = useState(false)
+  const [phoneKeyStatus, setPhoneKeyStatus] = useState<Status>(IDLE)
+  const [copied, setCopied] = useState<string | null>(null)
+  const [copyFailed, setCopyFailed] = useState(false)
   const pwInput = useRef<HTMLInputElement>(null)
 
+  const connectorUrl = phoneAddress ? `${phoneAddress}/mcp` : null
   const steps = where === 'phone' ? STEPS_PHONE : STEPS
   const index = steps.indexOf(step)
   const preset = providerId ? presetFor(providerId) : null
@@ -88,6 +101,19 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
       void backend.previewClaudeConnection().then((r) => (r.ok ? setPreview(r.lines) : setPreviewError(r.reason)))
     }
     if (step === 'tunnel' && tunnelResult.kind !== 'ok') void loadTunnel()
+    if (step !== 'phonelogin') {
+      setLoginPassphrase(null) // never kept beyond its step
+      setLoginSaved(false)
+    }
+    setCopied(null)
+    setCopyFailed(false)
+    if (step === 'phonelogin') {
+      void backend.remoteStatus().then((r) => {
+        setLoginExisting(r.enabled && !r.passphrase_placeholder)
+        if (r.address) setPhoneAddress(r.address)
+        if (r.enabled && !r.passphrase_placeholder) setLoginUsed(true)
+      })
+    }
   }, [step]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Look at the real state once: what is already set up is not asked for again.
@@ -187,12 +213,77 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
       setTunnelResult({
         kind: 'ok',
         text: `Der Tunnel steht: ${r.address}. ${
-          r.passphrase_placeholder ? 'Anmelden vom Handy geht erst, wenn eine Passphrase festgelegt ist. Das kommt in einem späteren Schritt. ' : ''
+          r.passphrase_placeholder ? 'Anmelden vom Handy geht erst mit einer Passphrase, die kommt im nächsten Schritt. ' : ''
         }Ob dein Handy durchkommt, zeigt sich erst dort; geprüft wurde bisher von diesem Computer aus.`,
       })
     } else {
       setTunnelResult({ kind: 'fail', text: r.reason })
       setTunnelAdmin(r.url ?? null)
+    }
+  }
+
+  // Copy only on a click, never on its own. A refused copy is said out loud.
+  const copy = async (text: string, key: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(key)
+      setCopyFailed(false)
+    } catch {
+      setCopied(null)
+      setCopyFailed(true)
+    }
+  }
+
+  // The passphrase lives in this state only while the step is open; leaving the step clears it.
+  const createPassphrase = async () => {
+    if (loginStatus.kind === 'busy') return
+    setLoginStatus({ kind: 'busy' })
+    const r = await backend.newPassphrase()
+    if (r.ok) {
+      setLoginPassphrase(r.passphrase)
+      setLoginSaved(false)
+      setLoginUsed(true)
+      setPhoneAddress(r.address)
+      setLoginStatus(IDLE)
+    } else {
+      setLoginStatus({ kind: 'fail', text: r.reason })
+    }
+  }
+
+  const getPhoneKeyLink = async () => {
+    if (phoneKeyStatus.kind === 'busy') return
+    setPhoneKeyStatus({ kind: 'busy' })
+    const before = (await backend.status()).passkeys
+    const r = await backend.approvalLink(true)
+    if (!r.ok) {
+      setPhoneKeyStatus({ kind: 'fail', text: r.reason })
+      return
+    }
+    setPhoneKeysBefore(before)
+    setPhoneKeyLink(r.url)
+    setPhoneKeyStatus({
+      kind: 'ok',
+      text: 'Der Link gilt einmal, 10 Minuten. Öffne ihn auf dem Handy und lege dort den Passkey an. Klicke danach hier auf „Prüfen“.',
+    })
+  }
+
+  const checkPhoneKey = async () => {
+    if (phoneKeyStatus.kind === 'busy') return
+    if (phoneKeyLink === null) {
+      setPhoneKeyStatus({ kind: 'fail', text: 'Erzeuge zuerst den Link und öffne ihn auf dem Handy.' })
+      return
+    }
+    setPhoneKeyStatus({ kind: 'busy' })
+    const st = await backend.status()
+    setPasskeys(st.passkeys)
+    if (st.passkeys > phoneKeysBefore) {
+      setPhoneKeyDone(true)
+      setPhoneKeyStatus({ kind: 'ok', text: 'Der Passkey am Handy ist registriert. Mails an andere gibst du ab jetzt auch dort frei.' })
+    } else {
+      setPhoneKeyStatus({
+        kind: 'fail',
+        text: 'Es ist noch kein neuer Passkey registriert. Hast du den Vorgang auf dem Handy abgeschlossen? Der Link gilt 10 Minuten, danach erzeuge einen neuen.',
+      })
     }
   }
 
@@ -231,10 +322,14 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
         return passkeys > 0
       case 'tunnel':
         return tunnelResult.kind === 'ok'
+      case 'phonelogin':
+        return loginPassphrase !== null ? loginSaved : loginExisting
+      case 'phonekey':
+        return phoneKeyDone
       default:
         return true
     }
-  }, [step, mailboxReady, pwStatus.kind, testStatus.kind, claudeStatus.kind, passkeys, tunnelResult.kind])
+  }, [step, mailboxReady, pwStatus.kind, testStatus.kind, claudeStatus.kind, passkeys, tunnelResult.kind, loginPassphrase, loginSaved, loginExisting, phoneKeyDone])
 
   const back = () => index > 0 && go(steps[index - 1])
   const next = () => (step === 'done' ? onDone() : go(steps[index + 1]))
@@ -314,7 +409,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               )}
               {where === 'phone' && (
                 <div className="mt-2 p-2 text-[12px]" style={{ background: '#ffffe1', border: '1px solid #000' }}>
-                  Zwischenstand: Der Tunnel lässt sich schon einrichten. Die Anmeldung vom Handy (Passphrase) kommt in einem späteren Schritt. Wer nur diesen Computer braucht, wählt „Nur an diesem Computer“.
+                  Zwischenstand: Tunnel, Anmeldung und Passkey fürs Handy lassen sich schon einrichten. Das Abschalten des Tunnels hier im Wizard folgt noch. Wer nur diesen Computer braucht, wählt „Nur an diesem Computer“.
                 </div>
               )}
             </>
@@ -538,6 +633,117 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
             </>
           )}
 
+          {step === 'phonelogin' && (
+            <>
+              <div className="font-bold mb-2">Anmeldung vom Handy</div>
+              {loginPassphrase === null ? (
+                <>
+                  <div className="mb-2">
+                    Damit nur du dein Handy mit Mail Assistant verbinden kannst, braucht es eine Passphrase. Mail Assistant erzeugt sie für dich und zeigt sie dir <b>genau einmal</b>. Gespeichert wird nur ein Fingerabdruck davon, nicht die Passphrase selbst.
+                  </div>
+                  {loginExisting && (
+                    <div className="mb-2 p-2 text-[12px]" style={{ background: '#ffffe1', border: '1px solid #000' }}>
+                      Es gibt schon eine Passphrase. Erzeugst du eine neue, wird die alte ungültig und dein Handy muss sich neu anmelden.
+                    </div>
+                  )}
+                  <div className="flex justify-end gap-2">
+                    <button type="button" className="bevel font-bold" disabled={loginStatus.kind === 'busy'} onClick={() => void createPassphrase()}>
+                      {loginExisting ? 'Neue Passphrase erzeugen' : 'Passphrase erzeugen'}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="mb-1">Deine Passphrase (wird nur jetzt angezeigt):</div>
+                  <div className="mb-2 text-[15px] break-all select-all font-bold" style={{ background: '#fff', ...INPUT, padding: 6, fontFamily: 'monospace' }} aria-label="Passphrase">
+                    {loginPassphrase}
+                  </div>
+                  <div className="flex justify-end mb-2">
+                    <button type="button" className="bevel" onClick={() => void copy(loginPassphrase, 'pass')}>
+                      {copied === 'pass' ? 'Kopiert' : 'Kopieren'}
+                    </button>
+                  </div>
+                  <div className="mb-2 text-[12px]">
+                    Speichere sie jetzt in deinem Passwortmanager. Danach lässt sie sich nicht mehr anzeigen. Geht sie verloren, erzeugst du hier eine neue.
+                  </div>
+                  <label className="flex gap-2 mb-3 cursor-pointer">
+                    <input type="checkbox" checked={loginSaved} onChange={(e) => setLoginSaved(e.target.checked)} />
+                    <span>Ja, ich habe die Passphrase gespeichert.</span>
+                  </label>
+                </>
+              )}
+              {statusLine(loginStatus)}
+              {connectorUrl && (loginPassphrase !== null || loginExisting) && (
+                <div className="mt-3 text-[12px]">
+                  <div className="font-bold mb-1">Danach: Claude mit deinem Computer verbinden</div>
+                  <ol className="list-decimal pl-5 mb-2">
+                    <li>
+                      claude.ai im Browser öffnen, dort <b>Einstellungen → Connectors</b> und „Eigenen Connector hinzufügen“ („Add custom connector“).{' '}
+                      <button type="button" className="bevel" onClick={() => void backend.openLink('https://claude.ai/settings/connectors')}>
+                        Einstellungen öffnen
+                      </button>
+                    </li>
+                    <li>Name: „Mail Assistant“. Als Adresse diese eintragen:</li>
+                  </ol>
+                  <div className="mb-1 break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label="Adresse für den Connector">
+                    {connectorUrl}
+                  </div>
+                  <div className="flex justify-end mb-2">
+                    <button type="button" className="bevel" onClick={() => void copy(connectorUrl, 'addr')}>
+                      {copied === 'addr' ? 'Kopiert' : 'Kopieren'}
+                    </button>
+                  </div>
+                  <div>Beim Anmelden fragt die Seite deines Computers nach der Passphrase. Der Connector erscheint danach automatisch in der Claude-App auf dem Handy (dort einen neuen Chat beginnen).</div>
+                </div>
+              )}
+              {copyFailed && (
+                <div className="mt-2 text-[12px]" role="alert" style={{ color: '#a01020' }}>
+                  Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand.
+                </div>
+              )}
+            </>
+          )}
+
+          {step === 'phonekey' && (
+            <>
+              <div className="font-bold mb-2">Freigabe vom Handy (Passkey)</div>
+              <div className="mb-2">
+                Auch am Handy gibst du Mails an andere Adressen selbst frei, mit Face ID oder Fingerabdruck. Der Passkey gehört zur Internetadresse deines Computers und wird deshalb auf dem Handy selbst angelegt.
+              </div>
+              <ol className="list-decimal pl-5 mb-3">
+                <li>Hier „Link erzeugen“ klicken.</li>
+                <li>Den Link an dein Handy schicken (zum Beispiel per AirDrop oder als Nachricht an dich selbst) und dort im Browser öffnen.</li>
+                <li>Auf dem Handy den Passkey anlegen, dann hier „Prüfen“ klicken.</li>
+              </ol>
+              <div className="flex gap-2 justify-end">
+                <button type="button" className="bevel font-bold" disabled={phoneKeyStatus.kind === 'busy' || phoneKeyDone} onClick={() => void getPhoneKeyLink()}>
+                  Link erzeugen
+                </button>
+                <button type="button" className="bevel" disabled={phoneKeyStatus.kind === 'busy' || phoneKeyDone} onClick={() => void checkPhoneKey()}>
+                  Prüfen
+                </button>
+              </div>
+              {statusLine(phoneKeyStatus)}
+              {phoneKeyLink && !phoneKeyDone && (
+                <>
+                  <div className="mt-2 text-[11px] break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label="Link fürs Handy">
+                    {phoneKeyLink}
+                  </div>
+                  <div className="flex justify-end mt-1">
+                    <button type="button" className="bevel" onClick={() => void copy(phoneKeyLink, 'link')}>
+                      {copied === 'link' ? 'Kopiert' : 'Kopieren'}
+                    </button>
+                  </div>
+                </>
+              )}
+              {copyFailed && (
+                <div className="mt-2 text-[12px]" role="alert" style={{ color: '#a01020' }}>
+                  Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand.
+                </div>
+              )}
+            </>
+          )}
+
           {step === 'done' && (
             <>
               <div className="font-bold mb-2">Fertig eingerichtet</div>
@@ -553,7 +759,15 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   <li>Testmail ist angekommen{markOwn ? `; ${testTo.trim()} gilt als eigene Adresse` : ''}</li>
                 )}
                 <li>Claude Desktop ist verbunden</li>
-                {tunnelResult.kind === 'ok' && tunnel?.address && <li>Tunnel steht: {tunnel.address}. Anmelden vom Handy folgt in einem späteren Schritt</li>}
+                {tunnelResult.kind === 'ok' && tunnel?.address && <li>Tunnel steht: {tunnel.address}</li>}
+                {where === 'phone' && loginUsed && <li>Anmeldung vom Handy: Passphrase festgelegt, Connector in claude.ai eintragen nicht vergessen</li>}
+                {where === 'phone' && (
+                  <li>
+                    {phoneKeyDone
+                      ? 'Passkey am Handy eingerichtet: Mails an andere Adressen gibst du auch dort frei'
+                      : 'Passkey am Handy noch nicht eingerichtet: Mails an andere Adressen lassen sich vom Handy erst danach senden'}
+                  </li>
+                )}
                 <li>
                   {passkeys > 0
                     ? 'Passkey eingerichtet: Mails an andere Adressen gibst du auf der Freigabeseite frei'
@@ -562,7 +776,8 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               </ul>
               {where === 'phone' ? (
                 <>
-                  <div className="mb-2">Probier es am Handy aus, sobald die Anmeldung dort eingerichtet ist (kommt als nächster Schritt): Schreib Claude in der Claude-App „Schick mir eine Testmail.“</div>
+                  <div className="mb-2">Probier es am Handy aus: Schreib Claude in der Claude-App „Schick mir eine Testmail.“</div>
+                  <div className="mb-2 text-[12px]">Dein Computer ist dein persönlicher Mail-Server. Schläft er oder ist er aus, kann die Handy-App ihn vorübergehend nicht erreichen. Es geht dabei nichts verloren und nichts wird doppelt gesendet.</div>
                   <div className="text-[12px]">Diese App brauchst du nur zum Einrichten und Verwalten. Geschrieben und verschickt wird in Claude.</div>
                 </>
               ) : (
@@ -588,6 +803,9 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
           )}
           {step === 'passkey' && passkeys === 0 && (
             <button type="button" className="bevel" onClick={() => go(where === 'phone' ? 'tunnel' : 'done')} title="Du kannst den Passkey später nachholen">Später</button>
+          )}
+          {step === 'phonekey' && !phoneKeyDone && (
+            <button type="button" className="bevel" onClick={() => go('done')} title="Du kannst den Passkey am Handy später nachholen">Später</button>
           )}
           <button type="button" className="bevel font-bold" disabled={!canNext} onClick={next}>
             {step === 'done' ? 'Zur Verwaltung' : 'Weiter'}

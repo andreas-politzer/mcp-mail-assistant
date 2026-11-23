@@ -8,6 +8,7 @@ import subprocess
 
 import pytest
 
+
 from outbox_mcp import remote, setup_cli, tunnel
 from outbox_mcp.auth.passwords import verify_password
 from outbox_mcp.setup_tasks import SetupError
@@ -18,6 +19,14 @@ HOST = "mein-mac.example.ts.net"
 ADDRESS = f"https://{HOST}"
 TS = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 ADMIN = "https://login.tailscale.com/f/funnel?node=nABC123"
+
+
+@pytest.fixture(autouse=True)
+def _port_is_free(monkeypatch):
+    """Where the server really runs, 8430 answers. A test must never wait for, or depend on, that."""
+    from outbox_mcp import remote as _remote
+
+    monkeypatch.setattr(_remote, "_port_busy", lambda port=_remote.PORT: False)
 
 
 def serve_config(proxy=f"http://127.0.0.1:{remote.PORT}", funnel=True, host=HOST):

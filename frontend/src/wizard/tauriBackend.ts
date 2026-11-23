@@ -12,6 +12,8 @@ interface Reply {
   state?: TunnelState
   address?: string | null
   passphrase_placeholder?: boolean
+  enabled?: boolean
+  passphrase?: string
 }
 
 const FAILED = 'Der Schritt ist fehlgeschlagen. Starte die App neu und versuche es noch einmal.'
@@ -55,8 +57,8 @@ export function tauriBackend(): SetupBackend {
     async disconnectClaude() {
       return outcome(await call<Reply>('setup_disconnect_claude'))
     },
-    async approvalLink() {
-      const r = await call<Reply>('setup_approval_link')
+    async approvalLink(phone?: boolean) {
+      const r = await call<Reply>('setup_approval_link', phone ? { phone: true } : undefined)
       return r.ok && r.url ? { ok: true as const, url: r.url } : { ok: false as const, reason: r.reason ?? FAILED }
     },
     async openLink(url: string) {
@@ -66,6 +68,16 @@ export function tauriBackend(): SetupBackend {
       const r = (await call<Reply>('setup_tunnel_status')) as Reply
       if (!r.ok || !r.state) return { state: 'unreadable' as const, address: null, reason: r.reason ?? FAILED }
       return { state: r.state, address: r.address ?? null, reason: r.reason ?? null }
+    },
+    async remoteStatus() {
+      const r = (await call<Reply>('setup_remote_status')) as Reply
+      if (!r.ok) return { enabled: false, address: null, passphrase_placeholder: true }
+      return { enabled: r.enabled === true, address: r.address ?? null, passphrase_placeholder: r.passphrase_placeholder !== false }
+    },
+    async newPassphrase() {
+      const r = (await call<Reply>('setup_passphrase_new')) as Reply
+      if (r.ok && r.passphrase && r.address) return { ok: true as const, passphrase: r.passphrase, address: r.address }
+      return { ok: false as const, reason: r.reason ?? FAILED }
     },
     async tunnelEnable(address: string) {
       const r = (await call<Reply>('setup_tunnel_enable', { address })) as Reply

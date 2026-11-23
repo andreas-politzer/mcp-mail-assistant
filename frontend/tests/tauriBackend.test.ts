@@ -69,3 +69,39 @@ describe('the desktop backend for the tunnel', () => {
     expect(await tauriBackend().tunnelEnable('https://mac.example.ts.net')).toEqual({ ok: false, reason: 'Tailscale ist ausgeschaltet.' })
   })
 })
+
+describe('the desktop backend for the phone sign-in', () => {
+  it('asks for the phone page only when told to, and for the local one without any argument', async () => {
+    invoke.mockResolvedValue({ ok: true, url: 'https://mac.example.ts.net/passkey/enroll/abc' })
+    expect(await tauriBackend().approvalLink(true)).toEqual({ ok: true, url: 'https://mac.example.ts.net/passkey/enroll/abc' })
+    expect(invoke).toHaveBeenCalledWith('setup_approval_link', { phone: true })
+    invoke.mockResolvedValue({ ok: true, url: 'http://localhost:47821/passkey/enroll/abc' })
+    await tauriBackend().approvalLink()
+    expect(invoke).toHaveBeenLastCalledWith('setup_approval_link', undefined)
+  })
+
+  it('passes the reason of a refused phone link through', async () => {
+    invoke.mockResolvedValue({ ok: false, reason: 'Es sind schon zwei Passkeys eingerichtet, mehr geht nicht.' })
+    expect(await tauriBackend().approvalLink(true)).toEqual({ ok: false, reason: 'Es sind schon zwei Passkeys eingerichtet, mehr geht nicht.' })
+  })
+
+  it('returns the new passphrase with the address, or the reason', async () => {
+    invoke.mockResolvedValue({ ok: true, passphrase: 'ABCDE-FGHJK-MNPQR-STUVW-XYZ23', address: 'https://mac.example.ts.net' })
+    expect(await tauriBackend().newPassphrase()).toEqual({ ok: true, passphrase: 'ABCDE-FGHJK-MNPQR-STUVW-XYZ23', address: 'https://mac.example.ts.net' })
+    expect(invoke).toHaveBeenCalledWith('setup_passphrase_new', undefined)
+    invoke.mockResolvedValue({ ok: false, reason: 'Der Tunnel ist noch nicht eingerichtet. Schalte ihn zuerst ein.' })
+    expect(await tauriBackend().newPassphrase()).toEqual({ ok: false, reason: 'Der Tunnel ist noch nicht eingerichtet. Schalte ihn zuerst ein.' })
+    invoke.mockResolvedValue({ ok: true })
+    const odd = await tauriBackend().newPassphrase()
+    expect(odd.ok).toBe(false) // an answer without a passphrase is never shown as a success
+  })
+
+  it('reads the phone state and treats anything unclear as "not set up, throw-away passphrase"', async () => {
+    invoke.mockResolvedValue({ ok: true, enabled: true, address: 'https://mac.example.ts.net', passphrase_placeholder: false })
+    expect(await tauriBackend().remoteStatus()).toEqual({ enabled: true, address: 'https://mac.example.ts.net', passphrase_placeholder: false })
+    invoke.mockResolvedValue({ ok: true, enabled: false, address: null })
+    expect(await tauriBackend().remoteStatus()).toEqual({ enabled: false, address: null, passphrase_placeholder: true })
+    invoke.mockRejectedValue(new Error('boom'))
+    expect(await tauriBackend().remoteStatus()).toEqual({ enabled: false, address: null, passphrase_placeholder: true })
+  })
+})
