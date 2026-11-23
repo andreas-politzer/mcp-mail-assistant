@@ -1,8 +1,11 @@
 // Funki's lines for the wizard: one per step, fixed texts (no model). Funny, but every sentence is correct.
 
-export type StepId = 'where' | 'mailbox' | 'password' | 'test' | 'claude' | 'passkey' | 'done'
+export type StepId = 'where' | 'mailbox' | 'password' | 'test' | 'claude' | 'passkey' | 'tunnel' | 'done'
 
 export const STEPS: StepId[] = ['where', 'mailbox', 'password', 'test', 'claude', 'passkey', 'done']
+
+// Whoever wants to use the phone as well gets the tunnel step before the end.
+export const STEPS_PHONE: StepId[] = ['where', 'mailbox', 'password', 'test', 'claude', 'passkey', 'tunnel', 'done']
 
 export const HINTS: Record<StepId, string[]> = {
   where: [
@@ -30,6 +33,11 @@ export const HINTS: Record<StepId, string[]> = {
   passkey: [
     'Der Passkey ist dein Daumenabdruck für Mails an andere: Ohne ihn geht keine einzige raus. Bei Mails an dich selbst fragt Claude im Chat nur kurz nach.',
     'Du kannst das auch später nachholen. Bis dahin gehen aber nur Mails an dich selbst.',
+  ],
+  tunnel: [
+    'Der Tunnel gibt deinem Computer eine Adresse im Internet, unter der dein Handy ihn findet. Dafür nehmen wir Tailscale. Dort meldest du dich selbst an, Mail Assistant installiert nichts.',
+    'Die Adresse enthält den Namen deines Computers und ist danach öffentlich sichtbar. Ohne deine Passphrase kommt trotzdem niemand hinein.',
+    'Beim ersten Mal holt Tailscale ein Zertifikat. Das kann ein bis zwei Minuten dauern. Dann hilft „Erneut prüfen“.',
   ],
   done: [
     'Geschafft! Schreib Claude zum Beispiel: „Schick mir eine Testmail.“ Ich schaue zu und schweige. Fast.',

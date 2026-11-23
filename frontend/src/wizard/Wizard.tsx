@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Assistant } from '../components/Assistant'
-import { HINTS, STEPS, type StepId } from './hints'
+import { HINTS, STEPS, STEPS_PHONE, type StepId } from './hints'
 import { PRESETS, guessPreset, looksLikeAddress, presetFor, unsupportedReason, type Security } from './presets'
-import type { SetupBackend } from './setupApi'
+import type { SetupBackend, TunnelStatus } from './setupApi'
 
 // Setup wizard in the classic window style. It comes before the sign-in: a new installation has neither a
-// server nor a passphrase yet. Desktop-only path; the phone path (tunnel) is a later step.
+// server nor a passphrase yet. Whoever also wants the phone gets one more step: the tunnel (Tailscale Funnel).
 //
 // The wizard looks at the real state each time and only asks for what is missing, so it can be run again.
 // The password lives in one input, goes through one call, and is cleared right away, win or lose.
@@ -48,9 +48,15 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   const [passkeys, setPasskeys] = useState(0)
   const [pkStatus, setPkStatus] = useState<Status>(IDLE)
   const [pkLink, setPkLink] = useState<string | null>(null)
+  const [tunnel, setTunnel] = useState<TunnelStatus | null>(null)
+  const [tunnelConfirmed, setTunnelConfirmed] = useState(false)
+  const [tunnelResult, setTunnelResult] = useState<Status>(IDLE)
+  const [tunnelAdmin, setTunnelAdmin] = useState<string | null>(null)
+  const [tunnelTried, setTunnelTried] = useState(false)
   const pwInput = useRef<HTMLInputElement>(null)
 
-  const index = STEPS.indexOf(step)
+  const steps = where === 'phone' ? STEPS_PHONE : STEPS
+  const index = steps.indexOf(step)
   const preset = providerId ? presetFor(providerId) : null
   const hints = HINTS[step]
   const hint = hints[Math.min(tip, hints.length - 1)]
@@ -81,6 +87,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     if (step === 'claude' && preview.length === 0) {
       void backend.previewClaudeConnection().then((r) => (r.ok ? setPreview(r.lines) : setPreviewError(r.reason)))
     }
+    if (step === 'tunnel' && tunnelResult.kind !== 'ok') void loadTunnel()
   }, [step]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Look at the real state once: what is already set up is not asked for again.
@@ -161,6 +168,34 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     )
   }
 
+  const loadTunnel = async () => {
+    setTunnel(null)
+    setTunnelResult(IDLE)
+    setTunnelAdmin(null)
+    setTunnelTried(false)
+    setTunnel(await backend.tunnelStatus())
+  }
+
+  // The address is the one the person confirmed; the program refuses it if it is no longer Tailscale's own.
+  const enableTunnel = async () => {
+    if (!tunnel?.address || tunnelResult.kind === 'busy') return
+    setTunnelTried(true)
+    setTunnelAdmin(null)
+    setTunnelResult({ kind: 'busy' })
+    const r = await backend.tunnelEnable(tunnel.address)
+    if (r.ok) {
+      setTunnelResult({
+        kind: 'ok',
+        text: `Der Tunnel steht: ${r.address}. ${
+          r.passphrase_placeholder ? 'Anmelden vom Handy geht erst, wenn eine Passphrase festgelegt ist. Das kommt in einem späteren Schritt. ' : ''
+        }Ob dein Handy durchkommt, zeigt sich erst dort; geprüft wurde bisher von diesem Computer aus.`,
+      })
+    } else {
+      setTunnelResult({ kind: 'fail', text: r.reason })
+      setTunnelAdmin(r.url ?? null)
+    }
+  }
+
   const connectClaude = async () => {
     if (claudeStatus.kind === 'busy') return
     setClaudeStatus({ kind: 'busy' })
@@ -183,7 +218,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   const canNext = useMemo(() => {
     switch (step) {
       case 'where':
-        return where === 'here'
+        return true
       case 'mailbox':
         return mailboxReady
       case 'password':
@@ -194,13 +229,15 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
         return claudeStatus.kind === 'ok'
       case 'passkey':
         return passkeys > 0
+      case 'tunnel':
+        return tunnelResult.kind === 'ok'
       default:
         return true
     }
-  }, [step, where, mailboxReady, pwStatus.kind, testStatus.kind, claudeStatus.kind, passkeys])
+  }, [step, mailboxReady, pwStatus.kind, testStatus.kind, claudeStatus.kind, passkeys, tunnelResult.kind])
 
-  const back = () => index > 0 && go(STEPS[index - 1])
-  const next = () => (step === 'done' ? onDone() : go(STEPS[index + 1]))
+  const back = () => index > 0 && go(steps[index - 1])
+  const next = () => (step === 'done' ? onDone() : go(steps[index + 1]))
 
   const statusLine = (s: Status) =>
     s.kind === 'idle' ? null : (
@@ -214,7 +251,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
       <div style={{ width: 480, ...FRAME }} role="dialog" aria-label="Einrichtung">
         <div className="px-2 py-0.5 m-0.5 select-none font-bold text-[13px] flex" style={{ background: 'linear-gradient(90deg, #0a246a, #3a6ea5)', color: '#fff' }}>
           <span className="flex-1">Einrichtung – Mail Assistant</span>
-          <span className="font-normal">Schritt {index + 1} von {STEPS.length}</span>
+          <span className="font-normal">Schritt {index + 1} von {steps.length}</span>
         </div>
 
         <div className="p-4 text-[13px] leading-relaxed" style={{ minHeight: 300 }}>
@@ -229,7 +266,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   Du schreibst mit Claude Desktop auf diesem Rechner. Mehr brauchst du nicht.
                 </span>
               </label>
-              <label className="flex gap-2 mb-2 cursor-pointer" style={{ opacity: 0.6 }}>
+              <label className="flex gap-2 mb-2 cursor-pointer">
                 <input
                   type="radio"
                   name="where"
@@ -240,14 +277,44 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   }}
                 />
                 <span>
-                  <b>Auch vom Handy aus</b> (kommt später)
+                  <b>Auch vom Handy aus</b> (in Arbeit)
                   <br />
-                  Dafür richten wir einen Tunnel ein. Das geht jederzeit nachträglich.
+                  Für die Claude-App auf iPhone oder Android. Der Computer muss dafür eingeschaltet sein. Das geht jederzeit nachträglich.
                 </span>
               </label>
               {where === 'phone' && (
+                <fieldset className="mt-2 p-2 text-[12px]" style={{ border: '2px groove #fff' }}>
+                  <legend className="px-1">Zugangsweg fürs Handy</legend>
+                  <label className="flex gap-2 mb-2 cursor-pointer">
+                    <input type="radio" name="via" checked readOnly />
+                    <span>
+                      <b>Tailscale Funnel</b> (empfohlen)
+                      <br />
+                      Kostenlos, feste Adresse, keine Warnseite.
+                    </span>
+                  </label>
+                  <label className="flex gap-2 mb-2" style={{ opacity: 0.5 }}>
+                    <input type="radio" name="via" disabled />
+                    <span>
+                      <b>ngrok</b> (kommt bald)
+                      <br />
+                      Ohne eigene Domain, kurze Warnseite beim ersten Aufruf.
+                    </span>
+                  </label>
+                  <label className="flex gap-2 mb-2" style={{ opacity: 0.5 }}>
+                    <input type="radio" name="via" disabled />
+                    <span>
+                      <b>Cloudflare Tunnel, eigene Domain</b> (kommt bald)
+                      <br />
+                      Für deine Domain, z. B. mail.deinname.de. Sie muss bei Cloudflare liegen.
+                    </span>
+                  </label>
+                  <div>Ein späterer Wechsel ändert die Adresse. Die Anmeldung am Handy muss dann neu eingerichtet werden.</div>
+                </fieldset>
+              )}
+              {where === 'phone' && (
                 <div className="mt-2 p-2 text-[12px]" style={{ background: '#ffffe1', border: '1px solid #000' }}>
-                  Die Handy-Einrichtung ist noch nicht freigeschaltet. Fang mit „Nur an diesem Computer“ an; später kannst du hier einfach wechseln.
+                  Zwischenstand: Der Tunnel lässt sich schon einrichten. Die Anmeldung vom Handy (Passphrase) kommt in einem späteren Schritt. Wer nur diesen Computer braucht, wählt „Nur an diesem Computer“.
                 </div>
               )}
             </>
@@ -411,6 +478,66 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
             </>
           )}
 
+          {step === 'tunnel' && (
+            <>
+              <div className="font-bold mb-2">Tunnel für das Handy (Tailscale)</div>
+              {tunnel === null ? (
+                <div>Einen Moment …</div>
+              ) : tunnel.state === 'ready' && tunnel.address ? (
+                <>
+                  <div className="mb-2">Dein Computer wäre dann unter dieser Adresse erreichbar:</div>
+                  <div className="mb-2 text-[12px] break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label="Öffentliche Adresse">
+                    {tunnel.address}
+                  </div>
+                  <div className="mb-2 text-[12px]">
+                    Die Adresse enthält den Namen deines Computers und ist danach öffentlich sichtbar. Mail Assistant startet dafür den Hintergrunddienst und schaltet bei Tailscale den „Funnel“ ein, nur für diesen einen Dienst.
+                  </div>
+                  <label className="flex gap-2 mb-3 cursor-pointer">
+                    <input type="checkbox" checked={tunnelConfirmed} disabled={tunnelResult.kind === 'busy' || tunnelResult.kind === 'ok'} onChange={(e) => setTunnelConfirmed(e.target.checked)} />
+                    <span>Ja, diese Adresse darf öffentlich sichtbar sein.</span>
+                  </label>
+                  <div className="flex justify-end gap-2">
+                    {tunnelTried && tunnelResult.kind === 'fail' && (
+                      <button type="button" className="bevel" onClick={() => void enableTunnel()}>
+                        Erneut prüfen
+                      </button>
+                    )}
+                    <button type="button" className="bevel font-bold" disabled={!tunnelConfirmed || tunnelResult.kind === 'busy' || tunnelResult.kind === 'ok'} onClick={() => void enableTunnel()}>
+                      Tunnel einschalten
+                    </button>
+                  </div>
+                  {!tunnelConfirmed && tunnelResult.kind !== 'ok' && tunnelResult.kind !== 'busy' && (
+                    <div className="mt-1 text-right text-[12px]">Setze zuerst das Häkchen.</div>
+                  )}
+                </>
+              ) : (
+                <>
+                  <div className="mb-3 p-2 text-[12px]" role="alert" style={{ background: '#ffffe1', border: '1px solid #000' }}>
+                    {tunnel.reason}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    {tunnel.state === 'missing' && (
+                      <button type="button" className="bevel" onClick={() => void backend.openLink('https://tailscale.com/download')}>
+                        Tailscale-Seite öffnen
+                      </button>
+                    )}
+                    <button type="button" className="bevel font-bold" onClick={() => void loadTunnel()}>
+                      Erneut prüfen
+                    </button>
+                  </div>
+                </>
+              )}
+              {statusLine(tunnelResult)}
+              {tunnelAdmin && (
+                <div className="mt-2 flex justify-end">
+                  <button type="button" className="bevel" onClick={() => void backend.openLink(tunnelAdmin)}>
+                    Seite bei Tailscale öffnen
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
           {step === 'done' && (
             <>
               <div className="font-bold mb-2">Fertig eingerichtet</div>
@@ -426,14 +553,24 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   <li>Testmail ist angekommen{markOwn ? `; ${testTo.trim()} gilt als eigene Adresse` : ''}</li>
                 )}
                 <li>Claude Desktop ist verbunden</li>
+                {tunnelResult.kind === 'ok' && tunnel?.address && <li>Tunnel steht: {tunnel.address}. Anmelden vom Handy folgt in einem späteren Schritt</li>}
                 <li>
                   {passkeys > 0
                     ? 'Passkey eingerichtet: Mails an andere Adressen gibst du auf der Freigabeseite frei'
                     : 'Passkey noch nicht eingerichtet: Mails an andere Adressen lassen sich erst danach senden'}
                 </li>
               </ul>
-              <div className="mb-2">Probier es aus: Schreib Claude in Claude Desktop „Schick mir eine Testmail.“</div>
-              <div className="text-[12px]">Diese App brauchst du nur zum Einrichten und Verwalten. Geschrieben und verschickt wird in Claude Desktop.</div>
+              {where === 'phone' ? (
+                <>
+                  <div className="mb-2">Probier es am Handy aus, sobald die Anmeldung dort eingerichtet ist (kommt als nächster Schritt): Schreib Claude in der Claude-App „Schick mir eine Testmail.“</div>
+                  <div className="text-[12px]">Diese App brauchst du nur zum Einrichten und Verwalten. Geschrieben und verschickt wird in Claude.</div>
+                </>
+              ) : (
+                <>
+                  <div className="mb-2">Probier es aus: Schreib Claude in Claude Desktop „Schick mir eine Testmail.“</div>
+                  <div className="text-[12px]">Diese App brauchst du nur zum Einrichten und Verwalten. Geschrieben und verschickt wird in Claude Desktop.</div>
+                </>
+              )}
             </>
           )}
         </div>
@@ -450,7 +587,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
             <button type="button" className="bevel" onClick={back}>Zurück</button>
           )}
           {step === 'passkey' && passkeys === 0 && (
-            <button type="button" className="bevel" onClick={() => go('done')} title="Du kannst den Passkey später nachholen">Später</button>
+            <button type="button" className="bevel" onClick={() => go(where === 'phone' ? 'tunnel' : 'done')} title="Du kannst den Passkey später nachholen">Später</button>
           )}
           <button type="button" className="bevel font-bold" disabled={!canNext} onClick={next}>
             {step === 'done' ? 'Zur Verwaltung' : 'Weiter'}

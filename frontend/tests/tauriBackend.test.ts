@@ -38,3 +38,34 @@ describe('the desktop backend when a step fails unexpectedly', () => {
     expect((await tauriBackend().status()).install_problem).toBe('Ziehe die App in den Ordner „Programme“.')
   })
 })
+
+describe('the desktop backend for the tunnel', () => {
+  it('reads Tailscale\'s state and the address from the helper program', async () => {
+    invoke.mockResolvedValue({ ok: true, supported: true, state: 'ready', address: 'https://mac.example.ts.net', funnel: 'off', reason: null })
+    expect(await tauriBackend().tunnelStatus()).toEqual({ state: 'ready', address: 'https://mac.example.ts.net', reason: null })
+    expect(invoke).toHaveBeenCalledWith('setup_tunnel_status', undefined)
+  })
+
+  it('hands on the reason when Tailscale is not ready', async () => {
+    invoke.mockResolvedValue({ ok: true, supported: true, state: 'stopped', address: null, funnel: null, reason: 'Tailscale ist ausgeschaltet.' })
+    expect(await tauriBackend().tunnelStatus()).toEqual({ state: 'stopped', address: null, reason: 'Tailscale ist ausgeschaltet.' })
+  })
+
+  it('never claims a state when the helper program fails', async () => {
+    invoke.mockRejectedValue('Das Mail-Assistant-Programm lässt sich nicht starten.')
+    expect(await tauriBackend().tunnelStatus()).toEqual({ state: 'unreadable', address: null, reason: 'Das Mail-Assistant-Programm lässt sich nicht starten.' })
+  })
+
+  it('passes the confirmed address to the helper program and returns the result', async () => {
+    invoke.mockResolvedValue({ ok: true, address: 'https://mac.example.ts.net', passphrase_placeholder: true })
+    expect(await tauriBackend().tunnelEnable('https://mac.example.ts.net')).toEqual({ ok: true, address: 'https://mac.example.ts.net', passphrase_placeholder: true })
+    expect(invoke).toHaveBeenCalledWith('setup_tunnel_enable', { address: 'https://mac.example.ts.net' })
+  })
+
+  it('hands on the reason and the Tailscale link of a refusal', async () => {
+    invoke.mockResolvedValue({ ok: false, reason: 'Funnel ist noch nicht freigeschaltet.', url: 'https://login.tailscale.com/f/funnel?node=nABC' })
+    expect(await tauriBackend().tunnelEnable('https://mac.example.ts.net')).toEqual({ ok: false, reason: 'Funnel ist noch nicht freigeschaltet.', url: 'https://login.tailscale.com/f/funnel?node=nABC' })
+    invoke.mockResolvedValue({ ok: false, reason: 'Tailscale ist ausgeschaltet.' })
+    expect(await tauriBackend().tunnelEnable('https://mac.example.ts.net')).toEqual({ ok: false, reason: 'Tailscale ist ausgeschaltet.' })
+  })
+})

@@ -15,8 +15,11 @@ from __future__ import annotations
 import json
 import os
 import plistlib
+import secrets
+import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Callable, Mapping, Optional
 from urllib.parse import urlsplit
@@ -28,6 +31,7 @@ REMOTE_FILE = "remote.json"
 LABEL = "de.politzer.mailassistant.remote"
 MIN_PASSPHRASE = 12
 MAX_PASSPHRASE_BYTES = 1024
+PORT = 8430  # the server's fixed port on this computer (http_server.py); the tunnel points here
 _LAUNCHCTL = "/bin/launchctl"
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
@@ -175,20 +179,25 @@ def enable(
     env: Mapping[str, str],
     command: str,
     address: str,
-    passphrase: str,
+    passphrase: Optional[str],
     *,
     run: Optional[Runner] = None,
     uid: Optional[int] = None,
     platform: Optional[str] = None,
 ) -> dict:
-    """Save address and passphrase hash, set up the background service and start it."""
+    """Save address and passphrase hash, set up the background service and start it.
+
+    `passphrase=None` is the tunnel step: a sign-in passphrase the person has chosen is kept as it is; with
+    none yet, a random one is hashed and thrown away (marked `passphrase_placeholder`), so nobody can sign in
+    until the person gets a passphrase of their own. A given passphrase always replaces the old one."""
     run = run or _run
     _require_mac(platform)
     _check_program(command)
     if load_mailbox(env) is None:
         raise SetupError("Das Postfach ist noch nicht eingerichtet.")
     base = clean_address(address)
-    check_passphrase(passphrase)
+    if passphrase is not None:
+        check_passphrase(passphrase)
     uid = os.getuid() if uid is None else uid
     plist = plist_path(env)
     try:
@@ -196,9 +205,19 @@ def enable(
         if os.name == "posix":
             os.chmod(log_folder(env), 0o700)  # the logs hold one-time links
         plist.parent.mkdir(parents=True, exist_ok=True)
+        existing = _read_remote(env) or {}
+        if passphrase is not None:
+            digest, placeholder = hash_password(passphrase), False
+        elif is_valid_hash(existing.get("password_hash")) and not existing.get("passphrase_placeholder"):
+            digest, placeholder = existing["password_hash"], False
+        else:
+            digest, placeholder = hash_password(secrets.token_urlsafe(32)), True
         _write_private(
             _folder(env) / REMOTE_FILE,
-            json.dumps({"public_base_url": base, "password_hash": hash_password(passphrase)}, indent=2) + "\n",
+            json.dumps(
+                {"public_base_url": base, "password_hash": digest, "passphrase_placeholder": placeholder}, indent=2
+            )
+            + "\n",
         )
         _write_private(plist, plistlib.dumps(build_plist(env, command)).decode("utf-8"))
     except OSError:
@@ -213,7 +232,45 @@ def enable(
         except OSError:
             pass
         raise
-    return {"address": base, "log": str(log_folder(env) / "remote.log")}
+    return {"address": base, "passphrase_placeholder": placeholder, "log": str(log_folder(env) / "remote.log")}
+
+
+def _port_busy(port: int = PORT) -> bool:
+    """True while something on this computer still answers on the server's port."""
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.3):
+            return True
+    except OSError:
+        return False
+
+
+def _wait_until_stopped(
+    run: Runner,
+    uid: int,
+    sleep: Callable[[float], None],
+    port_busy: Callable[[], bool],
+    steps: int = 40,
+    pause: float = 0.25,
+) -> bool:
+    """Wait until launchd no longer lists the service, then give the port a moment to be released.
+
+    False only when the service is still listed after the time is up (the files must then stay, so asking
+    again works). A port that stays busy after the service is gone belongs to another program: not our error."""
+    for _ in range(steps):
+        try:
+            listed = run([_LAUNCHCTL, "print", f"{_domain(uid)}/{LABEL}"]).returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            listed = False
+        if not listed:
+            break
+        sleep(pause)
+    else:
+        return False
+    for _ in range(steps // 2):
+        if not port_busy():
+            break
+        sleep(pause)
+    return True
 
 
 def disable(
@@ -222,8 +279,11 @@ def disable(
     run: Optional[Runner] = None,
     uid: Optional[int] = None,
     platform: Optional[str] = None,
+    sleep: Callable[[float], None] = time.sleep,
+    port_busy: Callable[[], bool] = _port_busy,
 ) -> bool:
     """Stop the service and remove its files. Recipients, passkeys and the mailbox stay.
+    Returns only when the service is really gone and its port is free again.
     True when there was something to remove; asking twice is not an error."""
     run = run or _run
     _require_mac(platform)
@@ -231,6 +291,8 @@ def disable(
     plist = plist_path(env)
     had = plist.exists() or (_folder(env) / REMOTE_FILE).exists()
     _bootout(run, uid)
+    if not _wait_until_stopped(run, uid, sleep, port_busy):
+        raise SetupError("Der Hintergrunddienst hat sich nicht rechtzeitig beendet. Versuche es in einem Moment noch einmal.")
     for path in (plist, _folder(env) / REMOTE_FILE):
         try:
             path.unlink()
@@ -280,5 +342,6 @@ def status(
         "address": address if configured else None,
         "program_ok": program is not None and os.path.isfile(program),
         "program_matches": bool(command) and program == command,
+        "passphrase_placeholder": bool(data and data.get("passphrase_placeholder")),
         "log": str(log_folder(env) / "remote.log"),
     }

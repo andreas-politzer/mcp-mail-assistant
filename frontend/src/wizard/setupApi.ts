@@ -22,6 +22,33 @@ export interface SetupStatus {
   install_problem?: string | null
 }
 
+export type TunnelState =
+  | 'ready'
+  | 'missing'
+  | 'stopped'
+  | 'needs_login'
+  | 'needs_approval'
+  | 'not_running'
+  // Tailscale answered, but not in a way we understand (or not in time). The reason names a short cause.
+  | 'unreadable'
+  | 'no_magicdns'
+  | 'funnel_busy'
+  | 'funnel_unknown'
+  | 'unsupported'
+
+export interface TunnelStatus {
+  state: TunnelState
+  // Only set when the state is "ready".
+  address: string | null
+  // The reason in plain German when it is not ready.
+  reason: string | null
+}
+
+export type TunnelOutcome =
+  | { ok: true; address: string; passphrase_placeholder: boolean }
+  // `url`: a Tailscale page where the person has to switch something on first.
+  | { ok: false; reason: string; url?: string }
+
 export interface SetupBackend {
   // The real state, so the wizard only asks for what is missing.
   status(): Promise<SetupStatus>
@@ -37,8 +64,12 @@ export interface SetupBackend {
   disconnectClaude(): Promise<Outcome>
   // One-time link to register a passkey on the local approval page. Only works once Claude Desktop runs the server.
   approvalLink(): Promise<{ ok: true; url: string } | { ok: false; reason: string }>
-  // Opens that link in the browser of this computer.
+  // Opens that link in the browser of this computer (the enrollment link and a few Tailscale pages only).
   openLink(url: string): Promise<Outcome>
+  // Phone use: Tailscale's state and the public address, shown before anything changes. Changes nothing.
+  tunnelStatus(): Promise<TunnelStatus>
+  // Starts the service, switches the Funnel on and tries the address. `address` is the one the person confirmed.
+  tunnelEnable(address: string): Promise<TunnelOutcome>
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -89,6 +120,14 @@ export function mockBackend(delay = 700): SetupBackend {
     async openLink() {
       passkeys = 1
       return { ok: true }
+    },
+    async tunnelStatus() {
+      await wait(delay / 3)
+      return { state: 'ready', address: 'https://mein-mac.example.ts.net', reason: null }
+    },
+    async tunnelEnable(address) {
+      await wait(delay)
+      return { ok: true, address, passphrase_placeholder: true }
     },
   }
 }

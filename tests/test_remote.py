@@ -17,23 +17,30 @@ from outbox_mcp.auth.passwords import verify_password
 from outbox_mcp.setup_tasks import SetupError
 
 PASSPHRASE = "eine-lange-passphrase-123"
-ADDRESS = "https://mein-mac.tail1234.ts.net"
+ADDRESS = "https://mein-mac.example.ts.net"
 
 
 class Launchctl:
-    def __init__(self, bootstrap_fails=False, state="running"):
+    def __init__(self, bootstrap_fails=False, state="running", stays_listed=False):
         self.calls = []
         self.bootstrap_fails = bootstrap_fails
         self.state = state
+        self.loaded = True  # a service that is already there; bootout takes it away, bootstrap brings it back
+        self.stays_listed = stays_listed
 
     def __call__(self, args):
         self.calls.append(list(args))
         verb = args[1]
         if verb == "bootout":
+            self.loaded = self.stays_listed
             return subprocess.CompletedProcess(args, 3, "", "Boot-out failed: 3: No such process")
         if verb == "bootstrap" and self.bootstrap_fails:
             return subprocess.CompletedProcess(args, 5, "", "Bootstrap failed: 5: Input/output error")
+        if verb == "bootstrap":
+            self.loaded = True
         if verb == "print":
+            if not self.loaded:
+                return subprocess.CompletedProcess(args, 113, "", "Could not find service")
             return subprocess.CompletedProcess(args, 0, f"{remote.LABEL} = {{\n\tstate = {self.state}\n}}\n", "")
         return subprocess.CompletedProcess(args, 0, "", "")
 
@@ -72,15 +79,15 @@ def write_remote(env, **data):
 
 
 def test_file_fills_in_what_the_environment_leaves_empty(env):
-    write_remote(env, public_base_url="https://Mein-Mac.ts.net/", password_hash="abc")
+    write_remote(env, public_base_url="https://Mein-Mac.example.ts.net/", password_hash="abc")
     merged = remote.with_remote_file(env)
-    assert merged["OUTBOX_PUBLIC_BASE_URL"] == "https://Mein-Mac.ts.net/"
-    assert merged["OUTBOX_APPROVAL_HOST"] == "mein-mac.ts.net"  # always the host of the public address
+    assert merged["OUTBOX_PUBLIC_BASE_URL"] == "https://Mein-Mac.example.ts.net/"
+    assert merged["OUTBOX_APPROVAL_HOST"] == "mein-mac.example.ts.net"  # always the host of the public address
     assert merged["OUTBOX_OAUTH_PASSWORD_HASH"] == "abc"
 
 
 def test_environment_wins_over_the_file(env):
-    write_remote(env, public_base_url="https://file.ts.net", password_hash="from-file")
+    write_remote(env, public_base_url="https://file.example.ts.net", password_hash="from-file")
     env = {**env, "OUTBOX_PUBLIC_BASE_URL": "https://env.example.org", "OUTBOX_OAUTH_PASSWORD_HASH": "from-env",
            "OUTBOX_APPROVAL_HOST": "env.example.org"}
     merged = remote.with_remote_file(env)
@@ -90,7 +97,7 @@ def test_environment_wins_over_the_file(env):
 
 
 def test_environment_address_without_a_host_does_not_get_one_from_the_file(env):
-    write_remote(env, public_base_url="https://file.ts.net", password_hash="x")
+    write_remote(env, public_base_url="https://file.example.ts.net", password_hash="x")
     merged = remote.with_remote_file({**env, "OUTBOX_PUBLIC_BASE_URL": "https://env.example.org"})
     assert "OUTBOX_APPROVAL_HOST" not in merged
 
@@ -125,8 +132,8 @@ def test_server_starts_from_the_two_files_alone(env, tmp_path):
 # --- checks --------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("bad", [
-    "", "mein-mac.ts.net", "http://mein-mac.ts.net", "https://localhost", "https://127.0.0.1", "https://mac.local",
-    "https://x.ts.net/pfad", "https://x.ts.net:8443", "https://user@x.ts.net", "https://x.ts.net?a=1", "https://x.ts.net:abc",
+    "", "mein-mac.example.ts.net", "http://mein-mac.example.ts.net", "https://localhost", "https://127.0.0.1", "https://mac.local",
+    "https://x.example.ts.net/pfad", "https://x.example.ts.net:8443", "https://user@x.example.ts.net", "https://x.example.ts.net?a=1", "https://x.example.ts.net:abc",
 ])
 def test_unusable_addresses_are_refused(bad):
     with pytest.raises(SetupError):
@@ -134,7 +141,7 @@ def test_unusable_addresses_are_refused(bad):
 
 
 def test_address_is_normalised():
-    assert remote.clean_address("  https://Mein-Mac.TS.net/ ") == "https://mein-mac.ts.net"
+    assert remote.clean_address("  https://Mein-Mac.Example.TS.net/ ") == "https://mein-mac.example.ts.net"
 
 
 @pytest.mark.parametrize("bad", ["", "kurz", "elf-zeichen", " führende-leerzeichen-123", "x" * 2000])
@@ -276,21 +283,127 @@ def test_status_survives_a_missing_launchctl(env, program):
 
 # --- disable --------------------------------------------------------------------------------
 
+QUICK = {"sleep": lambda seconds: None, "port_busy": lambda: False}
+
+
+def disable(env, launchctl, **kw):
+    return remote.disable(env, run=launchctl, uid=501, platform="darwin", **{**QUICK, **kw})
+
+
 def test_disable_removes_the_service_and_keeps_the_rest(env, program):
     enable(env, program, Launchctl())
     other = os.path.join(env["OUTBOX_DATA_DIR"], "recipients.json")
     open(other, "w").write("{}")
     lc = Launchctl()
-    assert remote.disable(env, run=lc, uid=501, platform="darwin") is True
-    assert lc.verbs() == ["bootout"]
+    assert disable(env, lc) is True
+    assert lc.verbs() == ["bootout", "print"]  # stopped, then asked once more: really gone
     assert not remote.plist_path(env).exists()
     assert not os.path.exists(os.path.join(env["OUTBOX_DATA_DIR"], "remote.json"))
     assert os.path.exists(other) and os.path.exists(os.path.join(env["OUTBOX_DATA_DIR"], "mailbox.json"))
 
 
 def test_disable_twice_is_fine(env):
-    assert remote.disable(env, run=Launchctl(), uid=501, platform="darwin") is False
-    assert remote.disable(env, run=Launchctl(), uid=501, platform="darwin") is False
+    assert disable(env, Launchctl()) is False
+    assert disable(env, Launchctl()) is False
+
+
+def test_disable_waits_until_the_service_is_gone(env, program):
+    enable(env, program, Launchctl())
+
+    class SlowToLeave(Launchctl):
+        listed_for = 3
+
+        def __call__(self, args):
+            if args[1] == "print" and self.listed_for > 0:
+                self.listed_for -= 1
+                self.calls.append(list(args))
+                return subprocess.CompletedProcess(args, 0, "", "")
+            return super().__call__(args)
+
+    lc = SlowToLeave()
+    pauses = []
+    assert disable(env, lc, sleep=pauses.append) is True
+    assert lc.verbs().count("print") == 4 and len(pauses) == 3
+    assert not remote.plist_path(env).exists()
+
+
+def test_disable_keeps_the_files_when_the_service_does_not_leave(env, program):
+    enable(env, program, Launchctl())
+    with pytest.raises(SetupError, match="nicht rechtzeitig beendet"):
+        disable(env, Launchctl(stays_listed=True))
+    assert remote.plist_path(env).exists()  # nothing deleted: asking again works
+    assert os.path.exists(os.path.join(env["OUTBOX_DATA_DIR"], "remote.json"))
+    assert disable(env, Launchctl()) is True
+
+
+def test_disable_gives_the_port_time_but_a_busy_port_is_not_an_error(env, program):
+    enable(env, program, Launchctl())
+    answers = iter([True, True, False])
+    pauses = []
+    assert disable(env, Launchctl(), port_busy=lambda: next(answers), sleep=pauses.append) is True
+    assert len(pauses) == 2  # waited for the port twice, then it was free
+    enable(env, program, Launchctl())
+    pauses.clear()
+    assert disable(env, Launchctl(), port_busy=lambda: True, sleep=pauses.append) is True  # another program holds it
+    assert len(pauses) == 20
+
+
+def test_the_real_port_check_sees_a_listener():
+    import socket
+
+    # A free port chosen by the system, never the real one: on a computer where the server runs, 8430 is taken.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        probe.listen()
+        port = probe.getsockname()[1]
+        assert remote._port_busy(port) is True
+    assert remote._port_busy(port) is False
+
+
+# --- the passphrase placeholder ------------------------------------------------------------
+
+def read_remote(env):
+    return json.load(open(os.path.join(env["OUTBOX_DATA_DIR"], "remote.json")))
+
+
+def test_a_chosen_passphrase_is_marked_as_real(env, program):
+    answer = enable(env, program, Launchctl())
+    assert answer["passphrase_placeholder"] is False
+    assert read_remote(env)["passphrase_placeholder"] is False
+
+
+def test_without_a_passphrase_a_random_one_is_hashed_and_thrown_away(env, program):
+    answer = enable(env, program, Launchctl(), passphrase=None)
+    data = read_remote(env)
+    assert answer["passphrase_placeholder"] is True and data["passphrase_placeholder"] is True
+    assert remote.is_valid_hash(data["password_hash"])
+    assert not verify_password(PASSPHRASE, data["password_hash"])
+    first = data["password_hash"]
+    enable(env, program, Launchctl(), passphrase=None)  # again: a new throw-away, still unusable
+    assert read_remote(env)["password_hash"] != first
+    assert remote.status(env, program, run=Launchctl(), uid=501, platform="darwin")["passphrase_placeholder"] is True
+
+
+def test_a_chosen_passphrase_survives_a_later_tunnel_step(env, program):
+    enable(env, program, Launchctl())
+    before = read_remote(env)["password_hash"]
+    answer = enable(env, program, Launchctl(), passphrase=None, address="https://neu.example.ts.net")
+    data = read_remote(env)
+    assert answer["passphrase_placeholder"] is False
+    assert data["password_hash"] == before and data["public_base_url"] == "https://neu.example.ts.net"
+    assert verify_password(PASSPHRASE, data["password_hash"])
+
+
+def test_a_given_passphrase_replaces_the_placeholder(env, program):
+    enable(env, program, Launchctl(), passphrase=None)
+    enable(env, program, Launchctl())
+    data = read_remote(env)
+    assert data["passphrase_placeholder"] is False and verify_password(PASSPHRASE, data["password_hash"])
+
+
+def test_a_bad_given_passphrase_is_still_refused_even_with_the_none_option(env, program):
+    with pytest.raises(SetupError):
+        enable(env, program, Launchctl(), passphrase="kurz")
 
 
 # --- the command line -----------------------------------------------------------------------

@@ -247,6 +247,20 @@ async fn setup_approval_link(app: AppHandle) -> Result<serde_json::Value, String
     run_setup(app, vec!["approval-link".to_string()], None).await
 }
 
+/// Phone use, tunnel card: Tailscale's state and the public address, shown before anything changes.
+#[tauri::command]
+async fn setup_tunnel_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_setup(app, vec!["tunnel-status".to_string()], None).await
+}
+
+/// Starts the service, switches the Funnel on and tries the address. `address` is the one the person
+/// confirmed; the program refuses it when it is no longer Tailscale's real address.
+#[tauri::command]
+async fn setup_tunnel_enable(app: AppHandle, address: String) -> Result<serde_json::Value, String> {
+    let program = program_of(&app)?;
+    run_setup(app, setup::tunnel_enable_args(&program, &address), None).await
+}
+
 /// Local administration: the bundled program's `local` command, one JSON answer. No port, no token.
 /// Only the actions listed in `setup::local_admin_args` get through.
 #[tauri::command]
@@ -310,7 +324,7 @@ async fn local_api(
     .map_err(|_| "Der Schritt wurde unterbrochen.".to_string())?
 }
 
-/// Opens the passkey enrollment link in the default browser. Refuses every other address.
+/// Opens the passkey enrollment link or a Tailscale page in the default browser. Refuses every other address.
 #[tauri::command]
 fn open_link(url: String) -> serde_json::Value {
     match setup::open_in_browser(&url) {
@@ -348,6 +362,8 @@ pub fn run() {
             setup_connect_claude,
             setup_disconnect_claude,
             setup_approval_link,
+            setup_tunnel_status,
+            setup_tunnel_enable,
             local_admin,
             local_api,
             open_link,

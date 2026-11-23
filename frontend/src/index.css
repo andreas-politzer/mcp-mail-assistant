@@ -34,6 +34,12 @@ body {
   border-color: var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark);
 }
 
+/* A locked button must look locked. */
+.bevel:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* Glass-friendly buttons inside tiles. */
 .gbtn {
   font-size: 12px;

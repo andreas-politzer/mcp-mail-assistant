@@ -42,9 +42,20 @@ def test_no_private_network_address_is_tracked():
 
 
 def test_no_personal_names_servers_or_home_paths_are_tracked():
-    assert matches(r"andypol|georgie|thinkpad|tailscale|\.ts\.net|obsidian-claude", re.I) == []
+    assert matches(r"andypol|georgie|thinkpad|obsidian-claude", re.I) == []
     assert matches(r"/Users/(?!x/|name/|you/)[A-Za-z][\w.-]*") == []
     assert matches(r"/home/(?!(?:user|you|youruser|name|example)\b)[a-z][\w.-]*") == []
+
+
+PLACEHOLDER_TAILNETS = {"example", "dein-netz", "your-tailnet"}
+
+
+def test_no_real_tailnet_name_is_tracked():
+    """The product name Tailscale and addresses like mac.example.ts.net belong in the code and its tests.
+    A real tailnet name (tail1a2b3c.ts.net, fancy-animal.ts.net) is a private detail: the part right before
+    ".ts.net" must be one of the placeholders."""
+    found = [hit for hit in matches(r"[A-Za-z0-9-]+(?=\.ts\.net)", re.I) if hit.rsplit(": ", 1)[1].lower() not in PLACEHOLDER_TAILNETS]
+    assert found == []
 
 
 def test_no_environment_file_with_values_is_tracked():

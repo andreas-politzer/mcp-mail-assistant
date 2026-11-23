@@ -130,9 +130,22 @@ pub fn is_enroll_link(url: &str) -> bool {
         && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// The Tailscale pages the tunnel card links to: the download page and the admin pages (where Funnel is
+/// switched on). Host and scheme are fixed; the rest may only hold plain URL characters.
+pub fn is_tailscale_link(url: &str) -> bool {
+    let plain = |s: &str| s.len() <= 300 && s.chars().all(|c| c.is_ascii_alphanumeric() || "/_-.?=&%".contains(c));
+    if let Some(rest) = url.strip_prefix("https://tailscale.com/download") {
+        return rest.is_empty() || (rest.starts_with('/') && plain(rest));
+    }
+    match url.strip_prefix("https://login.tailscale.com/") {
+        Some(rest) => !rest.is_empty() && plain(rest),
+        None => false,
+    }
+}
+
 /// Opens the link in the computer's default browser.
 pub fn open_in_browser(url: &str) -> Result<(), String> {
-    if !is_enroll_link(url) {
+    if !is_enroll_link(url) && !is_tailscale_link(url) {
         return Err("Dieser Link darf von hier aus nicht geöffnet werden.".into());
     }
     #[cfg(target_os = "macos")]
@@ -283,6 +296,10 @@ pub fn claude_args(action: &str, program: &Path) -> Vec<String> {
     vec![action.to_string(), format!("--command={}", program.display())]
 }
 
+pub fn tunnel_enable_args(program: &Path, address: &str) -> Vec<String> {
+    vec!["tunnel-enable".into(), format!("--command={}", program.display()), format!("--url={address}")]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +320,49 @@ mod tests {
             assert!(!is_enroll_link(bad), "{bad}");
         }
         assert!(open_in_browser("https://example.org").is_err());
+    }
+
+    #[test]
+    fn only_tailscale_pages_and_nothing_else_may_be_opened_besides_the_enrollment_link() {
+        for good in [
+            "https://tailscale.com/download",
+            "https://tailscale.com/download/mac",
+            "https://login.tailscale.com/f/funnel?node=nABC123",
+            "https://login.tailscale.com/admin/dns",
+        ] {
+            assert!(is_tailscale_link(good), "{good}");
+        }
+        for bad in [
+            "http://tailscale.com/download",
+            "https://tailscale.com/",
+            "https://tailscale.com/downloads-evil",
+            "https://tailscale.com.evil.com/download",
+            "https://login.tailscale.com.evil.com/f/funnel",
+            "https://login.tailscale.com@evil.com/f/funnel",
+            "https://evil.com/?https://login.tailscale.com/f/funnel",
+            "https://login.tailscale.com/",
+            "https://login.tailscale.com/f/funnel#x",
+            "https://login.tailscale.com/f/funnel y",
+            "https://login.tailscale.com/\u{202e}x",
+            "javascript:alert(1)",
+        ] {
+            assert!(!is_tailscale_link(bad), "{bad}");
+        }
+        let too_long = format!("https://login.tailscale.com/{}", "a".repeat(400));
+        assert!(!is_tailscale_link(&too_long));
+        // Whatever is_tailscale_link refuses, open_in_browser refuses as well.
+        assert!(open_in_browser("https://tailscale.com/downloads-evil").is_err());
+    }
+
+    #[test]
+    fn the_tunnel_arguments_carry_program_and_confirmed_address_as_name_equals_value() {
+        let a = tunnel_enable_args(Path::new("/Applications/Mail Assistant.app/Contents/MacOS/x"), "https://mac.example.ts.net");
+        assert_eq!(a[0], "tunnel-enable");
+        assert!(a[1..].iter().all(|x| x.starts_with("--") && x.contains('=')));
+        assert_eq!(a[1], "--command=/Applications/Mail Assistant.app/Contents/MacOS/x");
+        assert_eq!(a[2], "--url=https://mac.example.ts.net");
+        let evil = tunnel_enable_args(Path::new("/p"), "--evil");
+        assert_eq!(evil[2], "--url=--evil"); // a value that starts with a dash can never act as an option
     }
 
     #[test]

@@ -10,6 +10,8 @@
     setup remote-status [--command PATH]     (phone use: is the background service set up and running?)
     setup remote-enable --command PATH --url https://...      (passphrase on stdin)
     setup remote-disable                     (stops the service, removes its files; recipients and passkeys stay)
+    setup tunnel-status                      (Tailscale state and the public address; changes nothing)
+    setup tunnel-enable --command PATH --url https://...      (service + Funnel + check; the URL is the confirmed one)
 
 The data folder comes from OUTBOX_DATA_DIR. Exit code is 0 whenever the answer is JSON ({"ok": false,
 "reason": "..."} included); 2 for a malformed command line. The password is read from the first line of
@@ -24,7 +26,7 @@ import os
 import sys
 from typing import List, Mapping, Optional, TextIO
 
-from . import remote, secrets_store, setup_tasks as tasks
+from . import remote, secrets_store, setup_tasks as tasks, tunnel
 from .errors import OutboxError
 
 
@@ -45,6 +47,10 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("disconnect-claude")
     sub.add_parser("remote-disable")
     sub.add_parser("remote-status").add_argument("--command", dest="program", default="")
+    sub.add_parser("tunnel-status")
+    te = sub.add_parser("tunnel-enable")
+    te.add_argument("--command", dest="program", required=True)
+    te.add_argument("--url", required=True)
     re_ = sub.add_parser("remote-enable")
     re_.add_argument("--command", dest="program", required=True)
     re_.add_argument("--url", required=True)
@@ -88,10 +94,16 @@ def main(
             return reply({"ok": True, **remote.enable(environment, args.program, args.url, line)})
         if args.command == "remote-disable":
             return reply({"ok": True, "removed": remote.disable(environment)})
+        if args.command == "tunnel-status":
+            return reply({"ok": True, **tunnel.status()})
+        if args.command == "tunnel-enable":
+            return reply({"ok": True, **tunnel.enable(environment, args.program, args.url)})
         if args.command == "preview-claude":
             return reply({"ok": True, "lines": tasks.preview_claude(environment, args.program)})
         tasks.connect_claude(environment, args.program)
         return reply({"ok": True})
+    except tunnel.NeedsAdmin as exc:
+        return reply({"ok": False, "reason": str(exc), "url": exc.url})
     except tasks.SetupError as exc:
         return reply({"ok": False, "reason": str(exc)})
     except secrets_store.KeychainError as exc:

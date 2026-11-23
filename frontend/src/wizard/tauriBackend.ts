@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-import type { MailboxSettings, Outcome, SetupBackend, SetupStatus } from './setupApi'
+import type { MailboxSettings, Outcome, SetupBackend, SetupStatus, TunnelState } from './setupApi'
 
 // The real backend: Tauri commands that start the bundled server program (see src-tauri/src/setup.rs).
 // The password is an argument of exactly one command and is not kept here.
@@ -9,6 +9,9 @@ interface Reply {
   reason?: string
   lines?: string[]
   url?: string
+  state?: TunnelState
+  address?: string | null
+  passphrase_placeholder?: boolean
 }
 
 const FAILED = 'Der Schritt ist fehlgeschlagen. Starte die App neu und versuche es noch einmal.'
@@ -58,6 +61,16 @@ export function tauriBackend(): SetupBackend {
     },
     async openLink(url: string) {
       return outcome(await call<Reply>('open_link', { url }))
+    },
+    async tunnelStatus() {
+      const r = (await call<Reply>('setup_tunnel_status')) as Reply
+      if (!r.ok || !r.state) return { state: 'unreadable' as const, address: null, reason: r.reason ?? FAILED }
+      return { state: r.state, address: r.address ?? null, reason: r.reason ?? null }
+    },
+    async tunnelEnable(address: string) {
+      const r = (await call<Reply>('setup_tunnel_enable', { address })) as Reply
+      if (r.ok && r.address) return { ok: true as const, address: r.address, passphrase_placeholder: r.passphrase_placeholder ?? true }
+      return { ok: false as const, reason: r.reason ?? FAILED, ...(r.url ? { url: r.url } : {}) }
     },
   }
 }

@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Wizard } from '../src/wizard/Wizard'
 import { guessPreset, looksLikeAddress, PRESETS } from '../src/wizard/presets'
 import { mockBackend, type SetupBackend } from '../src/wizard/setupApi'
-import { HINTS, STEPS } from '../src/wizard/hints'
+import { HINTS, STEPS, STEPS_PHONE } from '../src/wizard/hints'
 
 afterEach(cleanup)
 
@@ -30,7 +30,7 @@ describe('presets', () => {
     }
   })
   it('has at least one Funki line per step', () => {
-    for (const s of STEPS) expect(HINTS[s].length).toBeGreaterThan(0)
+    for (const s of [...STEPS, ...STEPS_PHONE]) expect(HINTS[s].length).toBeGreaterThan(0)
   })
 })
 
@@ -262,10 +262,24 @@ describe('the wizard (desktop path)', () => {
     expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
   })
 
-  it('does not let the phone path through yet', () => {
+  it('lets the phone path through and says it is work in progress', () => {
     render(<Wizard backend={mockBackend(0)} onDone={() => {}} />)
     fireEvent.click(screen.getByLabelText(/Auch vom Handy aus/))
-    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText(/Zwischenstand/)).toBeTruthy()
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.getByText(/Schritt 1 von 8/)).toBeTruthy()
+  })
+
+  it('offers the access ways for the phone: Tailscale now, ngrok and Cloudflare marked as coming', () => {
+    render(<Wizard backend={mockBackend(0)} onDone={() => {}} />)
+    expect(screen.queryByText('Zugangsweg fürs Handy')).toBeNull()
+    expect(screen.queryByText(/Tailscale/)).toBeNull()
+    fireEvent.click(screen.getByLabelText(/Auch vom Handy aus/))
+    expect(screen.getByText('Zugangsweg fürs Handy')).toBeTruthy()
+    expect((screen.getByLabelText(/Tailscale Funnel/) as HTMLInputElement).checked).toBe(true)
+    expect((screen.getByLabelText(/ngrok/) as HTMLInputElement).disabled).toBe(true)
+    expect((screen.getByLabelText(/Cloudflare Tunnel/) as HTMLInputElement).disabled).toBe(true)
+    expect(screen.getAllByText(/kommt bald/).length).toBe(2)
   })
 
   it('needs the server and port by hand only for another provider', () => {
@@ -334,5 +348,151 @@ describe('Zurück button', () => {
   it('is not shown on the first step', () => {
     render(<Wizard backend={mockBackend(0)} onDone={() => {}} />)
     expect(screen.queryByText('Zurück')).toBeNull()
+  })
+})
+
+describe('the tunnel step (phone path)', () => {
+  const ADDRESS = 'https://mein-mac.example.ts.net'
+
+  // A computer that is set up completely, so the steps before the tunnel can be passed quickly.
+  function ready(backend: SetupBackend) {
+    backend.status = async () => ({ mailbox: { email: 'ich@web.de', host: 'smtp.web.de', port: 587, security: 'starttls' }, password_stored: true, claude_connected: true, passkeys: 1 })
+    return backend
+  }
+
+  async function toTunnel(backend: SetupBackend) {
+    render(<Wizard backend={ready(backend)} onDone={() => {}} />)
+    fireEvent.click(screen.getByLabelText(/Auch vom Handy aus/))
+    next()
+    await waitFor(() => expect((screen.getByLabelText('E-Mail-Adresse:') as HTMLInputElement).value).toBe('ich@web.de'))
+    next()
+    await waitFor(() => screen.getByText(/schon im Schlüsselbund/))
+    next()
+    fireEvent.click(screen.getByText('Überspringen'))
+    await waitFor(() => screen.getByText(/schon verbunden/))
+    next()
+    await waitFor(() => screen.getByText(/schon registriert/))
+    next()
+    await waitFor(() => screen.getByText('Tunnel für das Handy (Tailscale)'))
+  }
+
+  it('shows the address first, needs the confirmation, then switches the tunnel on', async () => {
+    const backend = mockBackend(0)
+    const enable = vi.spyOn(backend, 'tunnelEnable')
+    await toTunnel(backend)
+    expect(screen.getByText(/Schritt 7 von 8/)).toBeTruthy()
+    await waitFor(() => expect(screen.getByLabelText('Öffentliche Adresse').textContent).toBe(ADDRESS))
+    const button = screen.getByText('Tunnel einschalten') as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByLabelText(/darf öffentlich sichtbar sein/))
+    expect(button.disabled).toBe(false)
+    fireEvent.click(button)
+    await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/Der Tunnel steht: https:\/\/mein-mac\.example\.ts\.net/))
+    expect(enable).toHaveBeenCalledWith(ADDRESS)
+    expect(screen.getByRole('status').textContent).toMatch(/Passphrase/)
+    expect(screen.getByRole('status').textContent).toMatch(/von diesem Computer aus/)
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false)
+    next()
+    expect(screen.getByText(/Tunnel steht: https:\/\/mein-mac/)).toBeTruthy()
+    expect(screen.getByText(/in der Claude-App/)).toBeTruthy()
+    expect(screen.queryByText(/Schreib Claude in Claude Desktop/)).toBeNull()
+  })
+
+  it('says why the switch is locked until the confirmation is ticked', async () => {
+    await toTunnel(mockBackend(0))
+    await waitFor(() => screen.getByLabelText('Öffentliche Adresse'))
+    expect(screen.getByText('Setze zuerst das Häkchen.')).toBeTruthy()
+    fireEvent.click(screen.getByLabelText(/darf öffentlich sichtbar sein/))
+    expect(screen.queryByText('Setze zuerst das Häkchen.')).toBeNull()
+  })
+
+  it('says what is wrong with Tailscale, links the download page only and checks again on request', async () => {
+    const backend = mockBackend(0)
+    let calls = 0
+    backend.tunnelStatus = async () => {
+      calls += 1
+      return calls === 1
+        ? { state: 'missing', address: null, reason: 'Tailscale ist auf diesem Mac nicht installiert. Installiere es von tailscale.com/download und melde dich dort an.' }
+        : { state: 'ready', address: ADDRESS, reason: null }
+    }
+    const open = vi.spyOn(backend, 'openLink')
+    await toTunnel(backend)
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/nicht installiert/))
+    expect(screen.queryByText('Tunnel einschalten')).toBeNull()
+    fireEvent.click(screen.getByText('Tailscale-Seite öffnen'))
+    expect(open).toHaveBeenCalledWith('https://tailscale.com/download')
+    fireEvent.click(screen.getByText('Erneut prüfen'))
+    await waitFor(() => expect(screen.getByLabelText('Öffentliche Adresse').textContent).toBe(ADDRESS))
+    expect(calls).toBe(2)
+  })
+
+  it('offers the Tailscale page when Funnel must be allowed first and tries again with the same address', async () => {
+    const backend = mockBackend(0)
+    const admin = 'https://login.tailscale.com/f/funnel?node=nABC123'
+    let tries = 0
+    backend.tunnelEnable = async (address) => {
+      tries += 1
+      return tries === 1
+        ? { ok: false, reason: 'Funnel ist in deinem Tailscale-Netz noch nicht freigeschaltet. Öffne die Seite, schalte es dort ein und klicke danach auf „Erneut prüfen“.', url: admin }
+        : { ok: true, address, passphrase_placeholder: true }
+    }
+    const enable = vi.spyOn(backend, 'tunnelEnable')
+    const open = vi.spyOn(backend, 'openLink')
+    await toTunnel(backend)
+    await waitFor(() => screen.getByLabelText('Öffentliche Adresse'))
+    fireEvent.click(screen.getByLabelText(/darf öffentlich sichtbar sein/))
+    fireEvent.click(screen.getByText('Tunnel einschalten'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/noch nicht freigeschaltet/))
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByText('Seite bei Tailscale öffnen'))
+    expect(open).toHaveBeenCalledWith(admin)
+    fireEvent.click(screen.getByText('Erneut prüfen'))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/Der Tunnel steht/))
+    expect(enable).toHaveBeenCalledTimes(2)
+    expect(enable).toHaveBeenLastCalledWith(ADDRESS)
+    expect(screen.queryByText('Seite bei Tailscale öffnen')).toBeNull()
+  })
+
+  it('says plainly when Tailscale cannot be asked, with the cause, instead of blaming a stopped Tailscale', async () => {
+    const backend = mockBackend(0)
+    backend.tunnelStatus = async () => ({ state: 'unreadable', address: null, reason: 'Tailscale konnte nicht abgefragt werden. Details: The Tailscale GUI failed to start' })
+    await toTunnel(backend)
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/nicht abgefragt werden\. Details: The Tailscale GUI/))
+    expect(screen.queryByText('Tailscale-Seite öffnen')).toBeNull()
+    expect(screen.queryByText('Tunnel einschalten')).toBeNull()
+    expect(screen.getByText('Erneut prüfen')).toBeTruthy()
+  })
+
+  it('does not offer the switch when somebody else holds the Tailscale share', async () => {
+    const backend = mockBackend(0)
+    backend.tunnelStatus = async () => ({ state: 'funnel_busy', address: null, reason: 'Auf diesem Mac nutzt schon etwas anderes die HTTPS-Freigabe von Tailscale. Mail Assistant überschreibt das nicht.' })
+    await toTunnel(backend)
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/überschreibt das nicht/))
+    expect(screen.queryByText('Tunnel einschalten')).toBeNull()
+    expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('goes on to the tunnel when the passkey step is postponed on the phone path', async () => {
+    const backend = mockBackend(0)
+    backend.status = async () => ({ mailbox: { email: 'ich@web.de', host: 'smtp.web.de', port: 587, security: 'starttls' }, password_stored: true, claude_connected: true, passkeys: 0 })
+    render(<Wizard backend={backend} onDone={() => {}} />)
+    fireEvent.click(screen.getByLabelText(/Auch vom Handy aus/))
+    next()
+    await waitFor(() => expect((screen.getByLabelText('E-Mail-Adresse:') as HTMLInputElement).value).toBe('ich@web.de'))
+    next()
+    await waitFor(() => screen.getByText(/schon im Schlüsselbund/))
+    next()
+    fireEvent.click(screen.getByText('Überspringen'))
+    await waitFor(() => screen.getByText(/schon verbunden/))
+    next()
+    fireEvent.click(screen.getByText('Später'))
+    await waitFor(() => screen.getByText('Tunnel für das Handy (Tailscale)'))
+  })
+
+  it('has no tunnel step on the desktop path', async () => {
+    render(<Wizard backend={ready(mockBackend(0))} onDone={() => {}} />)
+    expect(screen.getByText(/Schritt 1 von 7/)).toBeTruthy()
+    expect(screen.queryByText('Tunnel für das Handy (Tailscale)')).toBeNull()
   })
 })
