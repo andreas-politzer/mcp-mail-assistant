@@ -479,3 +479,61 @@ def test_local_api_keeps_stray_prints_off_the_protocol(monkeypatch, tmp_path):
     lines = [json.loads(l) for l in real.getvalue().splitlines()]
     assert lines == [{"ready": True}, {"status": 200, "data": {"ok": True}}]
     assert "a library says hello" in err.getvalue()
+
+
+def test_a_locked_keychain_gets_a_german_reason_with_what_to_do(env, monkeypatch):
+    tasks._write_private(tasks._folder(env) / tasks.MAILBOX_FILE, json.dumps(tasks.asdict(tasks.Mailbox("me@example.org", "h.example.org", 587, "starttls"))))
+
+    def locked(*a, **k):
+        raise secrets_store.KeychainLocked("The keychain is locked. Unlock it (sign in to the Mac) and try again.")
+
+    monkeypatch.setattr(secrets_store, "get_smtp_password", locked)
+    out = io.StringIO()
+    setup_cli.main(["send-test", "--to", "me@example.org"], env=env, stdout=out)
+    reason = json.loads(out.getvalue())["reason"]
+    assert reason.startswith("Der Schlüsselbund ist gesperrt") and "anmeldest" in reason and "The keychain" not in reason
+
+
+def test_another_keychain_failure_says_what_to_do_first_and_keeps_the_cause_as_details(env, monkeypatch):
+    tasks._write_private(tasks._folder(env) / tasks.MAILBOX_FILE, json.dumps(tasks.asdict(tasks.Mailbox("me@example.org", "h.example.org", 587, "starttls"))))
+
+    def broken(*a, **k):
+        raise secrets_store.KeychainError("The keychain program could not be started.")
+
+    monkeypatch.setattr(secrets_store, "get_smtp_password", broken)
+    out = io.StringIO()
+    setup_cli.main(["send-test", "--to", "me@example.org"], env=env, stdout=out)
+    reason = json.loads(out.getvalue())["reason"]
+    assert reason.startswith("Der Schlüsselbund dieses Computers") and "Details: The keychain program could not be started." in reason
+
+
+def test_saving_with_a_locked_keychain_says_it_is_locked(env, monkeypatch):
+    monkeypatch.setattr(tasks, "check_login", lambda *a, **k: None)
+
+    def locked(*a, **k):
+        raise secrets_store.KeychainLocked("The keychain is locked. Unlock it (sign in to the Mac) and try again.")
+
+    monkeypatch.setattr(secrets_store, "set_smtp_password", locked)
+    with pytest.raises(tasks.SetupError, match="gesperrt"):
+        tasks.save_mailbox(env, tasks.Mailbox("me@example.org", "smtp.example.org", 587, "starttls"), PASSWORD)
+    assert tasks.load_mailbox(env) is None
+
+
+@pytest.mark.parametrize(
+    "failure, wanted",
+    [
+        (socket.gaierror(8, "nodename nor servname provided"), "nicht erreichbar"),
+        (ConnectionRefusedError(61, "refused"), "nicht erreichbar"),
+        (OSError(51, "Network is unreachable"), "nicht erreichbar"),
+        (socket.timeout("timed out"), "nicht rechtzeitig"),
+    ],
+)
+def test_a_typo_in_the_host_or_no_internet_is_the_unreachable_message(failure, wanted, monkeypatch):
+    import smtplib
+
+    def boom(self, *a, **k):
+        raise failure
+
+    monkeypatch.setattr(smtplib.SMTP, "__init__", boom)
+    with pytest.raises(tasks.SetupError, match=wanted):
+        tasks.check_login(tasks.Mailbox("me@example.org", "smtp.exmaple.org", 587, "starttls"), PASSWORD)

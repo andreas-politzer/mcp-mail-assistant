@@ -39,6 +39,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   const [testTo, setTestTo] = useState('')
   const [markOwn, setMarkOwn] = useState(true)
   const [testStatus, setTestStatus] = useState<Status>(IDLE)
+  const [testSkipped, setTestSkipped] = useState(false)
   const [preview, setPreview] = useState<string[]>([])
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [claudeStatus, setClaudeStatus] = useState<Status>(IDLE)
@@ -124,6 +125,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     if (testStatus.kind === 'busy') return
     setTestStatus({ kind: 'busy' })
     const r = await backend.sendTestMail(testTo.trim(), markOwn)
+    if (r.ok) setTestSkipped(false)
     setTestStatus(r.ok ? { kind: 'ok', text: `Testmail an ${testTo.trim()} ist raus. Schau in dein Postfach.` } : { kind: 'fail', text: r.reason })
   }
 
@@ -334,7 +336,10 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                 <input type="checkbox" checked={markOwn} onChange={(e) => setMarkOwn(e.target.checked)} />
                 <span>Das ist meine eigene Adresse. Mails an sie darf Claude im Chat freigeben; an alle anderen nur ich selbst.</span>
               </label>
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                <button type="button" className="bevel" disabled={testStatus.kind === 'busy'} onClick={() => { setTestSkipped(true); go('claude') }}>
+                  Überspringen
+                </button>
                 <button type="button" className="bevel font-bold" disabled={!looksLikeAddress(testTo) || testStatus.kind === 'busy'} onClick={() => void sendTest()}>
                   Testmail senden
                 </button>
@@ -393,7 +398,14 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               <ul className="list-disc pl-5 mb-3">
                 <li>Postfach: {email.trim()} ({host}, Port {port})</li>
                 <li>Passwort liegt im Schlüsselbund dieses Computers</li>
-                <li>Testmail ist angekommen{markOwn ? `; ${testTo.trim()} gilt als eigene Adresse` : ''}</li>
+                {testSkipped && testStatus.kind !== 'ok' ? (
+                  <li>
+                    Testmail übersprungen. Nachholen kannst du sie jederzeit: Startmenü → „Einrichtungs-Wizard …“, Schritt „Testmail“. Erst dann gilt deine
+                    Adresse als eigene Adresse; bis dahin brauchst du für jede Mail, auch an dich selbst, deine Freigabe auf der Freigabeseite
+                  </li>
+                ) : (
+                  <li>Testmail ist angekommen{markOwn ? `; ${testTo.trim()} gilt als eigene Adresse` : ''}</li>
+                )}
                 <li>Claude Desktop ist verbunden</li>
                 <li>
                   {passkeys > 0

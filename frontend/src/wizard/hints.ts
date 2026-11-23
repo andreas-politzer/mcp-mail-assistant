@@ -16,11 +16,11 @@ export const HINTS: Record<StepId, string[]> = {
   password: [
     'Das Passwort geht direkt in den Schlüsselbund deines Computers. Ich sehe es nicht, und im Fenster bleibt es auch nicht stehen.',
     'Viele Anbieter wollen hier ein App-Passwort statt des normalen. Das ist keine Schikane, sondern ein zweites Passwort, das du jederzeit einzeln wieder löschen kannst.',
-    'Gleich fragt dein Mac vielleicht nach seinem Anmelde-Passwort, weil etwas im Schlüsselbund abgelegt wird. Das ist normal. Wähle „Immer erlauben“, sonst fragt er später bei jeder Mail noch einmal.',
     'Mit dem Auge neben dem Feld siehst du, was du getippt hast. Praktisch bei langen App-Passwörtern; schau nur, dass dir keiner über die Schulter schaut.',
   ],
   test: [
     'Eine Testmail an dich selbst. Kommt sie an, stimmt alles. Kommt sie nicht an, steht hier, woran es lag.',
+    'Keine Lust auf die Testmail? „Überspringen“ geht. Du kannst sie später im Einrichtungs-Wizard nachholen.',
     'Die Haken bei „eigene Adresse“: Mails an dich darf Claude im Chat freigeben. An alle anderen nur du, mit Passkey. Das ist der ganze Trick.',
   ],
   claude: [

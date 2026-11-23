@@ -148,6 +148,16 @@ def check_login(box: Mailbox, password: str, timeout: float = 20.0, context: Opt
                     pass
 
 
+def keychain_reason(exc: BaseException) -> str:
+    """A German reason for a failed keychain step: what to do first, the short technical cause after it."""
+    if isinstance(exc, secrets_store.KeychainLocked):
+        return "Der Schlüsselbund ist gesperrt. Entsperre ihn, indem du dich am Mac neu anmeldest (Bildschirm entsperren), und versuche es noch einmal."
+    return (
+        "Der Schlüsselbund dieses Computers hat das Passwort nicht angenommen. Entsperre den Mac, "
+        f"starte die App notfalls neu und versuche es noch einmal. Details: {exc}"
+    )
+
+
 def save_mailbox(
     env: Mapping[str, str], box: Mailbox, password: str, context: Optional[ssl.SSLContext] = None
 ) -> None:
@@ -162,10 +172,8 @@ def save_mailbox(
         raise SetupError("Ohne Verschlüsselung wird kein Passwort gespeichert.")
     try:
         secrets_store.set_smtp_password(box.host, box.email, password)
-    except OutboxError:
-        raise SetupError(
-            "Der Schlüsselbund dieses Computers hat das Passwort nicht angenommen. Entsperre ihn und versuche es noch einmal."
-        ) from None
+    except OutboxError as exc:
+        raise SetupError(keychain_reason(exc)) from None
     previous = load_mailbox(env)
     # The flag lets the wizard show "password stored" without reading the keychain, which on a Mac costs the
     # person a password dialog every time.

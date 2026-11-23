@@ -20,7 +20,7 @@ import os
 import sys
 from typing import List, Mapping, Optional, TextIO
 
-from . import setup_tasks as tasks
+from . import secrets_store, setup_tasks as tasks
 from .errors import OutboxError
 
 
@@ -75,6 +75,8 @@ def main(
         return reply({"ok": True})
     except tasks.SetupError as exc:
         return reply({"ok": False, "reason": str(exc)})
+    except secrets_store.KeychainError as exc:
+        return reply({"ok": False, "reason": tasks.keychain_reason(exc)})
     except OutboxError as exc:
         return reply({"ok": False, "reason": f"Das ging nicht: {exc}"})
 

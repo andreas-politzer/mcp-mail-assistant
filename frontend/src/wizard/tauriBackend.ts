@@ -11,13 +11,19 @@ interface Reply {
   url?: string
 }
 
-const FAILED = 'Der Schritt ist fehlgeschlagen.'
+const FAILED = 'Der Schritt ist fehlgeschlagen. Starte die App neu und versuche es noch einmal.'
+
+// A short technical reason for the rare unexpected failure, so a bug report can say what happened.
+function detail(e: unknown): string {
+  const text = (e instanceof Error ? e.message : typeof e === 'object' && e !== null ? JSON.stringify(e) : String(e ?? '')).trim()
+  return text ? ` Details: ${text.slice(0, 160)}` : ''
+}
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T | { ok: false; reason: string }> {
   try {
     return await invoke<T>(command, args)
   } catch (e) {
-    return { ok: false, reason: typeof e === 'string' ? e : FAILED }
+    return { ok: false, reason: typeof e === 'string' ? e : `${FAILED}${detail(e)}` }
   }
 }
 

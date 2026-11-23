@@ -29,6 +29,14 @@ from typing import Iterator, Optional
 
 from .errors import ConfigError
 
+
+class KeychainError(ConfigError):
+    """Any failure of the keychain step. The wizard shows these in German; the text itself stays short English."""
+
+
+class KeychainLocked(KeychainError):
+    """The keychain is locked: the person has to sign in to the Mac again."""
+
 SERVICE = "mail-assistant"
 SECURITY = "/usr/bin/security"
 _PREFIX = "ma1:"  # stored value = prefix + hex of the UTF-8 password, so it is always plain ASCII
@@ -49,7 +57,7 @@ def _keyring():
         import keyring
         import keyring.errors
     except ImportError:  # pragma: no cover - keyring is a declared dependency
-        raise ConfigError("The keychain library (keyring) is not installed.") from None
+        raise KeychainError("The keychain library (keyring) is not installed.") from None
     return keyring
 
 
@@ -84,7 +92,7 @@ def _exclusive() -> Iterator[None]:
                     break
                 except OSError:
                     if time.monotonic() >= deadline:
-                        raise ConfigError("Another part of the app is using the keychain. Try again in a moment.") from None
+                        raise KeychainError("Another part of the app is using the keychain. Try again in a moment.") from None
                     time.sleep(0.05)
             try:
                 yield
@@ -100,11 +108,11 @@ def _run(args: list[str], stdin: Optional[str] = None, timeout: int = WRITE_TIME
             [SECURITY, *args], input=stdin, capture_output=True, text=True, timeout=timeout, check=False
         )
     except subprocess.TimeoutExpired:
-        raise ConfigError(
+        raise KeychainError(
             "The keychain did not answer in time. If a device-password dialog is open, confirm it and try again."
         ) from None
     except OSError:
-        raise ConfigError("The keychain program could not be started.") from None
+        raise KeychainError("The keychain program could not be started.") from None
 
 
 def _not_found(done: "subprocess.CompletedProcess[str]") -> bool:
@@ -117,7 +125,7 @@ def _is_locked(done: "subprocess.CompletedProcess[str]") -> bool:
 
 def _quote(value: str) -> str:
     if re.search(r'["\\\n\r\x00]', value) or any(ord(c) < 32 for c in value):
-        raise ConfigError("The mailbox address or server contains characters the keychain cannot take.")
+        raise KeychainError("The mailbox address or server contains characters the keychain cannot take.")
     return f'"{value}"'
 
 
@@ -139,7 +147,7 @@ def _decode(raw: str) -> tuple[str, bool]:
         try:
             return bytes.fromhex(raw[len(_PREFIX):]).decode("utf-8"), False
         except ValueError:
-            raise ConfigError("The stored password is damaged. Enter it again.") from None
+            raise KeychainError("The stored password is damaged. Enter it again.") from None
     return _decode_legacy(raw), True
 
 
@@ -150,8 +158,8 @@ def _sec_read(account: str) -> tuple[Optional[str], bool]:
         if _not_found(done):
             return None, False
         if _is_locked(done):
-            raise ConfigError(_LOCKED_MESSAGE)
-        raise ConfigError("The keychain could not be read. Unlock it and try again.")
+            raise KeychainLocked(_LOCKED_MESSAGE)
+        raise KeychainError("The keychain could not be read. Unlock it and try again.")
     return _decode(done.stdout.rstrip("\n"))
 
 
@@ -182,9 +190,9 @@ def _sec_delete(account: str) -> bool:
         if _not_found(done):
             return removed
         if _is_locked(done):
-            raise ConfigError(_LOCKED_MESSAGE)
-        raise ConfigError("The keychain refused the change. Unlock it and try again.")
-    raise ConfigError("The keychain still holds entries after ten deletions. Remove them in Keychain Access.")
+            raise KeychainLocked(_LOCKED_MESSAGE)
+        raise KeychainError("The keychain refused the change. Unlock it and try again.")
+    raise KeychainError("The keychain still holds entries after ten deletions. Remove them in Keychain Access.")
 
 
 def _sec_add(account: str, password: str, update: bool) -> bool:
@@ -205,12 +213,12 @@ def _sec_set(account: str, password: str, legacy: bool = False) -> None:
             return
         current, old_value = _sec_read(account)
         if current is not None and not old_value:
-            raise ConfigError("The keychain could not update the password. The old one is kept.")
+            raise KeychainError("The keychain could not update the password. The old one is kept.")
     _sec_delete(account)
     for _ in range(3):
         if _sec_add(account, password, update=False):
             return
-    raise ConfigError("The keychain refused the password.")
+    raise KeychainError("The keychain refused the password.")
 
 
 def backend_name() -> str:
@@ -221,8 +229,8 @@ def backend_name() -> str:
     return f"{type(backend).__module__}.{type(backend).__name__}"
 
 
-def _unavailable(exc: Exception) -> ConfigError:
-    return ConfigError(
+def _unavailable(exc: Exception) -> KeychainError:
+    return KeychainError(
         "No system keychain is available here "
         f"({exc.__class__.__name__}). Set OUTBOX_SMTP_PASSWORD in the environment instead."
     )
@@ -239,7 +247,7 @@ def get_smtp_password(host: str, user: str) -> Optional[str]:
     except kr.errors.NoKeyringError:
         return None
     except kr.errors.KeyringError as exc:
-        raise ConfigError(f"The keychain could not be read ({exc.__class__.__name__}). Unlock it and try again.") from None
+        raise KeychainError(f"The keychain could not be read ({exc.__class__.__name__}). Unlock it and try again.") from None
     if value is not None and value.startswith(_PREFIX):
         # Written on macOS through /usr/bin/security and now read through keyring (switched back).
         return _decode(value)[0]
@@ -248,9 +256,9 @@ def get_smtp_password(host: str, user: str) -> Optional[str]:
 
 def set_smtp_password(host: str, user: str, password: str) -> None:
     if not password:
-        raise ConfigError("The password is empty.")
+        raise KeychainError("The password is empty.")
     if len(password.encode("utf-8")) > MAX_PASSWORD_BYTES:
-        raise ConfigError(f"The password is longer than {MAX_PASSWORD_BYTES} bytes, which the keychain step does not take.")
+        raise KeychainError(f"The password is longer than {MAX_PASSWORD_BYTES} bytes, which the keychain step does not take.")
     if _use_security():
         with _exclusive():
             _sec_set(account_name(host, user), password)
@@ -261,7 +269,7 @@ def set_smtp_password(host: str, user: str, password: str) -> None:
     except kr.errors.NoKeyringError as exc:
         raise _unavailable(exc) from None
     except kr.errors.KeyringError as exc:
-        raise ConfigError(f"The keychain refused the password ({exc.__class__.__name__}).") from None
+        raise KeychainError(f"The keychain refused the password ({exc.__class__.__name__}).") from None
 
 
 def delete_smtp_password(host: str, user: str) -> bool:
@@ -278,4 +286,4 @@ def delete_smtp_password(host: str, user: str) -> bool:
     except kr.errors.NoKeyringError as exc:
         raise _unavailable(exc) from None
     except kr.errors.KeyringError as exc:
-        raise ConfigError(f"The keychain refused the change ({exc.__class__.__name__}).") from None
+        raise KeychainError(f"The keychain refused the change ({exc.__class__.__name__}).") from None
