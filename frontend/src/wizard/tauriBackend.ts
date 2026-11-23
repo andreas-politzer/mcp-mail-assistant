@@ -34,7 +34,7 @@ export function tauriBackend(): SetupBackend {
     async status() {
       const r = await call<SetupStatus & Reply>('setup_status')
       if (!r.ok || !('mailbox' in r)) return { mailbox: null, password_stored: false, claude_connected: false, passkeys: 0 }
-      return { mailbox: r.mailbox, password_stored: r.password_stored, claude_connected: r.claude_connected, passkeys: r.passkeys ?? 0 }
+      return { mailbox: r.mailbox, password_stored: r.password_stored, claude_connected: r.claude_connected, passkeys: r.passkeys ?? 0, install_problem: r.install_problem ?? null }
     },
     async saveMailbox(s: MailboxSettings, password: string) {
       return outcome(await call<Reply>('setup_save_mailbox', { email: s.email, host: s.host, port: s.port, security: s.security, password }))
@@ -48,6 +48,9 @@ export function tauriBackend(): SetupBackend {
     },
     async connectClaude() {
       return outcome(await call<Reply>('setup_connect_claude'))
+    },
+    async disconnectClaude() {
+      return outcome(await call<Reply>('setup_disconnect_claude'))
     },
     async approvalLink() {
       const r = await call<Reply>('setup_approval_link')

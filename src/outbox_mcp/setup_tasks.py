@@ -269,6 +269,9 @@ def _entry(env: Mapping[str, str], command: str) -> dict:
         raise SetupError("Das Postfach ist noch nicht eingerichtet.")
     if not command or not os.path.isabs(command):
         raise SetupError("Der Pfad des Mail-Assistant-Programms fehlt.")
+    problem = install_problem(command)
+    if problem:
+        raise SetupError(problem)
     return {
         "command": command,
         "args": ["stdio"],
@@ -313,6 +316,17 @@ def preview_claude(env: Mapping[str, str], command: str) -> list:
     return lines
 
 
+def _backup_name(path: Path) -> Path:
+    """A name for a copy of the settings file that is not taken yet: two changes within the same second
+    (connect, then remove) must not overwrite each other's copy."""
+    stem = f"{path.name}.mail-assistant-backup-{time.strftime('%Y%m%d-%H%M%S')}"
+    candidate, n = path.with_name(stem), 1
+    while candidate.exists():
+        n += 1
+        candidate = path.with_name(f"{stem}-{n}")
+    return candidate
+
+
 def connect_claude(env: Mapping[str, str], command: str) -> Optional[Path]:
     """Add or update only our own entry. Returns the backup file, or None when there was no file yet."""
     entry = _entry(env, command)
@@ -322,13 +336,53 @@ def connect_claude(env: Mapping[str, str], command: str) -> Optional[Path]:
     backup = None
     try:
         if path.exists():
-            backup = path.with_name(f"{path.name}.mail-assistant-backup-{time.strftime('%Y%m%d-%H%M%S')}")
+            backup = _backup_name(path)
             _write_private(backup, path.read_text(encoding="utf-8"))
         data.setdefault("mcpServers", {})[ENTRY_NAME] = entry
         _write_private(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     except OSError:
         raise SetupError("Die Konfigurationsdatei von Claude Desktop lässt sich nicht schreiben.") from None
     return backup
+
+
+def disconnect_claude(env: Mapping[str, str]) -> bool:
+    """Remove only our own entry (backup first). True when an entry was removed, False when there was none:
+    asking twice, or asking without Claude Desktop installed, is not an error."""
+    path = claude_config_path(env)
+    if not path.exists():
+        return False
+    data = _read_config(path)
+    servers = data.get("mcpServers", {})
+    if ENTRY_NAME not in servers:
+        return False
+    try:
+        backup = _backup_name(path)
+        _write_private(backup, path.read_text(encoding="utf-8"))
+        del servers[ENTRY_NAME]
+        _write_private(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    except OSError:
+        raise SetupError("Die Konfigurationsdatei von Claude Desktop lässt sich nicht schreiben.") from None
+    return True
+
+
+def install_problem(command: str) -> Optional[str]:
+    """A place the program must not be started from when Claude Desktop is to use it, or None.
+
+    macOS runs a freshly downloaded app from a temporary, read-only copy ("App Translocation") until it was moved,
+    and a program started from a mounted disk image is gone once the image is ejected. The path of either would be
+    written into Claude Desktop's configuration and stop working."""
+    path = (command or "").replace("\\", "/")
+    if "/AppTranslocation/" in path:
+        return (
+            "Mail Assistant läuft gerade aus einem vorläufigen Ordner, den macOS beim ersten Start anlegt. "
+            "Beende die App, ziehe sie in den Ordner „Programme“ und starte sie von dort neu."
+        )
+    if path.startswith("/Volumes/"):
+        return (
+            "Mail Assistant läuft gerade von einem Datenträger, zum Beispiel direkt aus der heruntergeladenen Image-Datei. "
+            "Ziehe die App in den Ordner „Programme“, wirf die Image-Datei aus und starte die App von dort neu."
+        )
+    return None
 
 
 def status(env: Mapping[str, str], command: str = "") -> dict:
@@ -354,6 +408,7 @@ def status(env: Mapping[str, str], command: str = "") -> dict:
         "password_stored": stored,
         "claude_connected": connected,
         "passkeys": _passkey_count(env),
+        "install_problem": install_problem(command),
     }
 
 

@@ -13,6 +13,7 @@ import os
 import random
 import secrets
 import sqlite3
+import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -375,6 +376,8 @@ class Database:
                     "The mail database was written by a newer version of outbox-mcp. "
                     "Update the program instead of opening it with this one."
                 )
+            if version < self.SCHEMA_VERSION and conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0]:
+                self._back_up_before_upgrade(conn)
             conn.executescript(_SCHEMA)
             columns = [r[1] for r in conn.execute("PRAGMA table_info(draft_attachments)")]
             if "source_path" not in columns:  # version 3: remember where an attachment came from
@@ -390,6 +393,51 @@ class Database:
             self._migrate_recipient_scope(conn)
             if version < self.SCHEMA_VERSION:
                 conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")
+
+    def _back_up_before_upgrade(self, conn: sqlite3.Connection) -> None:
+        """An existing database is about to get a newer schema: keep a copy of it as it is now.
+
+        The copy comes from SQLite's own backup, which reads the main file together with the write-ahead log (a plain
+        file copy could miss what is still in the log). It is written to a temporary file with owner-only rights and
+        then linked into place, which fails if the copy for this version already exists: the first copy is the one
+        from before the upgrade, and a second process that starts a moment later must not replace it with a
+        database that is already upgraded."""
+        target = f"{self.path}.before-v{self.SCHEMA_VERSION}"
+        if os.path.exists(target):
+            return
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(self.path) or ".", prefix=os.path.basename(self.path) + ".backup-")
+        os.close(fd)
+        try:
+            self._copy_database(conn, tmp)
+            if os.name == "posix":
+                os.chmod(tmp, 0o600)
+            try:
+                os.link(tmp, target)
+            except FileExistsError:
+                pass
+            except OSError:  # no hard links on this file system
+                if not os.path.exists(target):
+                    os.replace(tmp, target)
+        except (OSError, sqlite3.Error) as exc:
+            if isinstance(exc, sqlite3.OperationalError) and "locked" in str(exc).lower():
+                raise  # another process is writing right now: the start-up loop tries again
+            raise ConfigError(
+                "The mail database could not be backed up before the upgrade, so nothing was changed. "
+                "Check the free disk space and try again."
+            ) from None
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _copy_database(conn: sqlite3.Connection, destination: str) -> None:
+        copy = sqlite3.connect(destination)
+        try:
+            conn.backup(copy)
+        finally:
+            copy.close()
 
     @staticmethod
     def _migrate_recipient_scope(conn: sqlite3.Connection) -> None:

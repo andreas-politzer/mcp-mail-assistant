@@ -5,6 +5,7 @@
     setup send-test --to A [--mark-own]
     setup preview-claude --command /absolute/path/to/this/program
     setup connect-claude --command /absolute/path/to/this/program
+    setup disconnect-claude                  (removes only our own entry from Claude Desktop's settings)
     setup approval-link                      (one-time link to register a passkey on the local approval page)
 
 The data folder comes from OUTBOX_DATA_DIR. Exit code is 0 whenever the answer is JSON ({"ok": false,
@@ -38,6 +39,7 @@ def _parser() -> argparse.ArgumentParser:
     t.add_argument("--to", required=True)
     t.add_argument("--mark-own", action="store_true")
     sub.add_parser("approval-link")
+    sub.add_parser("disconnect-claude")
     for name in ("preview-claude", "connect-claude"):
         sub.add_parser(name).add_argument("--command", dest="program", required=True)
     return p
@@ -69,6 +71,8 @@ def main(
             return reply({"ok": True})
         if args.command == "approval-link":
             return reply({"ok": True, "url": tasks.approval_link(environment)})
+        if args.command == "disconnect-claude":
+            return reply({"ok": True, "removed": tasks.disconnect_claude(environment)})
         if args.command == "preview-claude":
             return reply({"ok": True, "lines": tasks.preview_claude(environment, args.program)})
         tasks.connect_claude(environment, args.program)

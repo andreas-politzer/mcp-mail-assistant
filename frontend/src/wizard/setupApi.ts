@@ -18,6 +18,8 @@ export interface SetupStatus {
   claude_connected: boolean
   // Registered passkeys on the local approval page.
   passkeys: number
+  // Why the program cannot be connected from where it runs now (temporary macOS folder, disk image), or null.
+  install_problem?: string | null
 }
 
 export interface SetupBackend {
@@ -31,6 +33,8 @@ export interface SetupBackend {
   previewClaudeConnection(): Promise<{ ok: true; lines: string[] } | { ok: false; reason: string }>
   // Makes the change (after a backup copy of the configuration).
   connectClaude(): Promise<Outcome>
+  // Removes only our own entry from Claude Desktop's configuration (after a backup copy). Fine if there is none.
+  disconnectClaude(): Promise<Outcome>
   // One-time link to register a passkey on the local approval page. Only works once Claude Desktop runs the server.
   approvalLink(): Promise<{ ok: true; url: string } | { ok: false; reason: string }>
   // Opens that link in the browser of this computer.
@@ -71,6 +75,10 @@ export function mockBackend(delay = 700): SetupBackend {
       }
     },
     async connectClaude() {
+      await wait(delay)
+      return { ok: true }
+    },
+    async disconnectClaude() {
       await wait(delay)
       return { ok: true }
     },

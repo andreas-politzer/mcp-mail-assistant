@@ -235,6 +235,12 @@ async fn setup_connect_claude(app: AppHandle) -> Result<serde_json::Value, Strin
     run_setup(app, setup::claude_args("connect-claude", &program), None).await
 }
 
+/// Removes only the entry of this program from Claude Desktop's configuration (backup first). No entry is fine.
+#[tauri::command]
+async fn setup_disconnect_claude(app: AppHandle) -> Result<serde_json::Value, String> {
+    run_setup(app, vec!["disconnect-claude".to_string()], None).await
+}
+
 /// One-time link to register a passkey on the local approval page (needs Claude Desktop running the server).
 #[tauri::command]
 async fn setup_approval_link(app: AppHandle) -> Result<serde_json::Value, String> {
@@ -340,6 +346,7 @@ pub fn run() {
             setup_send_test,
             setup_preview_claude,
             setup_connect_claude,
+            setup_disconnect_claude,
             setup_approval_link,
             local_admin,
             local_api,

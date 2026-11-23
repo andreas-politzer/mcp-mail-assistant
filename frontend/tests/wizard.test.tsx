@@ -167,6 +167,67 @@ describe('the wizard (desktop path)', () => {
     expect(screen.queryByText(/Testmail übersprungen/)).toBeNull()
   })
 
+  const toClaudeStep = async (backend: SetupBackend) => {
+    render(<Wizard backend={backend} onDone={() => {}} />)
+    next()
+    await waitFor(() => expect((screen.getByLabelText('E-Mail-Adresse:') as HTMLInputElement).value).toBe('a@gmail.com'))
+    next()
+    await waitFor(() => screen.getByText(/schon im Schlüsselbund/))
+    next()
+    fireEvent.click(screen.getByText('Überspringen'))
+  }
+  const known = (connected: boolean) => async () => ({
+    mailbox: { email: 'a@gmail.com', host: 'smtp.gmail.com', port: 587, security: 'starttls' as const },
+    password_stored: true,
+    claude_connected: connected,
+    passkeys: 1,
+  })
+
+  it('offers to remove the connection to Claude Desktop only when it exists, and says what stays', async () => {
+    const backend = mockBackend(0)
+    backend.status = known(true)
+    const remove = vi.spyOn(backend, 'disconnectClaude')
+    await toClaudeStep(backend)
+    await waitFor(() => screen.getByText(/schon verbunden/))
+    fireEvent.click(screen.getByText('Aus Claude Desktop entfernen'))
+    expect(remove).toHaveBeenCalledOnce()
+    await waitFor(() => expect(screen.getByText(/Empfänger und Einstellungen bleiben erhalten/)).toBeTruthy())
+    expect(screen.getByText(/Cmd\+Q/)).toBeTruthy()
+    expect((screen.getByText('Jetzt verbinden') as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.queryByText('Aus Claude Desktop entfernen')).toBeNull()
+  })
+
+  it('does not offer to remove a connection that is not there', async () => {
+    const backend = mockBackend(0)
+    backend.status = known(false)
+    await toClaudeStep(backend)
+    await waitFor(() => expect((screen.getByText('Jetzt verbinden') as HTMLButtonElement).disabled).toBe(false))
+    expect(screen.queryByText('Aus Claude Desktop entfernen')).toBeNull()
+  })
+
+  it('shows why connecting is blocked when the app runs from a temporary place, and does not let it connect', async () => {
+    const backend = mockBackend(0)
+    backend.status = known(false)
+    backend.previewClaudeConnection = async () => ({ ok: false, reason: 'Mail Assistant läuft gerade aus einem vorläufigen Ordner. Ziehe die App in den Ordner „Programme“.' })
+    const connect = vi.spyOn(backend, 'connectClaude')
+    await toClaudeStep(backend)
+    await waitFor(() => expect(screen.getByText(/Ordner „Programme“/)).toBeTruthy())
+    const button = screen.getByText('Jetzt verbinden') as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    fireEvent.click(button)
+    expect(connect).not.toHaveBeenCalled()
+  })
+
+  it('shows a failure to remove in plain words', async () => {
+    const backend = mockBackend(0)
+    backend.status = known(true)
+    backend.disconnectClaude = async () => ({ ok: false, reason: 'Die Konfigurationsdatei von Claude Desktop lässt sich nicht schreiben.' })
+    await toClaudeStep(backend)
+    await waitFor(() => screen.getByText(/schon verbunden/))
+    fireEvent.click(screen.getByText('Aus Claude Desktop entfernen'))
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/nicht schreiben/))
+  })
+
   it('no longer announces a device-password dialog on the password step', () => {
     expect(HINTS.password.join(' ')).not.toMatch(/Immer erlauben|Anmelde-Passwort/)
   })

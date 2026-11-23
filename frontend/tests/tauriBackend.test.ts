@@ -26,4 +26,15 @@ describe('the desktop backend when a step fails unexpectedly', () => {
     if (r.ok) throw new Error('expected a failure')
     expect(r.reason.length).toBeLessThan(260)
   })
+
+  it('asks the helper program to remove the Claude Desktop entry', async () => {
+    invoke.mockResolvedValue({ ok: true, removed: true })
+    expect(await tauriBackend().disconnectClaude()).toEqual({ ok: true })
+    expect(invoke).toHaveBeenCalledWith('setup_disconnect_claude', undefined)
+  })
+
+  it('hands on why the program cannot be connected from where it runs', async () => {
+    invoke.mockResolvedValue({ ok: true, mailbox: null, password_stored: false, claude_connected: false, passkeys: 0, install_problem: 'Ziehe die App in den Ordner „Programme“.' })
+    expect((await tauriBackend().status()).install_problem).toBe('Ziehe die App in den Ordner „Programme“.')
+  })
 })

@@ -219,7 +219,7 @@ def test_the_bundle_entry_point_runs_setup_commands(tmp_path):
     run_env = {"PATH": "", "OUTBOX_DATA_DIR": str(tmp_path / "d"), "CLAUDE_DESKTOP_CONFIG": str(tmp_path / "c.json"), "HOME": str(tmp_path)}
     done = subprocess.run([sys.executable, "-I", str(entry), "setup", "status"], capture_output=True, text=True, env=run_env, timeout=60)
     assert done.returncode == 0, done.stderr
-    assert json.loads(done.stdout) == {"ok": True, "mailbox": None, "password_stored": False, "claude_connected": False, "passkeys": 0}
+    assert json.loads(done.stdout) == {"ok": True, "mailbox": None, "password_stored": False, "claude_connected": False, "passkeys": 0, "install_problem": None}
     bad = subprocess.run([sys.executable, "-I", str(entry), "nope"], capture_output=True, text=True, env=run_env, timeout=60)
     assert bad.returncode == 2
 
@@ -537,3 +537,99 @@ def test_a_typo_in_the_host_or_no_internet_is_the_unreachable_message(failure, w
     monkeypatch.setattr(smtplib.SMTP, "__init__", boom)
     with pytest.raises(tasks.SetupError, match=wanted):
         tasks.check_login(tasks.Mailbox("me@example.org", "smtp.exmaple.org", 587, "starttls"), PASSWORD)
+
+
+def test_disconnect_removes_only_our_entry_and_keeps_a_private_backup(env):
+    import os
+
+    _prepared(env)
+    path = tasks.claude_config_path(env)
+    path.write_text(json.dumps({"theme": "dark", "mcpServers": {"other": {"command": "x"}}}))
+    tasks.connect_claude(env, "/opt/ma/server")
+    with_ours = json.loads(path.read_text())
+    before = set(path.parent.glob("*backup*"))
+    assert tasks.disconnect_claude(env) is True
+    now = json.loads(path.read_text())
+    assert now == {"theme": "dark", "mcpServers": {"other": {"command": "x"}}}
+    made = set(path.parent.glob("*backup*")) - before
+    assert len(made) == 1
+    backup = made.pop()
+    assert json.loads(backup.read_text()) == with_ours
+    if os.name == "posix":
+        assert (os.stat(backup).st_mode & 0o777) == 0o600
+    assert tasks.status(env, "/opt/ma/server")["claude_connected"] is False
+
+
+def test_two_changes_in_the_same_second_keep_both_copies(env):
+    _prepared(env)
+    path = tasks.claude_config_path(env)
+    path.write_text(json.dumps({"theme": "dark"}))
+    first = tasks.connect_claude(env, "/opt/ma/server")
+    assert tasks.disconnect_claude(env) is True
+    copies = list(path.parent.glob("*backup*"))
+    assert len(copies) == 2 and first in copies
+    assert json.loads(first.read_text()) == {"theme": "dark"}
+
+
+def test_disconnect_twice_or_without_a_file_is_quietly_fine(env):
+    _prepared(env)
+    path = tasks.claude_config_path(env)
+    assert tasks.disconnect_claude(env) is False and not path.exists()
+    path.write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}}))
+    assert tasks.disconnect_claude(env) is False
+    assert not list(path.parent.glob("*backup*")) and json.loads(path.read_text())["mcpServers"] == {"other": {"command": "x"}}
+    tasks.connect_claude(env, "/opt/ma/server")
+    assert tasks.disconnect_claude(env) is True and tasks.disconnect_claude(env) is False
+
+
+def test_disconnect_does_not_touch_a_broken_file(env):
+    path = tasks.claude_config_path(env)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{ not json")
+    with pytest.raises(tasks.SetupError, match="nicht lesbar"):
+        tasks.disconnect_claude(env)
+    assert path.read_text() == "{ not json" and not list(path.parent.glob("*backup*"))
+
+
+def test_cli_disconnect_answers_with_one_json_line(env):
+    _prepared(env)
+    tasks.connect_claude(env, "/opt/ma/server")
+    out = io.StringIO()
+    assert setup_cli.main(["disconnect-claude"], env=env, stdout=out) == 0
+    assert json.loads(out.getvalue()) == {"ok": True, "removed": True}
+    out = io.StringIO()
+    setup_cli.main(["disconnect-claude"], env=env, stdout=out)
+    assert json.loads(out.getvalue()) == {"ok": True, "removed": False}
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/private/var/folders/ab/xyz/T/AppTranslocation/6F0C-1/d/Mail Assistant.app/Contents/Resources/server/mail-assistant-server",
+        "/Volumes/Mail Assistant/Mail Assistant.app/Contents/Resources/server/mail-assistant-server",
+    ],
+)
+def test_a_temporary_place_is_reported_and_blocks_connecting(env, command):
+    _prepared(env)
+    problem = tasks.install_problem(command)
+    assert problem and "Programme" in problem
+    assert tasks.status(env, command)["install_problem"] == problem
+    for action in (tasks.preview_claude, tasks.connect_claude):
+        with pytest.raises(tasks.SetupError, match="Programme"):
+            action(env, command)
+    assert not tasks.claude_config_path(env).exists()
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "/Applications/Mail Assistant.app/Contents/Resources/server/mail-assistant-server",
+        "/Users/you/Applications/Mail Assistant.app/Contents/Resources/server/mail-assistant-server",
+        "/Users/you/Downloads/Mail Assistant.app/Contents/Resources/server/mail-assistant-server",
+        "/Users/you/Developer/outbox/.venv/bin/mail-assistant-server",
+        "C:\\Program Files\\Mail Assistant\\server\\mail-assistant-server.exe",
+        "",
+    ],
+)
+def test_normal_places_are_fine(command):
+    assert tasks.install_problem(command) is None

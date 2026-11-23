@@ -43,6 +43,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   const [preview, setPreview] = useState<string[]>([])
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [claudeStatus, setClaudeStatus] = useState<Status>(IDLE)
+  const [removeStatus, setRemoveStatus] = useState<Status>(IDLE)
   const [showPw, setShowPw] = useState(false)
   const [passkeys, setPasskeys] = useState(0)
   const [pkStatus, setPkStatus] = useState<Status>(IDLE)
@@ -165,6 +166,18 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     setClaudeStatus({ kind: 'busy' })
     const r = await backend.connectClaude()
     setClaudeStatus(r.ok ? { kind: 'ok', text: 'Verbunden. Claude Desktop jetzt ganz beenden und neu starten.' } : { kind: 'fail', text: r.reason })
+  }
+
+  const disconnectClaude = async () => {
+    if (removeStatus.kind === 'busy') return
+    setRemoveStatus({ kind: 'busy' })
+    const r = await backend.disconnectClaude()
+    if (r.ok) {
+      setClaudeStatus(IDLE)
+      setRemoveStatus({ kind: 'ok', text: 'Die Verbindung zu Claude Desktop ist entfernt. Deine Empfänger und Einstellungen bleiben erhalten. Claude Desktop jetzt ganz beenden (Cmd+Q) und neu starten.' })
+    } else {
+      setRemoveStatus({ kind: 'fail', text: r.reason })
+    }
   }
 
   const canNext = useMemo(() => {
@@ -355,12 +368,18 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               <ul className="list-disc pl-5 mb-3">
                 {previewError ? <li style={{ color: '#a01020' }}>{previewError}</li> : preview.length === 0 ? <li>Einen Moment …</li> : preview.map((l) => <li key={l}>{l}</li>)}
               </ul>
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                {claudeStatus.kind === 'ok' && (
+                  <button type="button" className="bevel" disabled={removeStatus.kind === 'busy'} onClick={() => void disconnectClaude()}>
+                    Aus Claude Desktop entfernen
+                  </button>
+                )}
                 <button type="button" className="bevel font-bold" disabled={preview.length === 0 || claudeStatus.kind === 'busy' || claudeStatus.kind === 'ok'} onClick={() => void connectClaude()}>
                   Jetzt verbinden
                 </button>
               </div>
               {statusLine(claudeStatus)}
+              {statusLine(removeStatus)}
             </>
           )}
 
