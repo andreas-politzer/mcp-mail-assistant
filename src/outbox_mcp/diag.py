@@ -6,14 +6,16 @@ endpoint it adds the JSON-RPC method (and the tool name for tool calls). For err
 and up) it adds the first 200 characters of the answer the server gave.
 
 It never writes mail text, recipients, tool arguments, tokens, cookies, the Authorization header
-or query strings, and it skips the approval pages, whose addresses carry secrets.
+or query strings (except the probe variant letter, see probe.py), and it skips the approval pages, whose addresses carry secrets.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
+from urllib.parse import parse_qs
 from typing import Any, Callable, Optional
 
 _LOGGED_PATHS = {"/mcp", "/token", "/register", "/authorize"}
@@ -25,6 +27,16 @@ _PEEK_TEXT = 400
 # For these JSON-RPC methods the answer (and for subscriptions/listen the request) holds only
 # server metadata, client identity and subscription filters, so a longer excerpt is logged even on success.
 _PEEK_METHODS = ("server/discover", "subscriptions/listen", "initialize")
+
+
+def variant_of(scope: dict) -> str:
+    """The probe variant named in the address (?v=b): one to eight lower-case letters or digits, else ''."""
+    try:
+        values = parse_qs(scope.get("query_string", b"").decode("ascii", "ignore")).get("v", [])
+    except ValueError:
+        return ""
+    value = values[0] if values else ""
+    return value if re.fullmatch(r"[a-z0-9]{1,8}", value) else ""
 
 
 def _stderr(line: str) -> None:
@@ -120,6 +132,9 @@ class RequestLog:
                 if name in headers:
                     fields.append(f"{name}={headers[name][:80]!r}")
             fields.append(f"bytes={size} ms={int((time.monotonic() - started) * 1000)}")
+            variant = variant_of(scope)
+            if variant:
+                fields.append(f"variant={variant}")
             if is_mcp and scope.get("method") == "POST":
                 fields.append(rpc_summary(bytes(body)))
                 if any(m in _PEEK_METHODS for m in rpc_methods(bytes(body))):

@@ -18,7 +18,8 @@ from .auth.app import create_authenticated_app
 from .auth.config import AuthConfig
 from .auth.store import AuthStore
 from .config import Config
-from .probe import MODE_PING_ROOT, PROBE_OPTIONS, register_probe_tools
+from .probe import MODE_MATRIX, MODE_PING_ROOT, PROBE_OPTIONS, register_probe_tools
+from .probe_matrix import VariantSelector, register_matrix_tools
 from .probe import mode_from_env as probe_mode_from_env
 from .remote import with_remote_file
 from .server import SERVER_OPTIONS, build_service, owner_from_token, register_tools
@@ -35,7 +36,7 @@ def build_http_app(
 ):
     if probe:
         # Diagnosis only: one harmless tool instead of the mail tools (see probe.py).
-        configure = register_probe_tools
+        configure = register_matrix_tools if probe == MODE_MATRIX else register_probe_tools
         options, name = PROBE_OPTIONS, "probe"
     else:
         configure = lambda mcp: register_tools(mcp, service, owner_from_token)  # noqa: E731
@@ -51,6 +52,8 @@ def build_http_app(
     )
     app.state.mcp_path = auth_config.mcp_path
     app.state.probe = probe
+    if probe == MODE_MATRIX:
+        app.add_middleware(VariantSelector, mcp_path=auth_config.mcp_path)
     if service.approval is not None:
         # The approval and enrollment pages live in the public process; they need no sign-in
         # because the passkey is the proof.
@@ -113,8 +116,8 @@ def main() -> None:
     mcp_path = getattr(getattr(app, "state", None), "mcp_path", "/mcp")
     if getattr(getattr(app, "state", None), "probe", None):
         print(
-            f"Mail Assistant: PROBE MODE '{app.state.probe}' (OUTBOX_PROBE): only the tool ping is offered, "
-            "no mail tool. Remove the setting to go back to normal.",
+            f"Mail Assistant: PROBE MODE '{app.state.probe}' (OUTBOX_PROBE): only ping (or dummy tools) is offered, "
+            "no real mail tool. Remove the setting to go back to normal.",
             file=sys.stderr,
             flush=True,
         )
