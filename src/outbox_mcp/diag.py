@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from typing import Any, Callable, Optional
 
 _LOGGED_PATHS = {"/mcp", "/token", "/register", "/authorize"}
@@ -20,6 +21,10 @@ _LOGGED_PREFIXES = ("/.well-known/",)
 _HEADERS = ("accept", "content-type", "mcp-protocol-version", "mcp-session-id", "user-agent")
 _MAX_BODY = 64 * 1024
 _ERROR_TEXT = 200
+_PEEK_TEXT = 400
+# For these JSON-RPC methods the answer (and for subscriptions/listen the request) holds only
+# server metadata and subscription filters, so a longer excerpt is logged even on success.
+_PEEK_METHODS = ("server/discover", "subscriptions/listen")
 
 
 def _stderr(line: str) -> None:
@@ -28,6 +33,15 @@ def _stderr(line: str) -> None:
 
 def _wanted(path: str) -> bool:
     return path in _LOGGED_PATHS or path.startswith(_LOGGED_PREFIXES)
+
+
+def rpc_methods(body: bytes) -> list:
+    try:
+        data = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return []
+    items = data if isinstance(data, list) else [data]
+    return [i["method"] for i in items if isinstance(i, dict) and isinstance(i.get("method"), str)]
 
 
 def rpc_summary(body: bytes) -> str:
@@ -71,6 +85,9 @@ class RequestLog:
         body = bytearray()
         status = 0
         error = bytearray()
+        peek = bytearray()
+        size = 0
+        started = time.monotonic()
 
         async def recv():
             message = await receive()
@@ -79,11 +96,16 @@ class RequestLog:
             return message
 
         async def out(message):
-            nonlocal status
+            nonlocal status, size
             if message.get("type") == "http.response.start":
                 status = message.get("status", 0)
-            elif message.get("type") == "http.response.body" and status >= 400 and len(error) < _ERROR_TEXT:
-                error.extend(message.get("body", b"")[: _ERROR_TEXT - len(error)])
+            elif message.get("type") == "http.response.body":
+                chunk = message.get("body", b"")
+                size += len(chunk)
+                if status >= 400 and len(error) < _ERROR_TEXT:
+                    error.extend(chunk[: _ERROR_TEXT - len(error)])
+                if len(peek) < _PEEK_TEXT:
+                    peek.extend(chunk[: _PEEK_TEXT - len(peek)])
             await send(message)
 
         try:
@@ -94,8 +116,12 @@ class RequestLog:
             for name in _HEADERS:
                 if name in headers:
                     fields.append(f"{name}={headers[name][:80]!r}")
+            fields.append(f"bytes={size} ms={int((time.monotonic() - started) * 1000)}")
             if is_mcp and scope.get("method") == "POST":
                 fields.append(rpc_summary(bytes(body)))
+                if any(m in _PEEK_METHODS for m in rpc_methods(bytes(body))):
+                    fields.append("request=" + bytes(body[:_PEEK_TEXT]).decode("utf-8", "replace").replace("\n", " "))
+                    fields.append("peek=" + bytes(peek).decode("utf-8", "replace").replace("\n", " "))
             if status >= 400 and error:
                 fields.append("answer=" + error.decode("utf-8", "replace").replace("\n", " ")[:_ERROR_TEXT])
             self.log("DIAG " + " ".join(fields))

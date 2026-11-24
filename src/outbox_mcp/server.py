@@ -9,6 +9,7 @@ from typing import Callable, List, Optional
 import anyio
 import anyio.to_thread
 from mcp.server.auth.middleware.auth_context import get_access_token
+from mcp.server.caching import CacheHint
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
@@ -30,6 +31,13 @@ LOCAL_OWNER = "local"
 SERVER_OPTIONS = {
     "title": "Mail Assistant",
     "version": __version__,
+    # No pushed updates: the tool list only changes when the server is updated. Without these two
+    # settings the server announces subscriptions and calls every answer "stale at once".
+    "subscriptions": False,
+    "cache_hints": {
+        "server/discover": CacheHint(ttl_ms=300_000, scope="private"),
+        "tools/list": CacheHint(ttl_ms=300_000, scope="private"),
+    },
     "instructions": (
         "Mail Assistant lets you write and send e-mail on the user's behalf, always with their "
         "confirmation. Use it whenever the user wants to write, draft, send or reply to an e-mail, "

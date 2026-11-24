@@ -89,3 +89,18 @@ def test_sign_in_paths_log_without_query_string():
     lines, _ = run(make_app(200), scope(path="/token"))
     assert lines[0].startswith("DIAG POST /token -> 200")
     assert "SECRET" not in lines[0]
+
+
+def test_discover_and_listen_get_a_longer_excerpt_and_timing():
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "server/discover"}).encode()
+    lines, _ = run(make_app(200, b'{"result":{"supportedVersions":["2026-07-28"]}}'), scope(), body)
+    assert "bytes=" in lines[0] and "ms=" in lines[0]
+    assert "peek=" in lines[0] and "supportedVersions" in lines[0]
+    assert "request=" in lines[0]
+
+
+def test_ordinary_methods_log_no_excerpt():
+    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "send_email", "arguments": {"text": "GEHEIM"}}}).encode()
+    lines, _ = run(make_app(200, b'{"result":"GEHEIM-ANTWORT"}'), scope(), body)
+    assert "peek=" not in lines[0] and "request=" not in lines[0]
+    assert "GEHEIM" not in lines[0]

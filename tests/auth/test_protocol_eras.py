@@ -109,3 +109,17 @@ def test_the_server_names_itself_and_says_what_it_is_for(live_url, store):
     assert info.title == "Mail Assistant"
     assert info.version == __version__ and info.version
     assert "send_email" in instructions and "e-mail" in instructions
+
+
+def test_no_pushed_updates_and_the_tool_list_may_be_cached(live_url, store):
+    async def main():
+        async with _http(_token(store)) as http:
+            async with streamable_http_client(live_url, http_client=http) as streams:
+                async with Client(_Streams(streams), mode="auto") as client:
+                    listed = await client.list_tools()
+                    return client.server_capabilities, listed.ttl_ms
+
+    capabilities, ttl = anyio.run(main)
+    assert capabilities.tools.list_changed is False
+    assert capabilities.resources.subscribe is False
+    assert ttl == 300_000
