@@ -132,3 +132,20 @@ def test_the_halves_offer_four_unchanged_tools_each(matrix_url, store, auth_conf
     assert {t.name for t in tools} == expected
     assert all(t.annotations is not None for t in tools)
     assert expected & {"prepare_email", "list_attachments"} and any(_has_anyof(t) for t in tools)
+
+
+def test_h_offers_one_unchanged_tool(matrix_url, store, auth_config):
+    tools = _tools(matrix_url, _token(store, auth_config), "?v=h")
+    assert [t.name for t in tools] == ["list_recipients"]
+    assert tools[0].annotations is not None and tools[0].annotations.title == "List allowed recipients"
+
+
+def test_i_has_nothing_mail_like_left(matrix_url, store, auth_config):
+    tools = _tools(matrix_url, _token(store, auth_config), "?v=i")
+    assert [t.name for t in tools] == [f"tool_{n}" for n in range(1, 9)]
+    text = json.dumps([t.model_dump(by_alias=True, exclude_none=True) for t in tools]).lower()
+    for word in ("mail", "recipient", "draft", "attach", "suggest", "send", "subject", "text",
+                 "cancel", "status", "list_", "prepare", "approval", "confirm", "user"):
+        assert word not in text, word
+    assert not any(_has_anyof(t) for t in tools)
+    assert all(t.annotations is not None and t.annotations.title is None for t in tools)

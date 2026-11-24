@@ -15,6 +15,10 @@ The letter after `v=` picks what tools/list answers:
            draft_status, list_suggestions)
   g        4 real tools, unchanged: the writing ones (prepare_email, suggest_recipient,
            send_email, cancel_draft)
+  h        1 real tool, unchanged: list_recipients
+  i        the 8 tools with nothing mail-like left: names tool_1..tool_8, no titles, one neutral
+           sentence as description, argument names arg_1.., no nullable types. Only for looking
+           at the list: these tools cannot be called.
 
 Safety: the tools are registered against a dummy service whose methods only return
 {"probe": True}. No mail can be read, prepared or sent, no recipient or file is touched, whatever
@@ -38,8 +42,9 @@ from .server import register_tools
 SUBSETS = {
     "f": frozenset({"list_recipients", "list_attachments", "draft_status", "list_suggestions"}),
     "g": frozenset({"prepare_email", "suggest_recipient", "send_email", "cancel_draft"}),
+    "h": frozenset({"list_recipients"}),
 }
-VARIANTS = ("b", "c", "d", "e") + tuple(SUBSETS)
+VARIANTS = ("b", "c", "d", "e", "i") + tuple(SUBSETS)
 
 _variant: contextvars.ContextVar[str] = contextvars.ContextVar("probe_variant", default="")
 
@@ -74,10 +79,33 @@ def plain_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def neutral_tool(tool: MCPTool, number: int) -> MCPTool:
+    """The same tool with nothing mail-like in name, title, description or argument names."""
+    out = tool.model_copy(deep=True)
+    schema = plain_schema(tool.input_schema)
+    names = {old: f"arg_{k}" for k, old in enumerate(schema.get("properties") or {}, 1)}
+    schema["properties"] = {
+        names[old]: {k: v for k, v in prop.items() if k not in ("title", "description")}
+        for old, prop in (schema.get("properties") or {}).items()
+    }
+    if "required" in schema:
+        schema["required"] = [names[r] for r in schema["required"]]
+    schema.pop("title", None)
+    out.name, out.title, out.description = f"tool_{number}", None, "Does one simple thing."
+    out.input_schema = schema
+    out.output_schema = None
+    out.meta = None
+    if tool.annotations is not None:
+        out.annotations = tool.annotations.model_copy(update={"title": None})
+    return out
+
+
 def variant_tools(real: List[MCPTool], variant: str) -> List[MCPTool]:
     """The tool list for one variant (unknown variant: the original list)."""
     if variant not in VARIANTS:
         return list(real)
+    if variant == "i":
+        return [neutral_tool(t, n) for n, t in enumerate(real, 1)]
     out = []
     for tool in real:
         if variant in SUBSETS and tool.name not in SUBSETS[variant]:
