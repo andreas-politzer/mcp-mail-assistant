@@ -121,3 +121,14 @@ def test_the_log_names_the_variant_and_nothing_else_of_the_query(auth_config, st
     text = "\n".join(lines)
     assert "variant=d" in text
     assert "hunter2" not in text and "secret" not in text
+
+
+@pytest.mark.parametrize("letter,expected", [
+    ("f", {"list_recipients", "list_attachments", "draft_status", "list_suggestions"}),
+    ("g", {"prepare_email", "suggest_recipient", "send_email", "cancel_draft"}),
+])
+def test_the_halves_offer_four_unchanged_tools_each(matrix_url, store, auth_config, letter, expected):
+    tools = _tools(matrix_url, _token(store, auth_config), f"?v={letter}")
+    assert {t.name for t in tools} == expected
+    assert all(t.annotations is not None for t in tools)
+    assert expected & {"prepare_email", "list_attachments"} and any(_has_anyof(t) for t in tools)

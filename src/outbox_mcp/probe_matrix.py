@@ -11,6 +11,10 @@ The letter after `v=` picks what tools/list answers:
   c        the 8 real tools, schemas without "anyOf"/null, real annotations
   d        the 8 real tools, original schemas (anyOf/null), no annotations
   e        the 8 real tools, unchanged (original schemas and annotations)
+  f        4 real tools, unchanged: the reading ones (list_recipients, list_attachments,
+           draft_status, list_suggestions)
+  g        4 real tools, unchanged: the writing ones (prepare_email, suggest_recipient,
+           send_email, cancel_draft)
 
 Safety: the tools are registered against a dummy service whose methods only return
 {"probe": True}. No mail can be read, prepared or sent, no recipient or file is touched, whatever
@@ -31,7 +35,11 @@ from mcp.types import Tool as MCPTool
 from .probe import register_probe_tools
 from .server import register_tools
 
-VARIANTS = ("b", "c", "d", "e")
+SUBSETS = {
+    "f": frozenset({"list_recipients", "list_attachments", "draft_status", "list_suggestions"}),
+    "g": frozenset({"prepare_email", "suggest_recipient", "send_email", "cancel_draft"}),
+}
+VARIANTS = ("b", "c", "d", "e") + tuple(SUBSETS)
 
 _variant: contextvars.ContextVar[str] = contextvars.ContextVar("probe_variant", default="")
 
@@ -72,6 +80,8 @@ def variant_tools(real: List[MCPTool], variant: str) -> List[MCPTool]:
         return list(real)
     out = []
     for tool in real:
+        if variant in SUBSETS and tool.name not in SUBSETS[variant]:
+            continue
         copy_ = tool.model_copy(deep=True)
         if variant in ("b", "c"):
             copy_.input_schema = plain_schema(tool.input_schema)
