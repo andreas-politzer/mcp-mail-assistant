@@ -71,17 +71,20 @@ def rpc_summary(body: bytes) -> str:
 
 
 class RequestLog:
-    def __init__(self, app: Any, log: Optional[Callable[[str], None]] = None) -> None:
+    def __init__(
+        self, app: Any, log: Optional[Callable[[str], None]] = None, mcp_path: str = "/mcp"
+    ) -> None:
         self.app = app
+        self.mcp_path = mcp_path
         self.log = log or _stderr
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "") if scope.get("type") == "http" else ""
-        if not _wanted(path):
+        if not (_wanted(path) or (path == self.mcp_path and scope.get("type") == "http")):
             await self.app(scope, receive, send)
             return
 
-        is_mcp = path == "/mcp"
+        is_mcp = path == self.mcp_path
         body = bytearray()
         status = 0
         error = bytearray()
