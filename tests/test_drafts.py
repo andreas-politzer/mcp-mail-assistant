@@ -198,3 +198,10 @@ def test_existing_database_gets_restricted(tmp_path):
     path.chmod(0o644)
     Database(path)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_unknown_draft_message_names_the_other_server(tmp_path):
+    from outbox_mcp.storage.database import NO_SUCH_DRAFT
+
+    assert "more than one Mail Assistant server" in NO_SUCH_DRAFT
+    assert "prepare_email" in NO_SUCH_DRAFT

@@ -86,7 +86,7 @@ describe('the bonus saucer', () => {
     const spawn = () => 0 // below the spawn chance, picks the left side
     g = step(g, none, spawn)
     expect(g.ufo).not.toBeNull()
-    g = { ...g, ufo: { x: 100, dir: 1 }, shot: { x: 108, y: UFO_Y + 6 } }
+    g = { ...g, ufo: { x: 100, dir: 1 }, shot: { x: 108, y: UFO_Y + 12 } }
     const before = g.score
     g = step(g, none, calm)
     expect(g.ufo).toBeNull()
@@ -103,13 +103,20 @@ describe('the hall of fame', () => {
     const scores = HALL_OF_FAME.map((h) => h.score)
     expect([...scores].sort((a, b) => b - a)).toEqual(scores)
   })
-  it('shows the player only after beating the top score', () => {
-    const top = HALL_OF_FAME[0].score
+  it('puts the player in at the real rank and keeps the list length', () => {
+    const n = HALL_OF_FAME.length
     expect(hallWithPlayer(0).some((h) => h.name === PLAYER_NAME)).toBe(false)
-    expect(hallWithPlayer(top).some((h) => h.name === PLAYER_NAME)).toBe(false)
-    const win = hallWithPlayer(top + 1)
-    expect(win[0]).toMatchObject({ name: PLAYER_NAME, score: top + 1, me: true })
-    expect(win).toHaveLength(HALL_OF_FAME.length)
+    expect(hallWithPlayer(HALL_OF_FAME[n - 1].score).some((h) => h.name === PLAYER_NAME)).toBe(false)
+    const win = hallWithPlayer(HALL_OF_FAME[0].score + 1)
+    expect(win[0]).toMatchObject({ name: PLAYER_NAME, me: true })
+    expect(win).toHaveLength(n)
+    const mid = hallWithPlayer(2070)
+    expect(mid.findIndex((h) => h.me)).toBe(6)
+    expect(mid.map((h) => h.name)[7]).toBe('Rodney McKay')
+    expect(mid.some((h) => h.name === 'Han Solo')).toBe(false)
+    const scores = mid.map((h) => h.score)
+    expect([...scores].sort((a, b) => b - a)).toEqual(scores)
+    expect(hallWithPlayer(HALL_OF_FAME[n - 1].score + 1)[n - 1]).toMatchObject({ me: true })
   })
 })
 
@@ -123,10 +130,10 @@ describe('the Postwurf window', () => {
   it('starts on demand, lists the invented scores and closes', () => {
     const onClose = vi.fn()
     render(<Postwurf onClose={onClose} />)
-    expect(screen.getByText('Bestenliste (Punkte erfunden)')).toBeTruthy()
+    expect(screen.getByText('Highscore')).toBeTruthy()
     expect(screen.queryByText(PLAYER_NAME)).toBeNull()
     fireEvent.click(screen.getByText('Start'))
-    expect(screen.queryByText('Bestenliste (Punkte erfunden)')).toBeNull()
+    expect(screen.queryByText('Highscore')).toBeNull()
     act(() => { vi.advanceTimersByTime(400) })
     expect(document.querySelectorAll('[data-alien]').length).toBe(40)
     fireEvent.click(screen.getByText('Schließen'))

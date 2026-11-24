@@ -41,3 +41,5 @@ echo
 echo "== FERTIG"
 echo "App: $ROOT/$APP"
 ls -1 "$ROOT"/frontend/src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null | sed 's/^/DMG: /' || true
+echo
+echo "Installieren und starten: bash packaging/install-macos.sh"

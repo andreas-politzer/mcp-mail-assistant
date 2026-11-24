@@ -306,6 +306,14 @@ END;
 """
 
 
+# Shown when a draft id is unknown. Two servers never share drafts, so the text says what that usually means.
+NO_SUCH_DRAFT = (
+    "No such draft on this server. If more than one Mail Assistant server is connected, the draft was "
+    "probably created on the other one: use only one connection in a chat. Otherwise prepare a new draft "
+    "with prepare_email."
+)
+
+
 @dataclass(frozen=True)
 class Draft:
     id: str
@@ -528,7 +536,7 @@ class Database:
     def _load(conn, draft_id: str, owner: str) -> Draft:
         row = conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
         if row is None or row["owner"] != owner:
-            raise DraftNotFound("No such draft. Prepare a new draft with prepare_email.")
+            raise DraftNotFound(NO_SUCH_DRAFT)
         return Database._draft(row)
 
     # -- operations ---------------------------------------------------------------
@@ -688,7 +696,7 @@ class Database:
         with self._tx() as conn:
             row = conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
             if row is None:
-                raise DraftNotFound("No such draft.")
+                raise DraftNotFound(NO_SUCH_DRAFT)
             conn.execute(
                 "UPDATE drafts SET status=?, finished_at=?, detail=? WHERE id=?",
                 (status, now, detail, draft_id),

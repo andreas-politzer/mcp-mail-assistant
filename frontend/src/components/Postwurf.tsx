@@ -122,7 +122,7 @@ export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; o
   })
 
   const hall = hallWithPlayer(best)
-  const leads = best > HALL_OF_FAME[0].score
+  const rank = hall.findIndex((h) => h.me)
   const pose = (Math.floor(game.tick / 8) % 2) as 0 | 1
 
   return (
@@ -190,16 +190,17 @@ export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; o
 
         {phase !== 'playing' && (
           <div className="mt-3">
-            <div className="font-bold text-[12px]">Bestenliste (Punkte erfunden)</div>
-            <ol className="text-[12px] mt-1" style={{ listStyle: 'none', padding: 0, margin: 0 }} aria-label="Bestenliste">
+            <div className="font-bold text-[12px]">Highscore</div>
+            <ol className="text-[12px] mt-1" style={{ listStyle: 'none', padding: 0, margin: 0 }} aria-label="Highscore">
               {hall.map((h, i) => (
                 <li key={h.name + h.score} className="flex justify-between" style={h.me ? { fontWeight: 700, color: '#0a246a' } : undefined}>
                   <span>{i + 1}. {h.name}</span><span>{h.score}</span>
                 </li>
               ))}
             </ol>
-            {phase === 'over' && leads && <div className="text-[12px] mt-1" role="status">Neue Spitze! Dein Name steht jetzt ganz oben.</div>}
-            {phase === 'over' && !leads && best > 0 && <div className="text-[12px] mt-1">Dein Bestwert: {best}. Ganz oben fehlen noch {HALL_OF_FAME[0].score - best + 1}.</div>}
+            {phase === 'over' && rank === 0 && <div className="text-[12px] mt-1" role="status">Neue Spitze! Dein Name steht jetzt ganz oben.</div>}
+            {phase === 'over' && rank > 0 && <div className="text-[12px] mt-1" role="status">Platz {rank + 1}! Dein Name steht jetzt im Highscore.</div>}
+            {phase === 'over' && rank < 0 && best > 0 && <div className="text-[12px] mt-1">Dein Bestwert: {best}. Bis in den Highscore fehlen noch {HALL_OF_FAME[HALL_OF_FAME.length - 1].score - best + 1}.</div>}
           </div>
         )}
         <div className="flex justify-end gap-2 mt-3">

@@ -475,6 +475,8 @@ describe('the tunnel step (phone path)', () => {
     fireEvent.click(screen.getByText('Kopieren'))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${ADDRESS}/mcp`))
     expect(screen.getByText(/nach der Passphrase/)).toBeTruthy()
+    expect(screen.getByText(/Name: „Mail Mac“/)).toBeTruthy()
+    expect(screen.getByLabelText('Hinweis zu mehreren Verbindungen').textContent).toMatch(/Nur eine Verbindung pro Chat/)
     expect(screen.getByText(/Passphrase nicht gespeichert\? Mit „Zurück“ kannst du eine neue erzeugen\./)).toBeTruthy()
     expect(screen.getByText(/Benutzerdefinierten Connector hinzufügen/)).toBeTruthy()
     expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false) // nothing to verify here, no tick

@@ -934,7 +934,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                         Einstellungen öffnen
                       </button>
                     </li>
-                    <li>Name: „Mail Assistant“. Als Adresse diese eintragen:</li>
+                    <li>Name: „Mail Mac“ (oder „Mail Server“, wenn der Mail Assistant auf einem eigenen Server läuft). Ein Name, an dem du später erkennst, welcher Mail Assistant das ist. Als Adresse diese eintragen:</li>
                   </ol>
                   <div className="mb-1 break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label="Adresse für den Connector">
                     {connectorUrl}
@@ -945,6 +945,9 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                     </button>
                   </div>
                   <div className="mb-2">Beim Anmelden fragt die Seite deines Computers nach der Passphrase. Nimm sie aus deinem Passwortmanager. Der Connector erscheint danach automatisch in der Claude-App auf dem Handy (dort einen neuen Chat beginnen).</div>
+                  <div className="mb-2 p-2 text-[12px]" role="note" style={{ background: '#ffffe1', border: '1px solid #000' }} aria-label="Hinweis zu mehreren Verbindungen">
+                    <b>Nur eine Verbindung pro Chat.</b> Der Connector aus claude.ai erscheint auch in Claude Desktop. Hast du dort zusätzlich die lokale Verbindung oder einen zweiten Mail Assistant (zum Beispiel auf einem Server), siehst du zwei mit denselben Werkzeugen. Dann kann ein Entwurf auf dem anderen liegen. Lass pro Chat nur einen aktiv und entferne den Rest, den du nicht brauchst.
+                  </div>
                   <div className="text-[12px]">Passphrase nicht gespeichert? Mit „Zurück“ kannst du eine neue erzeugen.</div>
                 </>
               ) : (

@@ -324,11 +324,11 @@ class ApprovalService:
     def approve_options(self, draft_id: str) -> Tuple[bool, Any]:
         now = self.clock()
         if not isinstance(draft_id, str):
-            return False, "Draft not found."
+            return False, "Draft not found. If several Mail Assistant servers are active, it was probably created on the other one."
         with self.db._tx() as conn:
             draft = conn.execute("SELECT * FROM drafts WHERE id=?", (draft_id,)).fetchone()
             if draft is None:
-                return False, "Draft not found."
+                return False, "Draft not found. If several Mail Assistant servers are active, it was probably created on the other one."
             if draft["status"] != "pending":
                 return False, "This draft can no longer be approved."
             if now >= draft["expires_at"]:

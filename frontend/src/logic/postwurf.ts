@@ -11,7 +11,7 @@ const ALIEN_H = 10
 const COLS = 8
 const ROWS = 5
 const PLAYER_SPEED = 3
-const SHOT_SPEED = 6
+const SHOT_SPEED = 9 // stays below ALIEN_H so a shot cannot skip over an alien
 const BOMB_SPEED = 2.5
 
 export interface Alien { x: number; y: number; row: number; alive: boolean }
@@ -161,7 +161,7 @@ export function step(g: Game, input: Input, rng: () => number = Math.random): Ga
 }
 
 // ---- The hall of fame ------------------------------------------------------------------------------------------------
-// The scores are invented. The names are a wink at figures from popular fiction, a conscious exception to ADR 0005
+// The scores are invented (the list is a gimmick, nobody has reached them). The names are a wink at figures from popular fiction, a conscious exception to ADR 0005
 // (see docs/decisions/0005-look-and-assets.md). Only names appear here: no pictures, no text from the works. All of them
 // are fictional characters, never real people. Swap this list in one place if you like.
 export const HALL_OF_FAME: { name: string; score: number }[] = [
@@ -177,9 +177,11 @@ export const HALL_OF_FAME: { name: string; score: number }[] = [
 
 export const PLAYER_NAME = 'ANDY'
 
-// The list with the player's best score. The entry only shows up once it is better than the best invented one.
+// The list with the player's best score, put in at the real rank. The list keeps its length, so the last entry drops out.
+// On a tie the invented entry keeps the higher place; a score below the last place does not show up.
 export function hallWithPlayer(best: number): { name: string; score: number; me?: boolean }[] {
-  const top = HALL_OF_FAME[0].score
-  if (best <= top) return HALL_OF_FAME
-  return [{ name: PLAYER_NAME, score: best, me: true }, ...HALL_OF_FAME].slice(0, HALL_OF_FAME.length)
+  const at = HALL_OF_FAME.findIndex((h) => h.score < best)
+  if (best <= 0 || at < 0) return HALL_OF_FAME
+  const me = { name: PLAYER_NAME, score: best, me: true }
+  return [...HALL_OF_FAME.slice(0, at), me, ...HALL_OF_FAME.slice(at)].slice(0, HALL_OF_FAME.length)
 }

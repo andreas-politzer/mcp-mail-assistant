@@ -21,7 +21,7 @@ from .mail.smtp_client import SmtpSendFailed, SmtpSendUnknown
 from .security.attachments import Attachment, AttachmentPolicy, path_key, safe_filename
 from .security.recipients import RecipientList
 from .security.validation import validate_body, validate_subject
-from .storage.database import Database
+from .storage.database import NO_SUCH_DRAFT, Database
 from .storage.recipient_store import RecipientStore
 
 
@@ -527,7 +527,7 @@ class OutboxService:
         owner of the draft. Never raises; a refusal comes back as status "refused"."""
         owner = self.db.owner_of(draft_id)
         if owner is None:
-            return {"status": "refused", "draft_id": draft_id, "note": "No such draft."}
+            return {"status": "refused", "draft_id": draft_id, "note": NO_SUCH_DRAFT}
         try:
             return self.send_email(owner, draft_id)
         except OutboxError as exc:
