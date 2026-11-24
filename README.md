@@ -23,6 +23,8 @@ Working end to end for the author, built in stages. Be clear about what is and i
 | New recipients: the AI suggests, you approve outside the chat (admin command line) | **Used for real**: a suggestion made in the chat was approved on the server, then a mail with an attachment went to the new address. Reviewed by a second model; two small findings fixed. |
 | Admin API | Implemented and covered by automated tests: recipients (approve, reject, block, remove, CSV import with preview), file sources and rules, send limits, settings, activity log. It listens locally only and has its own sign-in. Running on the author's server in its latest version since 16 November 2026 (code update with a backup, a restore test and a rollback mark first). Reachable only through an SSH tunnel. |
 | Desktop app (Tauri 2, React, Rust) | Implemented: sign-in, recipients, files and attachments, settings, activity, help. Frontend tests run against the real admin API; Rust tests cover the local file access. Run in development mode on macOS by the author. Release builds: see [Desktop app](#desktop-app). |
+| Setup wizard in the desktop app (macOS) | Built and used for real on the author's Mac: mailbox, password in the system keychain, test mail, connection to Claude Desktop, passkey. The wizard is in German only. See [Desktop app](#desktop-app). |
+| Phone access from the wizard (macOS, Tailscale Funnel) | Built and used for real on one Mac with one iPhone on 23 and 24 November 2026: background service, tunnel, sign-in with a generated passphrase, connector in claude.ai, passkey on the phone, a test mail sent from the phone, and the way back (switching it off again). The wizard also lists ngrok and Cloudflare Tunnel; those are marked "coming soon" and do not exist yet. Not tested on Windows or Linux, where this part is not built. What it makes public, and what it does not protect: [docs/phone-access.md](docs/phone-access.md). |
 
 Tested with: Infomaniak (STARTTLS). Other providers that offer standard SMTP with STARTTLS or SSL should work, but have not been tested.
 
@@ -36,7 +38,7 @@ Two optional additions make the whole setup more useful. They are separate from 
 | --- | --- | --- | --- |
 | **Mail Assistant** | MCP service for drafts, recipients, attachments and sending, plus the desktop app to manage it | The product itself | Yes |
 | **Vault Assistant** | Separate MCP service for controlled access to your notes in an Obsidian vault | The assistant can read and write your notes, and you can have it attach a note to a mail in the same conversation | No. The author runs the third-party [obsidian-web-mcp](#credits-and-third-party-projects) for this |
-| **Remote access** | An HTTPS address with a sign-in and a tunnel that only makes outgoing connections | You can use the assistant from your phone, also by voice, away from home | The sign-in layer for Mail Assistant is (`src/outbox_mcp/auth/`). The tunnel is not. A worked Cloudflare example is in [docs/operations.md](docs/operations.md) |
+| **Remote access** | An HTTPS address with a sign-in and a tunnel that only makes outgoing connections | You can use the assistant from your phone, also by voice, away from home | The sign-in layer for Mail Assistant is (`src/outbox_mcp/auth/`). For one Mac, the desktop wizard can also set up a Tailscale Funnel ([docs/phone-access.md](docs/phone-access.md)). A worked Cloudflare example for a server is in [docs/operations.md](docs/operations.md) |
 
 ```
  Claude (desktop, phone, voice)
@@ -175,7 +177,9 @@ The service listens on `127.0.0.1:8430` only (override with `OUTBOX_HTTP_PORT`).
 
 The app in `frontend/` manages the Mail Assistant: recipients (including CSV import and approval of candidates), files and attachments, send limits, activity and a built-in help. It talks to the admin API and never touches the mail credentials.
 
-**Connect.** The admin API listens on `127.0.0.1` of the server and has no route through the public tunnel. Reach it from your computer through an SSH tunnel and keep that terminal open:
+**Setup wizard (macOS).** On a computer where the app is the whole installation, it opens a step-by-step wizard (in German) on first start and again from the start menu: mailbox and password (the password goes into the system keychain), a test mail, the connection to Claude Desktop and the passkey for approvals. Whoever also wants the phone gets more steps: the tunnel, a sign-in passphrase, the connector in claude.ai and a passkey on the phone. The first page always shows the real state ("only on this computer" or phone access on) and is also where phone access is switched off again. Everything is described in [docs/phone-access.md](docs/phone-access.md). The macOS build is described in [docs/building-macos.md](docs/building-macos.md).
+
+**Connect to a server.** This part is for the administration of a server like the author's, not for the local setup above. The admin API listens on `127.0.0.1` of the server and has no route through the public tunnel. Reach it from your computer through an SSH tunnel and keep that terminal open:
 
 ```bash
 /usr/bin/ssh -N -L 8431:127.0.0.1:8431 BENUTZER@SERVER
@@ -228,7 +232,9 @@ Documented on purpose, to be decided later:
 - The desktop app is not reachable without an SSH tunnel on purpose: the admin API is kept off the public internet. This is a real hurdle for people who are not used to a terminal, and it is not solved. The app can copy the tunnel command for you, and the in-app help explains it, nothing more.
 - The desktop app is verified on macOS only (see [Desktop app](#desktop-app)). Windows and Linux builds are prepared but untested.
 - The desktop app has no automatic update and no code signing yet, so macOS and Windows will show warnings for downloaded packages.
-- The keychain, data folder, several-instances and stdin-exit features are verified on macOS only (including a build of the server as a single program started by Claude Desktop). Windows and Linux are untested. The packaged single-program server itself is not part of this repository yet.
+- The keychain, data folder, several-instances and stdin-exit features are verified on macOS only (including a build of the server as a single program started by Claude Desktop). Windows and Linux are untested. The server is bundled into the macOS app by `packaging/build-macos.sh` ([docs/building-macos.md](docs/building-macos.md)); there is no signed release yet.
+- Phone access from the wizard exists for macOS and Tailscale Funnel only. The address contains the computer's name, which Tailscale says appears in public certificate logs. Details, and what stays open, are in [docs/phone-access.md](docs/phone-access.md#limits).
+- The passkey pages that open in the browser are in English, the wizard is in German.
 - Contact import reads CSV files with a name and an e-mail column, up to 2000 valid rows per file.
 
 ## Testing against your real mail account
@@ -273,6 +279,11 @@ src/outbox_mcp/
   service.py         prepare / send / cancel logic
   config.py          settings from environment
   paths.py           the data folder (`OUTBOX_DATA_DIR`) and the default file locations
+  setup_cli.py       `setup` commands the desktop wizard calls (mailbox, Claude Desktop, phone access); JSON on stdout
+  setup_tasks.py     what the wizard does for the mailbox, the test mail and the Claude Desktop entry
+  remote.py          phone access: `remote.json` and the background service (macOS LaunchAgent)
+  tunnel.py          phone access: Tailscale Funnel, checked, switched on and off again
+  local_api.py       local administration used by the desktop app, without a network
   secrets_store.py   SMTP password in the system keychain
   sources.py         allowed note folders and the files offered as attachments
   errors.py          error types shared by the modules
@@ -281,11 +292,14 @@ src/outbox_mcp/
   mail/              message building, SMTP client
   auth/              OAuth authorization server and token check (not mail-related)
 scripts/               manual SMTP check for your real account
+packaging/             macOS build of the app with the bundled server and its check
 deploy/                example systemd units, tunnel config and the SQLite snapshot script
 tests/
 docs/architecture.md     design decisions, stages, open questions
 docs/oauth-security.md  sign-in security model, limits, tests, known gaps
 docs/operations.md      running it for real: layout, tunnel, limits, backup and restore test
+docs/phone-access.md    phone access from the desktop app: what it sets up, what it makes public, how to switch it off
+docs/building-macos.md  building the macOS app with the bundled server
 docs/decisions/         short records of decisions (who may decide what, permission model, look)
 ```
 
