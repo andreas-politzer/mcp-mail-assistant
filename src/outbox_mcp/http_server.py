@@ -90,6 +90,11 @@ def main() -> None:
     except ConfigError as exc:
         print(f"Mail Assistant: {exc}", file=sys.stderr)
         raise SystemExit(2)
+    if os.environ.get("OUTBOX_DEBUG_HTTP", "").strip().lower() in {"1", "true", "yes"}:
+        from .diag import RequestLog
+
+        app = RequestLog(app)
+        print("Mail Assistant: request log on (OUTBOX_DEBUG_HTTP), lines start with DIAG.", file=sys.stderr, flush=True)
     if os.environ.get("OUTBOX_EXIT_WHEN_STDIN_CLOSES", "").strip().lower() in {"1", "true", "yes"}:
         # Off by default: with no input attached (a service, a terminal in the background)
         # the server would stop at once.
