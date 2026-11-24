@@ -149,3 +149,19 @@ def test_i_has_nothing_mail_like_left(matrix_url, store, auth_config):
         assert word not in text, word
     assert not any(_has_anyof(t) for t in tools)
     assert all(t.annotations is not None and t.annotations.title is None for t in tools)
+
+
+@pytest.mark.parametrize("letter", ["j", "k", "l"])
+def test_single_text_variants_keep_exactly_one_real_text(matrix_url, store, auth_config, letter):
+    (tool,) = _tools(matrix_url, _token(store, auth_config), f"?v={letter}")
+    real = {
+        "name": tool.name == "list_recipients",
+        "description": "send mail" in (tool.description or ""),
+        "title": (tool.annotations is not None and tool.annotations.title == "List allowed recipients"),
+    }
+    assert [k for k, v in real.items() if v] == [{"j": "name", "k": "description", "l": "title"}[letter]]
+    assert tool.annotations is not None and tool.annotations.read_only_hint is True
+    dump = json.dumps(tool.model_dump(by_alias=True, exclude_none=True)).lower()
+    leftovers = [w for w in ("mail", "recipient", "allowed") if w in dump]
+    allowed = {"j": ["recipient"], "k": ["mail"], "l": ["recipient", "allowed"]}[letter]
+    assert set(leftovers) <= set(allowed)

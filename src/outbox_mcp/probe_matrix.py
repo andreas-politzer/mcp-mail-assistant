@@ -19,6 +19,9 @@ The letter after `v=` picks what tools/list answers:
   i        the 8 tools with nothing mail-like left: names tool_1..tool_8, no titles, one neutral
            sentence as description, argument names arg_1.., no nullable types. Only for looking
            at the list: these tools cannot be called.
+  j,k,l    only list_recipients, everything neutral except ONE real text: j the name, k the
+           description, l the annotation title ("List allowed recipients"). Not callable under
+           these names/texts either.
 
 Safety: the tools are registered against a dummy service whose methods only return
 {"probe": True}. No mail can be read, prepared or sent, no recipient or file is touched, whatever
@@ -44,7 +47,7 @@ SUBSETS = {
     "g": frozenset({"prepare_email", "suggest_recipient", "send_email", "cancel_draft"}),
     "h": frozenset({"list_recipients"}),
 }
-VARIANTS = ("b", "c", "d", "e", "i") + tuple(SUBSETS)
+VARIANTS = ("b", "c", "d", "e", "i", "j", "k", "l") + tuple(SUBSETS)
 
 _variant: contextvars.ContextVar[str] = contextvars.ContextVar("probe_variant", default="")
 
@@ -79,8 +82,9 @@ def plain_schema(schema: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def neutral_tool(tool: MCPTool, number: int) -> MCPTool:
+def neutral_tool(tool: MCPTool, number: int, _keep: Optional[Dict[str, str]] = None) -> MCPTool:
     """The same tool with nothing mail-like in name, title, description or argument names."""
+    _keep = _keep or {}
     out = tool.model_copy(deep=True)
     schema = plain_schema(tool.input_schema)
     names = {old: f"arg_{k}" for k, old in enumerate(schema.get("properties") or {}, 1)}
@@ -92,18 +96,32 @@ def neutral_tool(tool: MCPTool, number: int) -> MCPTool:
         schema["required"] = [names[r] for r in schema["required"]]
     schema.pop("title", None)
     out.name, out.title, out.description = f"tool_{number}", None, "Does one simple thing."
+    out.name, out.description = _keep.get("name", out.name), _keep.get("description", out.description)
     out.input_schema = schema
     out.output_schema = None
     out.meta = None
-    if tool.annotations is not None:
+    if tool.annotations is not None and "title" not in _keep:
         out.annotations = tool.annotations.model_copy(update={"title": None})
     return out
+
+
+# One real text each, everything else neutral, on the single tool list_recipients.
+SINGLE_TEXT = {"j": "name", "k": "description", "l": "title"}
+
+
+def single_text_tool(real: List[MCPTool], variant: str) -> List[MCPTool]:
+    tool = next(t for t in real if t.name == "list_recipients")
+    kind = SINGLE_TEXT[variant]
+    keep = {"name": tool.name} if kind == "name" else {"description": tool.description or ""} if kind == "description" else {"title": ""}
+    return [neutral_tool(tool, 1, keep)]
 
 
 def variant_tools(real: List[MCPTool], variant: str) -> List[MCPTool]:
     """The tool list for one variant (unknown variant: the original list)."""
     if variant not in VARIANTS:
         return list(real)
+    if variant in SINGLE_TEXT:
+        return single_text_tool(real, variant)
     if variant == "i":
         return [neutral_tool(t, n) for n, t in enumerate(real, 1)]
     out = []
