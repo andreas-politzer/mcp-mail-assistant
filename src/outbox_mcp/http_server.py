@@ -19,6 +19,8 @@ from .auth.config import AuthConfig
 from .auth.store import AuthStore
 from .config import Config
 from .probe import MODE_MATRIX, MODE_PING_ROOT, PROBE_OPTIONS, register_probe_tools
+from .tool_aliases import apply_neutral_names, neutral_options
+from .tool_aliases import mode_from_env as neutral_names_from_env
 from .probe_matrix import VariantSelector, register_matrix_tools
 from .probe import mode_from_env as probe_mode_from_env
 from .remote import with_remote_file
@@ -33,14 +35,23 @@ def build_http_app(
     *,
     json_response: bool = False,
     probe: Optional[str] = None,
+    neutral_names: bool = False,
 ):
     if probe:
         # Diagnosis only: one harmless tool instead of the mail tools (see probe.py).
         configure = register_matrix_tools if probe == MODE_MATRIX else register_probe_tools
         options, name = PROBE_OPTIONS, "probe"
     else:
-        configure = lambda mcp: register_tools(mcp, service, owner_from_token)  # noqa: E731
         options, name = SERVER_OPTIONS, "outbox"
+        if neutral_names:
+            # Voice mode of claude.ai hides connectors with mail-typical tool names (see tool_aliases.py).
+            def configure(mcp):
+                register_tools(mcp, service, owner_from_token)
+                apply_neutral_names(mcp)
+
+            options = neutral_options(options)
+        else:
+            configure = lambda mcp: register_tools(mcp, service, owner_from_token)  # noqa: E731
     app = create_authenticated_app(
         auth_config,
         store,
@@ -52,6 +63,7 @@ def build_http_app(
     )
     app.state.mcp_path = auth_config.mcp_path
     app.state.probe = probe
+    app.state.neutral_names = bool(neutral_names and not probe)
     if probe == MODE_MATRIX:
         app.add_middleware(VariantSelector, mcp_path=auth_config.mcp_path)
     if service.approval is not None:
@@ -78,7 +90,10 @@ def build_app_from_env(env: Optional[Mapping[str, str]] = None):
             "OUTBOX_APPROVAL_HOST=localhost is for the stdio server. The HTTP server needs the "
             "public host name its approval links are reached under."
         )
-    return build_http_app(auth_config, AuthStore(auth_config.db_path), service, probe=probe)
+    return build_http_app(
+        auth_config, AuthStore(auth_config.db_path), service, probe=probe,
+        neutral_names=neutral_names_from_env(e.get("OUTBOX_TOOL_NAMES")),
+    )
 
 
 def _exit_when_stdin_closes(server) -> None:
@@ -121,6 +136,9 @@ def main() -> None:
             file=sys.stderr,
             flush=True,
         )
+    if getattr(getattr(app, "state", None), "neutral_names", False):
+        print("Mail Assistant: neutral tool names on (OUTBOX_TOOL_NAMES): tools are listed as tool_1..tool_8.",
+              file=sys.stderr, flush=True)
     legacy_mode = mode_from_env(os.environ.get("OUTBOX_LEGACY_ERA"))
     if legacy_mode is not None:
         # Off by default. Makes the server look like one of the older protocol generation (see compat.py).
