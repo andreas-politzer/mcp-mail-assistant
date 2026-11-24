@@ -55,6 +55,7 @@ export function WallpaperLayer({ wp, idp = 'wp', scale = 1 }: { wp: Wallpaper; i
     return (
       <div
         className="absolute inset-0 pointer-events-none"
+        data-wallpaper="clouds"
         style={{ backgroundImage: `${CLOUDS}, linear-gradient(#4a86cc, #9cc9ee)`, backgroundRepeat: wp.tiled ? 'repeat, no-repeat' : 'no-repeat, no-repeat', backgroundSize: wp.tiled ? `${440 * scale}px ${330 * scale}px, 100% 100%` : '100% 100%, 100% 100%' }}
       />
     )

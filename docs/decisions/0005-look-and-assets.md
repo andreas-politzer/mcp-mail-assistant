@@ -14,3 +14,12 @@ Status: built.
 
 - The look can be swapped without touching function.
 - Mascot, icons and sounds are drawn or recorded for this project.
+
+## Exception: the hall of fame in the game Postwurf
+
+The small game on the desktop shows a hall of fame. Its scores are invented. Its names are a wink at fictional characters from popular science fiction, as a homage. This is a conscious exception to the rule against names of existing products, taken and answered for by the project owner.
+
+- Only names, in plain text. No pictures, logos, quotes or other material from the works.
+- Only fictional characters, never real people.
+- The list lives in one place (`frontend/src/logic/postwurf.ts`) and can be replaced by invented names at any time, for example if a rights holder objects.
+- The names are not rights-cleared. This is a decision, not legal advice.

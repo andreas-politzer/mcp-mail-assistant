@@ -390,3 +390,20 @@ export const PAWN = {
     '.KKKKKKKKKK.',
   ],
 }
+
+// Desktop icon of the junk-mail game: one of our blob figures.
+export const BLOB = {
+  palette: { K: '#2a2a3a', G: '#d6334c', W: '#ffffff' },
+  rows: [
+    '..K........K..',
+    '...K......K...',
+    '..KKKKKKKKKK..',
+    '.KGGGGGGGGGGK.',
+    'KGGWWGGGGWWGGK',
+    'KGGWKGGGGWKGGK',
+    'KGGGGGGGGGGGGK',
+    '.KGGKKKKKKGGK.',
+    '.KK..K..K..KK.',
+    '.K...K..K...K.',
+  ],
+}

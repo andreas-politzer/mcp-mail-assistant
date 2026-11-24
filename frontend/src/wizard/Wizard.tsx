@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Assistant } from '../components/Assistant'
+import { Postwurf } from '../components/Postwurf'
+import { BLOB, PixelSprite } from '../components/PixelSprite'
+import { WallpaperLayer } from '../components/Desktop'
 import { HINTS, STEPS, STEPS_PHONE, type StepId } from './hints'
 import { PRESETS, guessPreset, looksLikeAddress, presetFor, unsupportedReason, type Security } from './presets'
 import type { RemoteStatus, SetupBackend, SetupStatus, TunnelStatus } from './setupApi'
@@ -61,6 +64,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   const [markOwn, setMarkOwn] = useState(true)
   const [testStatus, setTestStatus] = useState<Status>(IDLE)
   const [testSkipped, setTestSkipped] = useState(false)
+  const [gameOpen, setGameOpen] = useState(false)
   const [preview, setPreview] = useState<string[]>([])
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [claudeStatus, setClaudeStatus] = useState<Status>(IDLE)
@@ -461,8 +465,20 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     )
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center md:pr-[330px]" style={{ zIndex: 30, background: 'linear-gradient(#3a6ea5, #9cc7e8)' }} data-wizard>
-      <div style={{ width: 480, ...FRAME }} role="dialog" aria-label="Einrichtung">
+    <div className="fixed inset-0 flex items-center justify-center md:pr-[330px]" style={{ zIndex: 30, backgroundColor: '#7fb4e6' }} data-wizard>
+      <WallpaperLayer wp={{ kind: 'clouds', tiled: false }} idp="wz" />
+      <button
+        type="button"
+        className="absolute flex flex-col items-center gap-1 w-24 py-1 select-none outline-none"
+        style={{ left: 20, bottom: 20, zIndex: 31 }}
+        onClick={() => setGameOpen(true)}
+        title="Wenn du eine Pause brauchst"
+      >
+        <PixelSprite rows={BLOB.rows} palette={BLOB.palette} scale={3} />
+        <span className="text-[12px] px-1.5 text-white" style={{ background: '#0a246a' }}>Alienalarm</span>
+      </button>
+      {gameOpen && <Postwurf onClose={() => setGameOpen(false)} initial={{ x: Math.max(8, Math.round(window.innerWidth / 2 - 200)), y: 24 }} />}
+      <div className="relative" style={{ width: 480, ...FRAME }} role="dialog" aria-label="Einrichtung">
         <div className="px-2 py-0.5 m-0.5 select-none font-bold text-[13px] flex" style={{ background: 'linear-gradient(90deg, #0a246a, #3a6ea5)', color: '#fff' }}>
           <span className="flex-1">Einrichtung – Mail Assistant</span>
           <span className="font-normal">Schritt {index + 1} von {steps.length}</span>
