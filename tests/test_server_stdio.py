@@ -19,15 +19,15 @@ def service(config, recipients, db, sender):
 
 
 def call(mcp, name, arguments):
-    return json.loads(asyncio.run(mcp.call_tool(name, arguments))[0].text)
+    return json.loads(asyncio.run(mcp.call_tool(name, arguments)).content[0].text)
 
 
 def test_tools_and_annotations(service):
     tools = {t.name: t for t in asyncio.run(build_server(service).list_tools())}
     assert set(tools) == {"list_recipients", "prepare_email", "send_email", "cancel_draft",
                           "suggest_recipient", "list_suggestions", "list_attachments", "draft_status"}
-    assert tools["list_recipients"].annotations.readOnlyHint is True
-    assert tools["send_email"].annotations.destructiveHint is True
+    assert tools["list_recipients"].annotations.read_only_hint is True
+    assert tools["send_email"].annotations.destructive_hint is True
 
 
 def test_prepare_and_send_use_the_local_owner(service, sender, db):
@@ -67,7 +67,7 @@ def test_client_giving_up_does_not_leave_a_send_half_recorded(config, recipients
 
     async def scenario():
         prep = await mcp.call_tool("prepare_email", {"recipient": "Ferdinand", "subject": "s", "text": "t"})
-        draft_id = json.loads(prep[0].text)["draft_id"]
+        draft_id = json.loads(prep.content[0].text)["draft_id"]
         task = asyncio.create_task(mcp.call_tool("send_email", {"draft_id": draft_id}))
         assert await asyncio.to_thread(slow.started.wait, 5)
         task.cancel()          # the client disconnects
@@ -87,6 +87,6 @@ def test_client_giving_up_does_not_leave_a_send_half_recorded(config, recipients
 
 def test_prepare_email_tool_accepts_attachments(service):
     tools = {t.name: t for t in asyncio.run(build_server(service).list_tools())}
-    props = tools["prepare_email"].inputSchema["properties"]
+    props = tools["prepare_email"].input_schema["properties"]
     assert "attachments" in props
-    assert "attachments" not in tools["prepare_email"].inputSchema.get("required", [])
+    assert "attachments" not in tools["prepare_email"].input_schema.get("required", [])

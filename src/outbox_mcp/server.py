@@ -9,7 +9,7 @@ from typing import Callable, List, Optional
 import anyio
 import anyio.to_thread
 from mcp.server.auth.middleware.auth_context import get_access_token
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
 from .approval.service import ApprovalConfig, ApprovalService
@@ -39,7 +39,7 @@ def owner_from_token() -> str:
     return token.subject
 
 
-def register_tools(mcp: FastMCP, service: OutboxService, owner: Callable[[], str]) -> None:
+def register_tools(mcp: MCPServer, service: OutboxService, owner: Callable[[], str]) -> None:
     """Add the mail tools (no tool can approve a recipient). `owner` names whose drafts a call works on.
 
     The service does blocking work (SQLite, SMTP). Each call runs in a worker thread
@@ -137,8 +137,8 @@ def register_tools(mcp: FastMCP, service: OutboxService, owner: Callable[[], str
         return await run(service.cancel_draft, who, draft_id)
 
 
-def build_server(service: OutboxService) -> FastMCP:
-    mcp = FastMCP("outbox")
+def build_server(service: OutboxService) -> MCPServer:
+    mcp = MCPServer("outbox")
     register_tools(mcp, service, lambda: LOCAL_OWNER)
     return mcp
 

@@ -11,7 +11,7 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Andreas Politzer" }]
 dependencies = [
-    "mcp[cli]>=1.9.0,<2.0.0",
+    "mcp[cli]>=2.0.0,<3.0.0",
     "webauthn>=3.0.1,<4",
     "keyring>=25,<26",
 ]
@@ -26,6 +26,7 @@ outbox-admin-api = "outbox_mcp.admin.server:main"
 dev = [
     "pytest>=8.0",
     "aiosmtpd>=1.4.6",
+    "httpx>=0.27",
 ]
 
 [tool.hatch.build.targets.wheel]

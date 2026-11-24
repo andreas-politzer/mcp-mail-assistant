@@ -21,6 +21,7 @@ from mcp.server.auth.middleware.client_auth import AuthenticationError, ClientAu
 from mcp.server.auth.provider import construct_redirect_uri
 from mcp.server.auth.routes import build_metadata, cors_middleware, create_auth_routes
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
+from mcp.shared.auth import OAuthMetadata
 
 from .config import AuthConfig
 from .passwords import verify_password
@@ -227,6 +228,9 @@ def build_routes(config: AuthConfig, store: AuthStore, provider: OutboxAuthProvi
 
     # Only public clients are supported (Claude registers as one), so advertise just "none".
     metadata = build_metadata(issuer, None, registration, revocation)
+    # Spell the issuer exactly as the protected-resource document does (no added trailing slash):
+    # clients compare the two strings.
+    metadata = OAuthMetadata.model_validate({**metadata.model_dump(mode="json"), "issuer": config.issuer_url})
     metadata.token_endpoint_auth_methods_supported = ["none"]
     metadata.revocation_endpoint_auth_methods_supported = ["none"]
     metadata_route = Route(
