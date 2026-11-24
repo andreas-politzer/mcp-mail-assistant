@@ -23,12 +23,14 @@ def create_authenticated_app(
     json_response: bool = False,
     stateless_http: bool = False,
     name: str = "outbox-mcp",
+    server_options: Optional[dict] = None,
 ):
     hosts = [config.host, f"{config.host}:*"]
     if config.host in ("localhost", "127.0.0.1"):
         hosts += ["localhost", "localhost:*", "127.0.0.1", "127.0.0.1:*"]
     mcp = MCPServer(
         name,
+        **(server_options or {}),
         token_verifier=StoreTokenVerifier(store, config.resource_url),
         auth=AuthSettings(
             issuer_url=config.issuer_url,

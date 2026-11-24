@@ -18,6 +18,7 @@ from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
 
 from auth_helpers import ISSUER
+from outbox_mcp import __version__
 from outbox_mcp.http_server import build_http_app
 from outbox_mcp.service import OutboxService
 
@@ -95,3 +96,16 @@ def test_an_older_client_with_initialize_still_sees_the_tools(live_url, store):
     version, names = _tool_names(live_url, _token(store), "legacy")
     assert version != "2026-07-28"
     assert names == TOOLS
+
+
+def test_the_server_names_itself_and_says_what_it_is_for(live_url, store):
+    async def main():
+        async with _http(_token(store)) as http:
+            async with streamable_http_client(live_url, http_client=http) as streams:
+                async with Client(_Streams(streams), mode="auto") as client:
+                    return client.server_info, client.instructions
+
+    info, instructions = anyio.run(main)
+    assert info.title == "Mail Assistant"
+    assert info.version == __version__ and info.version
+    assert "send_email" in instructions and "e-mail" in instructions

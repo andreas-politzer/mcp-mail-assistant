@@ -18,7 +18,7 @@ from .auth.config import AuthConfig
 from .auth.store import AuthStore
 from .config import Config
 from .remote import with_remote_file
-from .server import build_service, owner_from_token, register_tools
+from .server import SERVER_OPTIONS, build_service, owner_from_token, register_tools
 from .service import OutboxService
 
 
@@ -36,6 +36,7 @@ def build_http_app(
         json_response=json_response,
         stateless_http=True,
         name="outbox",
+        server_options=SERVER_OPTIONS,
     )
     if service.approval is not None:
         # The approval and enrollment pages live in the public process; they need no sign-in

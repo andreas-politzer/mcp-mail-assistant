@@ -12,6 +12,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
+from . import __version__
 from .approval.service import ApprovalConfig, ApprovalService
 from .approval.waiting import ApprovalWaiter
 from .config import Config
@@ -23,6 +24,20 @@ from .storage.recipient_store import DbRecipientList, RecipientStore
 
 # Stdio has exactly one client, so there is exactly one owner.
 LOCAL_OWNER = "local"
+
+# What the server tells every client about itself (server/discover and initialize). A client that
+# lists connectors by name and description gets something to go on, and the version is not empty.
+SERVER_OPTIONS = {
+    "title": "Mail Assistant",
+    "version": __version__,
+    "instructions": (
+        "Mail Assistant lets you write and send e-mail on the user's behalf, always with their "
+        "confirmation. Use it whenever the user wants to write, draft, send or reply to an e-mail, "
+        "or to attach a file. Start with list_recipients to see who may be written to, prepare the "
+        "mail with prepare_email, show the draft to the user, and call send_email only after they "
+        "have clearly confirmed that exact draft."
+    ),
+}
 
 # How many mail operations may run in worker threads at the same time.
 WORKER_THREADS = 4
@@ -138,7 +153,7 @@ def register_tools(mcp: MCPServer, service: OutboxService, owner: Callable[[], s
 
 
 def build_server(service: OutboxService) -> MCPServer:
-    mcp = MCPServer("outbox")
+    mcp = MCPServer("outbox", **SERVER_OPTIONS)
     register_tools(mcp, service, lambda: LOCAL_OWNER)
     return mcp
 
