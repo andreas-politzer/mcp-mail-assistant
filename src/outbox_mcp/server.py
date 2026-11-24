@@ -11,12 +11,14 @@ import anyio.to_thread
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.caching import CacheHint
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from . import __version__
 from .approval.service import ApprovalConfig, ApprovalService
 from .approval.waiting import ApprovalWaiter
 from .config import Config
+from .errors import OutboxError
 from .mail.smtp_client import SmtpClient
 from .security.recipients import RecipientList
 from .service import OutboxService
@@ -73,7 +75,12 @@ def register_tools(mcp: MCPServer, service: OutboxService, owner: Callable[[], s
     waiter = ApprovalWaiter()  # waits for an approval only if OUTBOX_APPROVAL_WAIT_SECONDS is set
 
     async def run(func, *args):
-        return await anyio.to_thread.run_sync(func, *args, limiter=limiter)
+        try:
+            return await anyio.to_thread.run_sync(func, *args, limiter=limiter)
+        except OutboxError as exc:
+            # Our own errors are written for the assistant (no secrets). The SDK keeps the text of
+            # any other exception on the server and sends only "Error executing tool ...".
+            raise ToolError(str(exc)) from exc
 
     # Annotations are hints for the client, not a security guarantee.
     @mcp.tool(annotations=ToolAnnotations(

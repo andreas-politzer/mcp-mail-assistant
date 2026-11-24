@@ -104,3 +104,11 @@ def test_ordinary_methods_log_no_excerpt():
     lines, _ = run(make_app(200, b'{"result":"GEHEIM-ANTWORT"}'), scope(), body)
     assert "peek=" not in lines[0] and "request=" not in lines[0]
     assert "GEHEIM" not in lines[0]
+
+
+def test_initialize_gets_the_excerpt_too():
+    body = json.dumps({"jsonrpc": "2.0", "id": 0, "method": "initialize",
+                       "params": {"protocolVersion": "2025-11-25", "clientInfo": {"name": "some-client"}}}).encode()
+    lines, _ = run(make_app(200, b'{"result":{"serverInfo":{"name":"outbox"}}}'), scope(), body)
+    assert "request=" in lines[0] and "some-client" in lines[0]
+    assert "peek=" in lines[0] and "serverInfo" in lines[0]

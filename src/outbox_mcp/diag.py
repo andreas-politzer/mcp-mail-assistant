@@ -23,8 +23,8 @@ _MAX_BODY = 64 * 1024
 _ERROR_TEXT = 200
 _PEEK_TEXT = 400
 # For these JSON-RPC methods the answer (and for subscriptions/listen the request) holds only
-# server metadata and subscription filters, so a longer excerpt is logged even on success.
-_PEEK_METHODS = ("server/discover", "subscriptions/listen")
+# server metadata, client identity and subscription filters, so a longer excerpt is logged even on success.
+_PEEK_METHODS = ("server/discover", "subscriptions/listen", "initialize")
 
 
 def _stderr(line: str) -> None:

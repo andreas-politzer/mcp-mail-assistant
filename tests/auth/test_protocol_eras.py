@@ -123,3 +123,23 @@ def test_no_pushed_updates_and_the_tool_list_may_be_cached(live_url, store):
     assert capabilities.tools.list_changed is False
     assert capabilities.resources.subscribe is False
     assert ttl == 300_000
+
+
+def _call(url, token, name, arguments):
+    async def main():
+        async with _http(token) as http:
+            async with streamable_http_client(url, http_client=http) as streams:
+                async with Client(_Streams(streams), mode="auto") as client:
+                    result = await client.call_tool(name, arguments)
+                    return result.is_error, result.content[0].text
+
+    return anyio.run(main)
+
+
+def test_the_assistant_is_told_why_a_call_was_refused(live_url, store):
+    token = _token(store)
+    failed, text = _call(live_url, token, "prepare_email", {"recipient": "Ferdinand", "subject": "Hi", "text": "   "})
+    assert failed and "must not be empty" in text
+    failed, text = _call(live_url, token, "prepare_email", {"recipient": "Nobody At All", "subject": "Hi", "text": "x"})
+    assert failed and "Error executing tool prepare_email" in text
+    assert len(text) > len("Error executing tool prepare_email: ")
