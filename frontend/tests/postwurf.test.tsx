@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Postwurf } from '../src/components/Postwurf'
 import { Wizard } from '../src/wizard/Wizard'
 import { mockBackend } from '../src/wizard/setupApi'
-import { HALL_OF_FAME, HURT_TICKS, PLAYER_NAME, PLAYER_Y, POINTS_BY_ROW, UFO_Y, W, aliveCount, hallWithPlayer, newGame, period, step, type Game, type Input } from '../src/logic/postwurf'
+import { BOOM_TICKS, CLEAR_TICKS, HALL_OF_FAME, HURT_TICKS, MAX_NAME, PLAYER_NAME, cleanName, PLAYER_Y, POINTS_BY_ROW, UFO_Y, W, aliveCount, hallWithPlayer, newGame, period, step, type Game, type Input } from '../src/logic/postwurf'
 
 afterEach(cleanup)
 const none: Input = { left: false, right: false, fire: false }
@@ -67,16 +67,31 @@ describe('Postwurf rules', () => {
     expect(g.hurt).toBe(0)
   })
 
-  it('a cleared wave starts the next one and keeps score and lives', () => {
+  it('a cleared wave pauses with a banner, then starts the next one and keeps score and lives', () => {
     const g0 = newGame()
     const one = { ...g0, score: 120, lives: 2, aliens: g0.aliens.map((a, i) => ({ ...a, alive: i === 0 })) }
     const target = one.aliens[0]
     let g: Game = { ...one, shot: { x: target.x + 5, y: target.y + 8 } }
     g = step(g, none, calm)
+    expect(g.level).toBe(1) // still the old wave while the banner shows
+    expect(g.clear).toBe(CLEAR_TICKS)
+    expect(g.score).toBe(120 + POINTS_BY_ROW[0])
+    for (let i = 0; i < CLEAR_TICKS; i++) g = step(g, none, calm)
     expect(g.level).toBe(2)
+    expect(g.clear).toBe(0)
     expect(aliveCount(g)).toBe(40)
     expect(g.score).toBe(120 + POINTS_BY_ROW[0])
     expect(g.lives).toBe(2)
+  })
+
+  it('a fast shot still hits an alien that lies between two positions', () => {
+    const g0 = newGame()
+    const lone = { ...g0, aliens: g0.aliens.map((a, i) => ({ ...a, alive: i === 20 })) }
+    const a = lone.aliens[20]
+    // Starts inside the alien's height band and flies 12: its end point lies above the alien, only the path crosses it.
+    const g = step({ ...lone, shot: { x: a.x + 6, y: a.y + 10 } }, none, calm)
+    expect(g.score).toBe(POINTS_BY_ROW[a.row])
+    expect(g.shot).toBeNull()
   })
 })
 
@@ -91,6 +106,9 @@ describe('the bonus saucer', () => {
     g = step(g, none, calm)
     expect(g.ufo).toBeNull()
     expect([50, 100, 150, 300]).toContain(g.score - before)
+    expect(g.boom).toMatchObject({ points: g.score - before, ttl: BOOM_TICKS })
+    for (let i = 0; i < BOOM_TICKS; i++) g = step(g, none, calm)
+    expect(g.boom).toBeNull()
     let away: Game = { ...newGame(), ufo: { x: W + 16, dir: 1 } }
     away = step(away, none, calm)
     expect(away.ufo).toBeNull()
@@ -120,12 +138,35 @@ describe('the hall of fame', () => {
   })
 })
 
+describe('the player name', () => {
+  it('is cleaned, shortened and falls back to the default', () => {
+    expect(cleanName('  Lena  ')).toBe('Lena')
+    expect(cleanName('')).toBe(PLAYER_NAME)
+    expect(cleanName('   ')).toBe(PLAYER_NAME)
+    expect(cleanName('a'.repeat(40))).toHaveLength(MAX_NAME)
+    expect(cleanName('Li\u0007sa')).toBe('Lisa')
+  })
+  it('stands in the list at the real rank', () => {
+    expect(hallWithPlayer(2070, 'Lena').find((h) => h.me)).toMatchObject({ name: 'Lena' })
+  })
+})
+
 describe('the Postwurf window', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     localStorage.clear()
   })
   afterEach(() => vi.useRealTimers())
+
+  it('asks for a name, keeps it and still lets the space bar be typed', () => {
+    render(<Postwurf onClose={() => {}} />)
+    const input = screen.getByLabelText('Dein Name für den Highscore') as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'Lena M' } })
+    expect(input.value).toBe('Lena M')
+    expect(localStorage.getItem('mail-assistant-postwurf-name')).toBe('Lena M')
+    const notPrevented = fireEvent.keyDown(input, { key: ' ' })
+    expect(notPrevented).toBe(true) // the game did not swallow the key
+  })
 
   it('starts on demand, lists the invented scores and closes', () => {
     const onClose = vi.fn()

@@ -11,7 +11,8 @@ const ALIEN_H = 10
 const COLS = 8
 const ROWS = 5
 const PLAYER_SPEED = 3
-const SHOT_SPEED = 9 // stays below ALIEN_H so a shot cannot skip over an alien
+const SHOT_SPEED = 12
+const SHOT_SAMPLE = 3 // the flight is checked every few pixels, so a fast shot cannot skip over an alien
 const BOMB_SPEED = 2.5
 
 export interface Alien { x: number; y: number; row: number; alive: boolean }
@@ -29,6 +30,8 @@ export interface Game {
   over: boolean
   hurt: number // ticks left of the blinking after a hit, only for the picture
   ufo: { x: number; dir: 1 | -1 } | null
+  boom: { x: number; y: number; ttl: number; points: number } | null // the saucer's explosion, only for the picture
+  clear: number // ticks left of the pause between two waves; 0 while the wave is going on
 }
 export interface Input { left: boolean; right: boolean; fire: boolean }
 
@@ -38,6 +41,8 @@ export const UFO_W = 16
 const UFO_SPEED = 1.4
 const UFO_POINTS = [50, 100, 150, 300]
 export const HURT_TICKS = 16
+export const BOOM_TICKS = 20
+export const CLEAR_TICKS = 50
 
 export function newWave(level: number): Alien[] {
   const out: Alien[] = []
@@ -61,6 +66,8 @@ export function newGame(level = 1, keep?: Pick<Game, 'score' | 'lives'>): Game {
     over: false,
     hurt: 0,
     ufo: null,
+    boom: null,
+    clear: 0,
   }
 }
 
@@ -77,7 +84,13 @@ const hit = (px: number, py: number, a: Alien) => px >= a.x - 1 && px <= a.x + A
 // One tick of the game. `rng` returns a number in [0, 1); tests pass their own.
 export function step(g: Game, input: Input, rng: () => number = Math.random): Game {
   if (g.over) return g
+  if (g.clear > 0) {
+    // Between two waves: nothing moves, the banner shows. Then the next wave starts with score and lives kept.
+    if (g.clear === 1) return { ...newGame(g.level + 1, { score: g.score, lives: g.lives }), player: g.player, tick: g.tick + 1 }
+    return { ...g, clear: g.clear - 1, tick: g.tick + 1, boom: g.boom && g.boom.ttl > 1 ? { ...g.boom, ttl: g.boom.ttl - 1 } : null }
+  }
   let { player, shot, dir, score, lives, level, ufo } = g
+  let boom = g.boom && g.boom.ttl > 1 ? { ...g.boom, ttl: g.boom.ttl - 1 } : null
   let aliens = g.aliens.map((a) => ({ ...a }))
   let bombs = g.bombs.map((b) => ({ ...b }))
   const tick = g.tick + 1
@@ -87,19 +100,28 @@ export function step(g: Game, input: Input, rng: () => number = Math.random): Ga
   if (input.right) player += PLAYER_SPEED
   player = Math.max(PLAYER_W / 2, Math.min(W - PLAYER_W / 2, player))
 
-  if (input.fire && !shot) shot = { x: player, y: PLAYER_Y - 6 }
-  else if (shot) {
-    shot = { x: shot.x, y: shot.y - SHOT_SPEED }
-    if (shot.y < 0) shot = null
+  // The shot flies up. `path` holds the heights it passed this tick, so a fast shot still hits what is in between.
+  let path: number[] = []
+  let shotX = shot ? shot.x : player
+  if (input.fire && !shot) {
+    shot = { x: player, y: PLAYER_Y - 6 }
+    shotX = shot.x
+    path = [shot.y]
+  } else if (shot) {
+    const to = shot.y - SHOT_SPEED
+    for (let y = shot.y - SHOT_SAMPLE; y > to; y -= SHOT_SAMPLE) path.push(y)
+    path.push(to)
+    shot = to < 0 ? null : { x: shot.x, y: to }
   }
+  let live = path.length > 0 // the shot has not hit anything yet
 
-  if (shot) {
-    const s = shot
-    const target = aliens.find((a) => a.alive && hit(s.x, s.y, a))
+  if (live) {
+    const target = path.map((y) => aliens.find((a) => a.alive && hit(shotX, y, a))).find((a) => a !== undefined)
     if (target) {
       target.alive = false
       score += POINTS_BY_ROW[target.row]
       shot = null
+      live = false
     }
   }
 
@@ -134,10 +156,13 @@ export function step(g: Game, input: Input, rng: () => number = Math.random): Ga
   } else if (living.length > 0 && rng() < 0.004) {
     ufo = Math.floor(rng() * 2) === 0 ? { x: -UFO_W, dir: 1 } : { x: W, dir: -1 }
   }
-  if (ufo && shot && shot.x >= ufo.x && shot.x <= ufo.x + UFO_W && shot.y >= UFO_Y - 2 && shot.y <= UFO_Y + 10) {
-    score += UFO_POINTS[Math.min(UFO_POINTS.length - 1, Math.floor(rng() * UFO_POINTS.length))]
+  if (ufo && live && shotX >= ufo.x && shotX <= ufo.x + UFO_W && path.some((y) => y >= UFO_Y - 2 && y <= UFO_Y + 10)) {
+    const points = UFO_POINTS[Math.min(UFO_POINTS.length - 1, Math.floor(rng() * UFO_POINTS.length))]
+    score += points
+    boom = { x: ufo.x + UFO_W / 2, y: UFO_Y + 4, ttl: BOOM_TICKS, points }
     ufo = null
     shot = null
+    live = false
   }
 
   // A bomb that reaches the player costs a life and clears the sky for a moment.
@@ -152,11 +177,8 @@ export function step(g: Game, input: Input, rng: () => number = Math.random): Ga
   const invaded = aliens.some((a) => a.alive && a.y + ALIEN_H >= PLAYER_Y - 6)
   const over = lives <= 0 || invaded
 
-  let next: Game = { player, shot, bombs, aliens, dir, score, lives, level, tick, over, hurt, ufo }
-  if (!over && aliveCount(next) === 0) {
-    level += 1
-    next = { ...newGame(level, { score, lives }), player }
-  }
+  let next: Game = { player, shot, bombs, aliens, dir, score, lives, level, tick, over, hurt, ufo, boom, clear: 0 }
+  if (!over && aliveCount(next) === 0) next = { ...next, shot: null, bombs: [], ufo: null, clear: CLEAR_TICKS }
   return next
 }
 
@@ -175,13 +197,17 @@ export const HALL_OF_FAME: { name: string; score: number }[] = [
   { name: 'Han Solo', score: 1300 },
 ]
 
-export const PLAYER_NAME = 'ANDY'
+export const PLAYER_NAME = 'SPIELER' // shown until the player types a name
+export const MAX_NAME = 16
+
+// Cleans a typed name: no control characters, trimmed, at most MAX_NAME characters. Empty gives the default.
+export const cleanName = (value: string): string => value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, MAX_NAME) || PLAYER_NAME
 
 // The list with the player's best score, put in at the real rank. The list keeps its length, so the last entry drops out.
 // On a tie the invented entry keeps the higher place; a score below the last place does not show up.
-export function hallWithPlayer(best: number): { name: string; score: number; me?: boolean }[] {
+export function hallWithPlayer(best: number, name: string = PLAYER_NAME): { name: string; score: number; me?: boolean }[] {
   const at = HALL_OF_FAME.findIndex((h) => h.score < best)
   if (best <= 0 || at < 0) return HALL_OF_FAME
-  const me = { name: PLAYER_NAME, score: best, me: true }
+  const me = { name, score: best, me: true }
   return [...HALL_OF_FAME.slice(0, at), me, ...HALL_OF_FAME.slice(at)].slice(0, HALL_OF_FAME.length)
 }

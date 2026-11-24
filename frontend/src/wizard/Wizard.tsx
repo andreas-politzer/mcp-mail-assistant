@@ -435,6 +435,9 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   // Desktop is set up and only the phone is missing: the main button goes straight to the tunnel card.
   const jumpToTunnel = step === 'where' && againMode && where === 'phone' && !!phoneState && !phoneState.traces
 
+  // Two passkeys are the most there can be. Then there is nothing to create here: the phone is either among them or not.
+  const phoneAtLimit = passkeys >= 2 && !phoneKeyDone
+
   const canNext = useMemo(() => {
     switch (step) {
       case 'where':
@@ -456,11 +459,11 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
       case 'connector':
         return true
       case 'phonekey':
-        return phoneKeyDone
+        return phoneKeyDone || phoneAtLimit
       default:
         return true
     }
-  }, [step, warningOpen, mailboxReady, pwStatus.kind, testStatus.kind, claudeStatus.kind, passkeys, tunnelResult.kind, loginPassphrase, loginSaved, loginExisting, phoneKeyDone])
+  }, [step, warningOpen, mailboxReady, pwStatus.kind, testStatus.kind, claudeStatus.kind, passkeys, tunnelResult.kind, loginPassphrase, loginSaved, loginExisting, phoneKeyDone, phoneAtLimit])
 
   const back = () => index > 0 && go(steps[index - 1])
   const next = () => (step === 'done' ? onDone() : jumpToTunnel ? go('tunnel') : go(steps[index + 1]))
@@ -573,6 +576,9 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   <div className="font-bold mb-1">
                     {phoneState.enabled ? 'Der Handy-Zugang ist noch eingerichtet.' : 'Es gibt noch Reste eines Handy-Zugangs.'}
                   </div>
+                  <div className="mb-2" style={{ color: '#a01020' }}>
+                    „Weiter“ geht erst, wenn du den Handy-Zugang abschaltest{phoneState.enabled ? ' oder oben wieder „Auch vom Handy aus“ wählst, um ihn zu behalten' : ''}.
+                  </div>
                   <div className="mb-1">Wenn du ihn abschaltest:</div>
                   <ul className="list-disc pl-5 mb-2">
                     <li>Die öffentliche Adresse wird abgeschaltet. Die Claude-App auf dem Handy erreicht deinen Computer dann nicht mehr.</li>
@@ -621,7 +627,6 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   </div>
                 </div>
               )}
-              {warningOpen && <div className="mt-2 text-[12px]">Bestätige zuerst die Änderung oben oder wähle wieder den aktuellen Zustand.</div>}
               {againMode && !warningOpen && !jumpToTunnel && <div className="mt-2 text-[12px]">Mit „Weiter“ kannst du deine Einstellungen Schritt für Schritt prüfen oder ändern.</div>}
               {!againMode && <div className="mt-2 text-[12px]">Du kannst das später ändern: Startmenü → „Einrichtungs-Wizard …“.</div>}
             </>
@@ -929,12 +934,12 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                 <>
                   <ol className="list-decimal pl-5 mb-2">
                     <li>
-                      claude.ai im Browser öffnen, dort <b>Einstellungen → Connectors</b> und „Benutzerdefinierten Connector hinzufügen“ („Add custom connector“).{' '}
+                      In claude.ai die <b>Einstellungen → Connectors</b> öffnen und „Benutzerdefinierten Connector hinzufügen“ wählen.{' '}
                       <button type="button" className="bevel" onClick={() => void backend.openLink('https://claude.ai/settings/connectors')}>
                         Einstellungen öffnen
                       </button>
                     </li>
-                    <li>Name: „Mail Mac“ (oder „Mail Server“, wenn der Mail Assistant auf einem eigenen Server läuft). Ein Name, an dem du später erkennst, welcher Mail Assistant das ist. Als Adresse diese eintragen:</li>
+                    <li>Als Name zum Beispiel „Mail Mac“ eintragen (läuft Mail Assistant auf einem eigenen Server, „Mail Server“) und als Adresse diese:</li>
                   </ol>
                   <div className="mb-1 break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label="Adresse für den Connector">
                     {connectorUrl}
@@ -944,9 +949,9 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                       {copied === 'addr' ? 'Kopiert' : 'Kopieren'}
                     </button>
                   </div>
-                  <div className="mb-2">Beim Anmelden fragt die Seite deines Computers nach der Passphrase. Nimm sie aus deinem Passwortmanager. Der Connector erscheint danach automatisch in der Claude-App auf dem Handy (dort einen neuen Chat beginnen).</div>
-                  <div className="mb-2 p-2 text-[12px]" role="note" style={{ background: '#ffffe1', border: '1px solid #000' }} aria-label="Hinweis zu mehreren Verbindungen">
-                    <b>Nur eine Verbindung pro Chat.</b> Der Connector aus claude.ai erscheint auch in Claude Desktop. Hast du dort zusätzlich die lokale Verbindung oder einen zweiten Mail Assistant (zum Beispiel auf einem Server), siehst du zwei mit denselben Werkzeugen. Dann kann ein Entwurf auf dem anderen liegen. Lass pro Chat nur einen aktiv und entferne den Rest, den du nicht brauchst.
+                  <div className="mb-2">Beim Anmelden fragt die Seite deines Computers nach der Passphrase. Nimm sie aus deinem Passwortmanager. Danach erscheint der Connector auch in der Claude-App auf dem Handy (dort einen neuen Chat beginnen).</div>
+                  <div className="mb-2 text-[12px]" role="note" aria-label="Hinweis zu mehreren Verbindungen">
+                    Nur eine Verbindung pro Chat: Ist dieselbe Mail Assistant-Verbindung zusätzlich lokal in Claude Desktop oder ein zweiter Server eingetragen, schalte in einem Chat nur eine davon ein.
                   </div>
                   <div className="text-[12px]">Passphrase nicht gespeichert? Mit „Zurück“ kannst du eine neue erzeugen.</div>
                 </>
@@ -964,34 +969,34 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
           {step === 'phonekey' && (
             <>
               <div className="font-bold mb-2">Freigabe vom Handy (Passkey)</div>
-              <div className="mb-2">
-                Auch am Handy gibst du Mails an andere Adressen selbst frei, mit Face ID oder Fingerabdruck. Der Passkey gehört zur Internetadresse deines Computers und wird deshalb auf dem Handy selbst angelegt.
-              </div>
-              <ol className="list-decimal pl-5 mb-3">
-                <li>Hier „Link erzeugen“ klicken.</li>
-                <li>Den Link auf das Handy bringen. Am sichersten geht es als Nachricht an dich selbst: Link kopieren, in Nachrichten einfügen und an dich selbst schicken (AirDrop oder eine Notiz gehen auch). Auf dem Handy auf den Link tippen. Er öffnet sich im Browser.</li>
-                <li>Dort dem Passkey einen Namen geben, zum Beispiel „iPhone“, und ihn anlegen. Danach erkennt das Fenster ihn selbst, oder du klickst „Prüfen“.</li>
-              </ol>
-              {passkeys >= 2 && !phoneKeyDone && (
-                <div role="note" className="mb-2 p-2" style={{ border: '1px solid var(--bevel-dark)', background: '#fffbe6' }}>
-                  Es sind schon 2 Passkeys eingerichtet, mehr geht nicht. Ist einer davon dein Handy, bist du hier fertig. Sonst entferne zuerst einen in der Verwaltung (Kachel „Passkeys“).
-                  {onSkip && (
-                    <div className="mt-1">
-                      <button type="button" className="bevel" onClick={onSkip}>Zur Verwaltung</button>
-                    </div>
-                  )}
+              {phoneAtLimit ? (
+                <div className="mb-2" role="note">
+                  {knownPasskeys(setupInfo?.passkey_list, passkeys).replace(/ Du musst hier nichts mehr tun\.$/, '.')} Mehr als 2 gehen nicht. Ist dein Handy dabei, bist du fertig und kannst weitergehen. Wenn nicht, entfernst du zuerst einen in der Verwaltung (Kachel „Passkeys“) und kommst dann über den Wizard hierher zurück.
                 </div>
+              ) : (
+                <>
+                  <div className="mb-2">
+                    Auch am Handy gibst du Mails an andere Adressen selbst frei, mit Face ID oder Fingerabdruck. Der Passkey gehört zur Internetadresse deines Computers und wird deshalb auf dem Handy selbst angelegt.
+                  </div>
+                  <ol className="list-decimal pl-5 mb-3">
+                    <li>Hier „Link erzeugen“ klicken.</li>
+                    <li>Den Link auf das Handy bringen. Am sichersten geht es als Nachricht an dich selbst: Link kopieren, in Nachrichten einfügen und an dich selbst schicken (AirDrop oder eine Notiz gehen auch). Auf dem Handy auf den Link tippen. Er öffnet sich im Browser.</li>
+                    <li>Dort dem Passkey einen Namen geben, zum Beispiel „iPhone“, und ihn anlegen. Danach erkennt das Fenster ihn selbst.</li>
+                  </ol>
+                  <div className="flex gap-2 justify-end">
+                    <button type="button" className="bevel font-bold" disabled={phoneKeyStatus.kind === 'busy' || phoneKeyDone} onClick={() => void getPhoneKeyLink()}>
+                      {phoneKeyLink ? 'Neuen Link erzeugen' : 'Link erzeugen'}
+                    </button>
+                    {phoneKeyLink && !phoneKeyDone && (
+                      <button type="button" className="bevel" disabled={phoneKeyStatus.kind === 'busy'} onClick={() => void checkPhoneKey()}>
+                        Prüfen
+                      </button>
+                    )}
+                  </div>
+                </>
               )}
-              <div className="flex gap-2 justify-end">
-                <button type="button" className="bevel font-bold" disabled={phoneKeyStatus.kind === 'busy' || phoneKeyDone || passkeys >= 2} onClick={() => void getPhoneKeyLink()}>
-                  Link erzeugen
-                </button>
-                <button type="button" className="bevel" disabled={phoneKeyStatus.kind === 'busy' || phoneKeyDone} onClick={() => void checkPhoneKey()}>
-                  Prüfen
-                </button>
-              </div>
               {statusLine(phoneKeyStatus)}
-              {phoneKeyLink && !phoneKeyDone && (
+              {phoneKeyLink && !phoneKeyDone && !phoneAtLimit && (
                 <>
                   <div className="mt-2 text-[11px] break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label="Link fürs Handy">
                     {phoneKeyLink}
@@ -1061,9 +1066,6 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
           {onSkip && step !== 'done' && (
             <button type="button" className="bevel text-[11px]" onClick={onSkip} title="Verlässt den Wizard. Was schon erledigt ist, bleibt erhalten.">Zurück zur Verwaltung</button>
           )}
-          {hints.length > 1 && (
-            <button type="button" className="bevel text-[11px]" onClick={() => setTip((t) => (t + 1) % hints.length)}>Noch ein Tipp</button>
-          )}
           <div className="flex-1" />
           {index > 0 && step !== 'done' && (
             <button type="button" className="bevel" onClick={back}>Zurück</button>
@@ -1071,10 +1073,10 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
           {step === 'passkey' && passkeys === 0 && (
             <button type="button" className="bevel" onClick={() => go(where === 'phone' ? 'tunnel' : 'done')} title="Du kannst den Passkey später nachholen">Passkey später einrichten</button>
           )}
-          {step === 'phonekey' && !phoneKeyDone && (
+          {step === 'phonekey' && !phoneKeyDone && !phoneAtLimit && (
             <button type="button" className="bevel" onClick={() => go('done')} title="Du kannst den Passkey am Handy später nachholen">Passkey am Handy überspringen</button>
           )}
-          <button type="button" className="bevel font-bold" disabled={!canNext} onClick={next}>
+          <button type="button" className="bevel font-bold" disabled={!canNext} onClick={next} title={!canNext && step === 'where' ? 'Zuerst den Handy-Zugang abschalten oder oben „Auch vom Handy aus“ wählen.' : undefined}>
             {step === 'done' ? 'Zur Verwaltung' : jumpToTunnel ? 'Handy-Zugang einrichten' : 'Weiter'}
           </button>
         </div>

@@ -296,13 +296,12 @@ describe('the wizard (desktop path)', () => {
     expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false)
   })
 
-  it('keeps Funki on screen with the hint of each step and a second tip', () => {
+  it('keeps Funki on screen with the hint of each step, without a tip button', () => {
     const backend: SetupBackend = mockBackend(0)
     render(<Wizard backend={backend} onDone={() => {}} />)
     expect(document.querySelector('[data-stack="funki"]')).not.toBeNull()
     expect(screen.getByText(HINTS.where[0])).toBeTruthy()
-    fireEvent.click(screen.getByText('Noch ein Tipp'))
-    expect(screen.getByText(HINTS.where[1])).toBeTruthy()
+    expect(screen.queryByText('Noch ein Tipp')).toBeNull()
   })
 })
 
@@ -366,8 +365,9 @@ describe('the tunnel step (phone path)', () => {
     phoneKeyAppears = true
   })
 
+  let startKeys = 1 // how many passkeys the demo computer already has
   function ready(backend: SetupBackend) {
-    let keys = 1
+    let keys = startKeys
     const makeLink = backend.approvalLink.bind(backend)
     backend.approvalLink = async (phone) => {
       const r = await makeLink(phone)
@@ -475,7 +475,7 @@ describe('the tunnel step (phone path)', () => {
     fireEvent.click(screen.getByText('Kopieren'))
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(`${ADDRESS}/mcp`))
     expect(screen.getByText(/nach der Passphrase/)).toBeTruthy()
-    expect(screen.getByText(/Name: „Mail Mac“/)).toBeTruthy()
+    expect(screen.getByText(/Als Name zum Beispiel „Mail Mac“/)).toBeTruthy()
     expect(screen.getByLabelText('Hinweis zu mehreren Verbindungen').textContent).toMatch(/Nur eine Verbindung pro Chat/)
     expect(screen.getByText(/Passphrase nicht gespeichert\? Mit „Zurück“ kannst du eine neue erzeugen\./)).toBeTruthy()
     expect(screen.getByText(/Benutzerdefinierten Connector hinzufügen/)).toBeTruthy()
@@ -548,8 +548,7 @@ describe('the tunnel step (phone path)', () => {
     const link = vi.spyOn(backend, 'approvalLink')
     await toPhoneKey(backend)
     expect(screen.getByText(/Schritt 10 von 11/)).toBeTruthy()
-    fireEvent.click(screen.getByText('Prüfen'))
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/Erzeuge zuerst den Link/))
+    expect(screen.queryByText('Prüfen')).toBeNull() // checking only makes sense once there is a link
     fireEvent.click(screen.getByText('Link erzeugen'))
     await waitFor(() => screen.getByLabelText('Link fürs Handy'))
     expect(link).toHaveBeenCalledWith(true)
@@ -572,6 +571,22 @@ describe('the tunnel step (phone path)', () => {
     expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false)
   }, 9000)
 
+  it('at the limit of 2 passkeys the phone step is one note and one way on', async () => {
+    startKeys = 2
+    try {
+      await toPhoneKey(mockBackend(0))
+      expect(screen.getByRole('note').textContent).toMatch(/2 Passkeys/)
+      expect(screen.getByRole('note').textContent).toMatch(/Mehr als 2 gehen nicht/)
+      expect(screen.queryByText('Link erzeugen')).toBeNull()
+      expect(screen.queryByText('Prüfen')).toBeNull()
+      expect(screen.queryByText('Passkey am Handy überspringen')).toBeNull()
+      expect(screen.queryByText('Zur Verwaltung')).toBeNull()
+      expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false)
+    } finally {
+      startKeys = 1
+    }
+  })
+
   it('asks the person to name the phone passkey', async () => {
     await toPhoneKey(mockBackend(0))
     expect(screen.getByText(/einen Namen geben, zum Beispiel „iPhone“/)).toBeTruthy()
@@ -583,7 +598,7 @@ describe('the tunnel step (phone path)', () => {
     await toPhoneKey(backend)
     expect(screen.getByText('Passkey am Handy überspringen')).toBeTruthy()
     expect(screen.queryByText('Später')).toBeNull()
-    expect(screen.getByText('Noch ein Tipp').className).toMatch(/text-\[11px\]/)
+    expect(screen.queryByText('Noch ein Tipp')).toBeNull()
   })
 
   it('does not count the passkey of the computer: an unchanged number is not a phone passkey', async () => {
@@ -762,7 +777,7 @@ describe('the way back to "only this computer"', () => {
     expect(off().disabled).toBe(true)
     expect(screen.getByText('Setze zuerst das Häkchen.')).toBeTruthy()
     expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.getByText(/Bestätige zuerst die Änderung oben/)).toBeTruthy()
+    expect(screen.getByText(/„Weiter“ geht erst, wenn du den Handy-Zugang abschaltest/)).toBeTruthy()
     fireEvent.click(off())
     expect(disable).not.toHaveBeenCalled()
   })

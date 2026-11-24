@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Win95Window } from './Win95Window'
-import { H, PLAYER_W, PLAYER_Y, UFO_W, UFO_Y, W, hallWithPlayer, HALL_OF_FAME, newGame, step, type Game, type Input } from '../logic/postwurf'
+import { BOOM_TICKS, H, HALL_OF_FAME, MAX_NAME, PLAYER_W, PLAYER_Y, UFO_W, UFO_Y, W, cleanName, hallWithPlayer, newGame, step, type Game, type Input } from '../logic/postwurf'
 
 const BEST_KEY = 'mail-assistant-postwurf-best'
 const readBest = (): number => {
@@ -9,6 +9,21 @@ const readBest = (): number => {
     return Number.isFinite(n) && n > 0 ? n : 0
   } catch {
     return 0
+  }
+}
+const NAME_KEY = 'mail-assistant-postwurf-name'
+const readName = (): string => {
+  try {
+    return (localStorage.getItem(NAME_KEY) ?? '').slice(0, MAX_NAME)
+  } catch {
+    return ''
+  }
+}
+const writeName = (v: string) => {
+  try {
+    localStorage.setItem(NAME_KEY, v)
+  } catch {
+    /* storage can be unavailable; the name then only lasts until the window closes */
   }
 }
 const writeBest = (n: number) => {
@@ -81,6 +96,7 @@ export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; o
   const [game, setGame] = useState<Game>(() => newGame())
   const [phase, setPhase] = useState<'ready' | 'playing' | 'over'>('ready')
   const [best, setBest] = useState(readBest)
+  const [name, setName] = useState(readName)
   const input = useRef<Input>({ left: false, right: false, fire: false })
   const box = useRef<HTMLDivElement>(null)
 
@@ -108,6 +124,7 @@ export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; o
   }, [phase, game.over, game.score, best])
 
   const key = (down: boolean) => (e: React.KeyboardEvent) => {
+    if ((e.target as HTMLElement).tagName === 'INPUT') return // typing the name must not move or fire
     const k = e.key
     if (k === 'ArrowLeft' || k === 'a') input.current.left = down
     else if (k === 'ArrowRight' || k === 'd') input.current.right = down
@@ -121,7 +138,7 @@ export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; o
     onPointerLeave: () => { input.current[name] = false },
   })
 
-  const hall = hallWithPlayer(best)
+  const hall = hallWithPlayer(best, cleanName(name))
   const rank = hall.findIndex((h) => h.me)
   const pose = (Math.floor(game.tick / 8) % 2) as 0 | 1
 
@@ -130,7 +147,7 @@ export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; o
       <div ref={box} tabIndex={0} onKeyDown={key(true)} onKeyUp={key(false)} className="outline-none" aria-label="Spielfeld Alienalarm">
         <div className="flex justify-between text-[12px] mb-1">
           <span>Punkte: <b data-score>{game.score}</b></span>
-          <span>Welle {game.level}</span>
+          <span>Level {game.level}</span>
           <span aria-label={`Leben: ${game.lives}`}>{'▲'.repeat(Math.max(0, game.lives))}</span>
         </div>
         <svg viewBox={`0 0 ${W} ${H}`} width={360} height={Math.round((360 * H) / W)} className="block mx-auto" style={{ background: '#000000', border: '2px solid', borderColor: 'var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark)' }} role="img" aria-label="Spielfeld">
@@ -174,6 +191,22 @@ export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; o
               </g>
             )}
           </g>
+          {game.boom && (() => {
+            const p = 1 - game.boom.ttl / BOOM_TICKS
+            return (
+              <g data-boom>
+                <circle cx={game.boom.x} cy={game.boom.y} r={3 + p * 11} fill="#ffb43c" opacity={0.9 * (1 - p)} />
+                <circle cx={game.boom.x} cy={game.boom.y} r={1.5 + p * 6} fill="#fff27a" opacity={1 - p} />
+                <text x={game.boom.x} y={game.boom.y - 6 - p * 10} textAnchor="middle" fill="#fff27a" fontSize={9} fontWeight="bold" fontFamily="Tahoma, sans-serif" data-boom-points>+{game.boom.points}</text>
+              </g>
+            )
+          })()}
+          {phase === 'playing' && game.clear > 0 && (
+            <g data-clear>
+              <text x={W / 2} y={H / 2 - 6} textAnchor="middle" fill="#fff" fontSize={15} fontWeight="bold" fontFamily="Tahoma, sans-serif">Level {game.level} geschafft!</text>
+              <text x={W / 2} y={H / 2 + 14} textAnchor="middle" fill="#ffe27a" fontSize={12} fontFamily="Tahoma, sans-serif">Nächste Runde …</text>
+            </g>
+          )}
           {phase !== 'playing' && (
             <text x={W / 2} y={H / 2} textAnchor="middle" fill="#fff" fontSize={14} fontFamily="Tahoma, sans-serif">
               {phase === 'ready' ? 'Die Außerirdischen kommen!' : 'Die Erde ist verloren'}
@@ -190,6 +223,19 @@ export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; o
 
         {phase !== 'playing' && (
           <div className="mt-3">
+            <label className="flex items-center gap-2 text-[12px] mb-2">
+              <span>Dein Name:</span>
+              <input
+                type="text"
+                className="flex-1"
+                style={{ border: '2px inset #fff', padding: '1px 3px', background: '#fff' }}
+                value={name}
+                maxLength={MAX_NAME}
+                placeholder="Spieler"
+                aria-label="Dein Name für den Highscore"
+                onChange={(e) => { setName(e.target.value); writeName(e.target.value) }}
+              />
+            </label>
             <div className="font-bold text-[12px]">Highscore</div>
             <ol className="text-[12px] mt-1" style={{ listStyle: 'none', padding: 0, margin: 0 }} aria-label="Highscore">
               {hall.map((h, i) => (
