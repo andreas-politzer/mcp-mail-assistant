@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Postwurf } from '../src/components/Postwurf'
 import { Wizard } from '../src/wizard/Wizard'
 import { mockBackend } from '../src/wizard/setupApi'
-import { HALL_OF_FAME, PLAYER_NAME, PLAYER_Y, POINTS_BY_ROW, UFO_Y, W, aliveCount, hallWithPlayer, newGame, period, step, type Game, type Input } from '../src/logic/postwurf'
+import { HALL_OF_FAME, HURT_TICKS, PLAYER_NAME, PLAYER_Y, POINTS_BY_ROW, UFO_Y, W, aliveCount, hallWithPlayer, newGame, period, step, type Game, type Input } from '../src/logic/postwurf'
 
 afterEach(cleanup)
 const none: Input = { left: false, right: false, fire: false }
@@ -55,6 +55,16 @@ describe('Postwurf rules', () => {
     const g0 = newGame()
     const low = { ...g0, aliens: g0.aliens.map((a) => ({ ...a, y: PLAYER_Y - 8 })) }
     expect(step(low, none, calm).over).toBe(true)
+  })
+
+  it('a hit makes the ship blink for a moment and the blinking dies down', () => {
+    let g = newGame()
+    g = { ...g, bombs: [{ x: g.player, y: PLAYER_Y - 3 }] }
+    g = step(g, { left: false, right: false, fire: false }, () => 0.99)
+    expect(g.lives).toBe(2)
+    expect(g.hurt).toBe(HURT_TICKS)
+    for (let i = 0; i < HURT_TICKS + 2; i++) g = step(g, { left: false, right: false, fire: false }, () => 0.99)
+    expect(g.hurt).toBe(0)
   })
 
   it('a cleared wave starts the next one and keeps score and lives', () => {
@@ -129,6 +139,8 @@ describe('the Postwurf window', () => {
     fireEvent.pointerDown(screen.getByLabelText('Feuer'))
     act(() => { vi.advanceTimersByTime(80) })
     expect(document.querySelector('[data-shot]')).not.toBeNull()
+    expect(document.querySelector('[data-ship]')?.getAttribute('data-damage')).toBe('0')
+    expect(document.querySelector('[data-scorch]')).toBeNull()
   })
 })
 

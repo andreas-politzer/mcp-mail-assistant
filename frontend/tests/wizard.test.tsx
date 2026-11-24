@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Wizard } from '../src/wizard/Wizard'
+import { Wizard, knownPasskeys } from '../src/wizard/Wizard'
 import { guessPreset, looksLikeAddress, PRESETS } from '../src/wizard/presets'
 import { mockBackend, type SetupBackend } from '../src/wizard/setupApi'
 import { HINTS, STEPS, STEPS_PHONE } from '../src/wizard/hints'
@@ -389,7 +389,7 @@ describe('the tunnel step (phone path)', () => {
     fireEvent.click(screen.getByText('Überspringen'))
     await waitFor(() => screen.getByText(/schon verbunden/))
     next()
-    await waitFor(() => screen.getByText(/schon registriert/))
+    await waitFor(() => screen.getByText(/Bereits eingerichtet/))
     next()
     await waitFor(() => screen.getByText('Tunnel für das Handy (Tailscale)'))
   }
@@ -569,6 +569,12 @@ describe('the tunnel step (phone path)', () => {
     await waitFor(() => expect(screen.getByRole('status').textContent).toMatch(/Passkey am Handy ist registriert/), { timeout: 4500 })
     expect((screen.getByText('Weiter') as HTMLButtonElement).disabled).toBe(false)
   }, 9000)
+
+  it('asks the person to name the phone passkey', async () => {
+    await toPhoneKey(mockBackend(0))
+    expect(screen.getByText(/einen Namen geben, zum Beispiel „iPhone“/)).toBeTruthy()
+    expect(screen.queryByText(/Es sind schon 2 Passkeys eingerichtet/)).toBeNull() // only at the limit
+  })
 
   it('has clear names for skipping, and the side buttons are small', async () => {
     const backend = mockBackend(0)
@@ -899,7 +905,7 @@ describe('page 1 shows the real state, and the help at the Tailscale card', () =
     fireEvent.click(screen.getByText('Überspringen'))
     await waitFor(() => screen.getByText(/schon verbunden/))
     next()
-    await waitFor(() => screen.getByText(/schon registriert/))
+    await waitFor(() => screen.getByText(/Bereits eingerichtet/))
     next()
     await waitFor(() => screen.getByText('Tunnel für das Handy (Tailscale)'))
   }
@@ -977,7 +983,7 @@ describe('page 1 shows the real state, and the help at the Tailscale card', () =
     expect(open).toHaveBeenLastCalledWith('https://tailscale.com/docs/how-to/set-up-https-certificates')
     expect(document.querySelector('a[href]')).toBeNull()
     fireEvent.click(screen.getByText('Zurück'))
-    await waitFor(() => screen.getByText(/schon registriert/))
+    await waitFor(() => screen.getByText(/Bereits eingerichtet/))
     next()
     await waitFor(() => screen.getByText('Tunnel für das Handy (Tailscale)'))
     expect(screen.queryByText(/Was ist Tailscale\?/)).toBeNull()
@@ -991,5 +997,16 @@ describe('page 1 shows the real state, and the help at the Tailscale card', () =
     await waitFor(() => screen.getByText('DNS-Seite öffnen'))
     fireEvent.click(screen.getByText('DNS-Seite öffnen'))
     expect(open).toHaveBeenCalledWith('https://login.tailscale.com/admin/dns')
+  })
+})
+
+
+describe('the line about passkeys that are already there', () => {
+  it('names them neutrally with the day they were made, and falls back to a count', () => {
+    const day = new Date(1700000000 * 1000).toLocaleDateString('de-DE')
+    expect(knownPasskeys([{ name: 'MacBook', created_at: 1700000000 }], 1)).toBe(`Bereits eingerichtet: MacBook (angelegt am ${day}). Du musst hier nichts mehr tun.`)
+    expect(knownPasskeys([{ name: 'MacBook', created_at: 1700000000 }, { name: '', created_at: 1700000000 }], 2)).toContain(`ohne Namen (angelegt am ${day})`)
+    expect(knownPasskeys(undefined, 1)).toBe('Bereits eingerichtet: 1 Passkey. Du musst hier nichts mehr tun.')
+    expect(knownPasskeys([], 2)).toBe('Bereits eingerichtet: 2 Passkeys. Du musst hier nichts mehr tun.')
   })
 })

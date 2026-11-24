@@ -49,6 +49,14 @@ function ExtLink({ backend, url, children }: { backend: SetupBackend; url: strin
   )
 }
 
+const dayOf = (t: number) => new Date(t * 1000).toLocaleDateString('de-DE')
+// "Bereits eingerichtet: MacBook (angelegt am ...)": neutral on purpose, it does not say which device holds the passkey.
+export const knownPasskeys = (list: { name: string; created_at: number }[] | undefined, count: number) => {
+  if (!list || list.length === 0) return `Bereits eingerichtet: ${count} ${count === 1 ? 'Passkey' : 'Passkeys'}. Du musst hier nichts mehr tun.`
+  const parts = list.map((k) => `${k.name || 'ohne Namen'} (angelegt am ${dayOf(k.created_at)})`)
+  return `Bereits eingerichtet: ${parts.join(', ')}. Du musst hier nichts mehr tun.`
+}
+
 export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onDone: () => void; onSkip?: () => void }) {
   const [step, setStep] = useState<StepId>('where')
   const [tip, setTip] = useState(0)
@@ -167,7 +175,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
       if (st.password_stored) setPwStatus({ kind: 'ok', text: 'Das Passwort liegt schon im Schlüsselbund. Du kannst weitergehen oder es neu eingeben.' })
       if (st.claude_connected) setClaudeStatus({ kind: 'ok', text: 'Claude Desktop ist schon verbunden.' })
       setPasskeys(st.passkeys)
-      if (st.passkeys > 0) setPkStatus({ kind: 'ok', text: 'Ein Passkey ist schon registriert. Du musst hier nichts mehr tun.' })
+      if (st.passkeys > 0) setPkStatus({ kind: 'ok', text: knownPasskeys(st.passkey_list, st.passkeys) })
     })
     return () => {
       alive = false
@@ -760,7 +768,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   <ol className="list-decimal pl-5 mb-3">
                     <li>Claude Desktop ganz beenden (Cmd+Q auf dem Mac) und neu starten. Danach einen neuen Chat öffnen.</li>
                     <li>Hier „Passkey einrichten“ klicken. Die Seite öffnet sich im Browser.</li>
-                    <li>Dort den Passkey anlegen. Danach erkennt das Fenster ihn selbst, oder du klickst „Prüfen“.</li>
+                    <li>Dort dem Passkey einen Namen geben, zum Beispiel „MacBook“, und ihn anlegen. Danach erkennt das Fenster ihn selbst, oder du klickst „Prüfen“.</li>
                   </ol>
                   <div className="flex gap-2 justify-end">
                     <button type="button" className="bevel font-bold" disabled={pkStatus.kind === 'busy'} onClick={() => void getPasskeyLink()}>
@@ -959,10 +967,20 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               <ol className="list-decimal pl-5 mb-3">
                 <li>Hier „Link erzeugen“ klicken.</li>
                 <li>Den Link auf das Handy bringen. Am sichersten geht es als Nachricht an dich selbst: Link kopieren, in Nachrichten einfügen und an dich selbst schicken (AirDrop oder eine Notiz gehen auch). Auf dem Handy auf den Link tippen. Er öffnet sich im Browser.</li>
-                <li>Dort den Passkey anlegen. Danach erkennt das Fenster ihn selbst, oder du klickst „Prüfen“.</li>
+                <li>Dort dem Passkey einen Namen geben, zum Beispiel „iPhone“, und ihn anlegen. Danach erkennt das Fenster ihn selbst, oder du klickst „Prüfen“.</li>
               </ol>
+              {passkeys >= 2 && !phoneKeyDone && (
+                <div role="note" className="mb-2 p-2" style={{ border: '1px solid var(--bevel-dark)', background: '#fffbe6' }}>
+                  Es sind schon 2 Passkeys eingerichtet, mehr geht nicht. Ist einer davon dein Handy, bist du hier fertig. Sonst entferne zuerst einen in der Verwaltung (Kachel „Passkeys“).
+                  {onSkip && (
+                    <div className="mt-1">
+                      <button type="button" className="bevel" onClick={onSkip}>Zur Verwaltung</button>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex gap-2 justify-end">
-                <button type="button" className="bevel font-bold" disabled={phoneKeyStatus.kind === 'busy' || phoneKeyDone} onClick={() => void getPhoneKeyLink()}>
+                <button type="button" className="bevel font-bold" disabled={phoneKeyStatus.kind === 'busy' || phoneKeyDone || passkeys >= 2} onClick={() => void getPhoneKeyLink()}>
                   Link erzeugen
                 </button>
                 <button type="button" className="bevel" disabled={phoneKeyStatus.kind === 'busy' || phoneKeyDone} onClick={() => void checkPhoneKey()}>

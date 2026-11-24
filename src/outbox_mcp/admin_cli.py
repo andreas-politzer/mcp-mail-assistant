@@ -210,7 +210,8 @@ def _passkeys(args, environment, database: Database, out: TextIO) -> int:
             print("No passkeys registered.", file=out)
         for k in keys:
             used = _when(k["last_used_at"]) if k["last_used_at"] else "never"
-            print(f"{k['credential_id'][:12]}...  registered {_when(k['created_at'])}  last used {used}", file=out)
+            name = k["label"] or "(no name)"
+            print(f"{k['credential_id'][:12]}...  {name}  registered {_when(k['created_at'])}  last used {used}", file=out)
     else:
         if service.remove_passkey(args.id):
             print("Passkey removed.", file=out)

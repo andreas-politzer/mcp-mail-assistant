@@ -380,6 +380,25 @@ def test_enrollment_through_the_pages(config, sender, clock):
     assert web.post(f"/passkey/enroll/{token}/options", headers=JSON, json={}).status_code == 400
 
 
+def test_enrollment_page_asks_for_a_name_and_keeps_it(config, sender, clock):
+    w = World(config, sender, clock)
+    web = TestClient(Starlette(routes=build_approval_routes(w.approval)), base_url=ORIGIN)
+    token = w.approval.create_enrollment()
+    page = web.get(f"/passkey/enroll/{token}").text
+    assert 'id="label"' in page and 'maxlength="40"' in page
+    js = web.get("/approval/app.js").text
+    assert "label:lab.value" in js
+    o = web.post(f"/passkey/enroll/{token}/options", headers=JSON, json={"label": "MacBook"}).json()
+    assert o["ok"] and o["publicKey"]["user"]["name"] == "MacBook"
+    cid = o["challenge_id"]
+    r = web.post(f"/passkey/enroll/{token}/verify", headers=JSON,
+                 json={"challenge_id": cid, "credential": w.device.register(cid), "label": "MacBook"})
+    assert r.json()["ok"] is True
+    assert [k["label"] for k in w.approval.list_passkeys()] == ["MacBook"]
+    # the approval page of a phone hint no longer shows on the enrollment page of a computer
+    assert "swipe it away" not in page.lower()
+
+
 def test_http_app_serves_the_pages_only_when_approval_is_set_up(config, sender, clock, tmp_path):
     from outbox_mcp.auth.store import AuthStore
     from outbox_mcp.http_server import build_http_app

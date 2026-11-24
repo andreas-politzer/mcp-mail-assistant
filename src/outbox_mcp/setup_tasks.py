@@ -408,6 +408,7 @@ def status(env: Mapping[str, str], command: str = "") -> dict:
         "password_stored": stored,
         "claude_connected": connected,
         "passkeys": _passkey_count(env),
+        "passkey_list": _passkey_list(env),
         "install_problem": install_problem(command),
     }
 
@@ -435,6 +436,17 @@ def _passkey_count(env: Mapping[str, str]) -> int:
         return _approval_service(env).passkey_count()
     except Exception:
         return 0
+
+
+def _passkey_list(env: Mapping[str, str]) -> list:
+    """Name and creation time of each passkey, for the wizard. Never the ids or the keys."""
+    try:
+        return [
+            {"name": k["label"] or "", "created_at": k["created_at"]}
+            for k in _approval_service(env).list_passkeys()
+        ]
+    except Exception:
+        return []
 
 
 def approval_link(env: Mapping[str, str]) -> str:

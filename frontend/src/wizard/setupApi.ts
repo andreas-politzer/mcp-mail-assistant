@@ -18,6 +18,8 @@ export interface SetupStatus {
   claude_connected: boolean
   // Registered passkeys on the local approval page.
   passkeys: number
+  // Name and creation time (seconds) of each of them; the name is empty for older passkeys.
+  passkey_list?: { name: string; created_at: number }[]
   // Why the program cannot be connected from where it runs now (temporary macOS folder, disk image), or null.
   install_problem?: string | null
 }

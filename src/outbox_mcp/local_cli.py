@@ -6,6 +6,7 @@
     local scope --ref R --value own|external
     local add --name N --address A [--own]
     local passkey-remove --id PREFIX
+    local passkey-rename --id PREFIX --name NAME
     local api            (a session: one JSON request per line in, one answer per line out; see local_api)
 
 The data folder comes from OUTBOX_DATA_DIR. The app starts this program as a child process instead of
@@ -54,6 +55,9 @@ def _parser() -> argparse.ArgumentParser:
     add.add_argument("--address", required=True)
     add.add_argument("--own", action="store_true")
     sub.add_parser("passkey-remove").add_argument("--id", required=True)
+    rename = sub.add_parser("passkey-rename")
+    rename.add_argument("--id", required=True)
+    rename.add_argument("--name", required=True)
     return p
 
 
@@ -77,7 +81,8 @@ def snapshot(env: Mapping[str, str]) -> dict:
         "mailbox": asdict(box) if box else None,
         "recipients": [_recipient(r) for r in store.all_records()],
         "passkeys": [
-            {"id": str(k["credential_id"])[:12], "created_at": k["created_at"], "last_used_at": k["last_used_at"]}
+            {"id": str(k["credential_id"])[:12], "name": k["label"] or "", "created_at": k["created_at"],
+             "last_used_at": k["last_used_at"]}
             for k in passkeys
         ],
     }
@@ -110,6 +115,9 @@ def main(
         if args.command == "passkey-remove":
             removed = tasks._approval_service(environment).remove_passkey(args.id)
             return reply({"ok": True} if removed else {"ok": False, "reason": "Dieser Passkey wurde nicht gefunden."})
+        if args.command == "passkey-rename":
+            renamed = tasks._approval_service(environment).rename_passkey(args.id, args.name)
+            return reply({"ok": True} if renamed else {"ok": False, "reason": "Dieser Passkey wurde nicht gefunden."})
         store = RecipientStore(Database(str(default_file(environment, "outbox.db"))))
         now = time.time()
         scope = "own" if getattr(args, "own", False) else "external"

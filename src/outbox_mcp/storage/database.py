@@ -156,7 +156,8 @@ CREATE TABLE IF NOT EXISTS passkey_credentials (
     public_key BLOB NOT NULL,
     sign_count INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
-    last_used_at REAL
+    last_used_at REAL,
+    label TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS passkey_enrollments (
@@ -390,6 +391,9 @@ class Database:
             ):
                 if column not in [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+            if "label" not in [r[1] for r in conn.execute("PRAGMA table_info(passkey_credentials)")]:
+                # the name a person gave a passkey (empty for passkeys registered before names existed)
+                conn.execute("ALTER TABLE passkey_credentials ADD COLUMN label TEXT NOT NULL DEFAULT ''")
             self._migrate_recipient_scope(conn)
             if version < self.SCHEMA_VERSION:
                 conn.execute(f"PRAGMA user_version = {self.SCHEMA_VERSION}")

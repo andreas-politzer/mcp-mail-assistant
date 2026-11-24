@@ -47,11 +47,12 @@ const out=document.getElementById("result"),btn=document.getElementById("go"),ba
 if(!window.PublicKeyCredential||!navigator.credentials){out.textContent="This window cannot use passkeys.";showHelp();return;}
 btn.disabled=true;out.textContent="Waiting for the passkey…";
 try{
-const o=await post(base+"/options",{});const pk=o.publicKey;pk.challenge=fromB64(pk.challenge);
+const lab=document.getElementById("label"),extra=kind==="enroll"&&lab?{label:lab.value}:{};
+const o=await post(base+"/options",extra);const pk=o.publicKey;pk.challenge=fromB64(pk.challenge);
 let cred;
 if(kind==="enroll"){pk.user.id=fromB64(pk.user.id);(pk.excludeCredentials||[]).forEach(c=>{c.id=fromB64(c.id);});cred=await navigator.credentials.create({publicKey:pk});}
 else{(pk.allowCredentials||[]).forEach(c=>{c.id=fromB64(c.id);});cred=await navigator.credentials.get({publicKey:pk});}
-const d=await post(base+"/verify",{challenge_id:o.challenge_id,credential:pack(cred)});
+const d=await post(base+"/verify",Object.assign({challenge_id:o.challenge_id,credential:pack(cred)},extra));
 out.textContent=d.message;btn.hidden=true;
 if(kind==="approve"){const done=document.getElementById("done");if(done){out.textContent="";
 if(d.title){const t=document.getElementById("done-title"),x=document.getElementById("done-text");if(t)t.textContent=d.title;if(x)x.textContent=d.detail||"";if(d.outcome!=="sent")done.classList.add("warn");}
@@ -302,7 +303,7 @@ def build_approval_routes(
                 '<p id="result" role="status" aria-live="polite"></p>' + _HELP_HTML + done +
                 '<button id="close" type="button">Close this page</button>'
                 '<p id="closehint" hidden>If the page did not close, close this tab or window yourself '
-                "(swipe it away or tap Done), then switch back to Claude.</p></div>"
+                "(on a phone: swipe it away or tap Done), then switch back to Claude.</p></div>"
             )
             return _page("Approve this mail", card + tail, kind="approve", base=f"/approve/{draft_id}")
         sent_at = _when(info["finished_at"])
@@ -366,6 +367,8 @@ def build_approval_routes(
         body = (
             "<p>This registers this device as an approval passkey for the Mail Assistant. "
             "The link works once and for a few minutes.</p>"
+            '<p><label for="label">Name of this passkey (for example MacBook or iPhone)</label><br>'
+            '<input id="label" type="text" maxlength="40" autocomplete="off" placeholder="MacBook"></p>'
             '<button id="go">Register passkey</button>'
             '<p id="result" role="status" aria-live="polite"></p>' + _HELP_HTML
             + '<div id="done" class="done" hidden role="status">'
@@ -384,7 +387,7 @@ def build_approval_routes(
             return _json(False, "Request refused.", 429 if body is not None else 400)
         if limits.blocked(token):
             return _json(False, "Too many failed attempts.", 429)
-        ok, result = service.enroll_options(token)
+        ok, result = service.enroll_options(token, body.get("label") if isinstance(body, dict) else None)
         if not ok:
             limits.failed(token)
             return _json(False, str(result), 400)

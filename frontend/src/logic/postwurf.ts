@@ -27,6 +27,7 @@ export interface Game {
   level: number
   tick: number
   over: boolean
+  hurt: number // ticks left of the blinking after a hit, only for the picture
   ufo: { x: number; dir: 1 | -1 } | null
 }
 export interface Input { left: boolean; right: boolean; fire: boolean }
@@ -36,6 +37,7 @@ export const UFO_Y = 12
 export const UFO_W = 16
 const UFO_SPEED = 1.4
 const UFO_POINTS = [50, 100, 150, 300]
+export const HURT_TICKS = 16
 
 export function newWave(level: number): Alien[] {
   const out: Alien[] = []
@@ -57,6 +59,7 @@ export function newGame(level = 1, keep?: Pick<Game, 'score' | 'lives'>): Game {
     level,
     tick: 0,
     over: false,
+    hurt: 0,
     ufo: null,
   }
 }
@@ -78,6 +81,7 @@ export function step(g: Game, input: Input, rng: () => number = Math.random): Ga
   let aliens = g.aliens.map((a) => ({ ...a }))
   let bombs = g.bombs.map((b) => ({ ...b }))
   const tick = g.tick + 1
+  let hurt = Math.max(0, g.hurt - 1)
 
   if (input.left) player -= PLAYER_SPEED
   if (input.right) player += PLAYER_SPEED
@@ -140,6 +144,7 @@ export function step(g: Game, input: Input, rng: () => number = Math.random): Ga
   const struck = bombs.some((b) => b.y >= PLAYER_Y - 4 && b.y <= PLAYER_Y + 8 && Math.abs(b.x - player) <= PLAYER_W / 2)
   if (struck) {
     lives -= 1
+    hurt = HURT_TICKS
     bombs = []
     shot = null
   }
@@ -147,7 +152,7 @@ export function step(g: Game, input: Input, rng: () => number = Math.random): Ga
   const invaded = aliens.some((a) => a.alive && a.y + ALIEN_H >= PLAYER_Y - 6)
   const over = lives <= 0 || invaded
 
-  let next: Game = { player, shot, bombs, aliens, dir, score, lives, level, tick, over, ufo }
+  let next: Game = { player, shot, bombs, aliens, dir, score, lives, level, tick, over, hurt, ufo }
   if (!over && aliveCount(next) === 0) {
     level += 1
     next = { ...newGame(level, { score, lives }), player }

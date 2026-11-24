@@ -145,12 +145,34 @@ export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; o
           {game.aliens.filter((a) => a.alive).map((a, i) => <Alien key={i} x={a.x} y={a.y} row={a.row} pose={pose} />)}
           {game.shot && <rect x={game.shot.x - 1} y={game.shot.y} width={2} height={6} fill="#ffe27a" data-shot />}
           {game.bombs.map((b, i) => <rect key={i} x={b.x - 1.5} y={b.y} width={3} height={6} fill="#ff6b81" />)}
-          <g transform={`translate(${game.player - PLAYER_W / 2} ${PLAYER_Y - 4})`} style={{ filter: 'drop-shadow(0 0 1.5px #ffb43c)' }} data-ship>
+          <g
+            transform={`translate(${game.player - PLAYER_W / 2} ${PLAYER_Y - 4})`}
+            style={{ filter: 'drop-shadow(0 0 1.5px #ffb43c)' }}
+            opacity={game.hurt > 0 && Math.floor(game.hurt / 2) % 2 === 1 ? 0.25 : 1}
+            data-ship
+            data-damage={Math.min(2, Math.max(0, 3 - game.lives))}
+          >
             <polygon points={`${PLAYER_W / 2},-4 ${PLAYER_W / 2 + 3},4 ${PLAYER_W / 2 + 3},11 ${PLAYER_W / 2 - 3},11 ${PLAYER_W / 2 - 3},4`} fill="#e8ecff" stroke="#1b1b2b" strokeWidth={0.8} />
             <polygon points={`${PLAYER_W / 2 - 3},7 0,13 0,15 ${PLAYER_W / 2 - 3},11`} fill="#ff4f6d" stroke="#1b1b2b" strokeWidth={0.8} />
             <polygon points={`${PLAYER_W / 2 + 3},7 ${PLAYER_W},13 ${PLAYER_W},15 ${PLAYER_W / 2 + 3},11`} fill="#ff4f6d" stroke="#1b1b2b" strokeWidth={0.8} />
             <circle cx={PLAYER_W / 2} cy={4} r={1.6} fill="#4fd5ff" />
             <polygon points={`${PLAYER_W / 2 - 2},11 ${PLAYER_W / 2},${pose ? 17 : 15} ${PLAYER_W / 2 + 2},11`} fill="#ffb43c" />
+            {game.lives <= 2 && (
+              <g data-scorch>
+                <polygon points={`${PLAYER_W / 2 + 3},9 ${PLAYER_W - 1},13.5 ${PLAYER_W / 2 + 3},11.5`} fill="#2b2b3a" />
+                <circle cx={PLAYER_W / 2 + 6} cy={pose ? 2 : 0} r={2} fill="#9aa0b4" opacity={0.7} />
+                <circle cx={PLAYER_W / 2 + 8} cy={pose ? -3 : -5} r={2.6} fill="#c3c8d8" opacity={0.45} />
+              </g>
+            )}
+            {game.lives <= 1 && (
+              <g data-wrecked>
+                <polygon points={`${PLAYER_W / 2 - 3},9 1,13.5 ${PLAYER_W / 2 - 3},11.5`} fill="#2b2b3a" />
+                <polyline points={`${PLAYER_W / 2 - 1},0 ${PLAYER_W / 2 + 1},4 ${PLAYER_W / 2 - 1},7 ${PLAYER_W / 2 + 1},10`} fill="none" stroke="#1b1b2b" strokeWidth={0.9} />
+                <circle cx={PLAYER_W / 2 - 6} cy={pose ? -1 : 1} r={2.2} fill="#9aa0b4" opacity={0.7} />
+                <circle cx={PLAYER_W / 2 - 4} cy={pose ? -6 : -4} r={2.8} fill="#c3c8d8" opacity={0.45} />
+                <polygon points={`${PLAYER_W / 2 - 2},11 ${PLAYER_W / 2},${pose ? 14 : 12} ${PLAYER_W / 2 + 2},11`} fill="#ff6b3c" />
+              </g>
+            )}
           </g>
           {phase !== 'playing' && (
             <text x={W / 2} y={H / 2} textAnchor="middle" fill="#fff" fontSize={14} fontFamily="Tahoma, sans-serif">

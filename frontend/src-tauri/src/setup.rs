@@ -311,6 +311,18 @@ pub fn local_admin_args(
             }
             args.push(format!("--id={id}"));
         }
+        "passkey-rename" => {
+            let id = need(reference)?;
+            if id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                return Err("Unbekannte Angabe.".into());
+            }
+            let new_name = need(name)?;
+            if new_name.chars().count() > 40 {
+                return Err("Der Name ist zu lang.".into());
+            }
+            args.push(format!("--id={id}"));
+            args.push(format!("--name={new_name}"));
+        }
         _ => return Err("Diese Aktion gibt es nicht.".into()),
     }
     Ok(args)
@@ -533,6 +545,14 @@ mod tests {
             local_admin_args("passkey-remove", Some("AbC-12_x"), None, None, None, false).unwrap(),
             vec!["passkey-remove", "--id=AbC-12_x"]
         );
+        assert_eq!(
+            local_admin_args("passkey-rename", Some("AbC-12_x"), Some("MacBook"), None, None, false).unwrap(),
+            vec!["passkey-rename", "--id=AbC-12_x", "--name=MacBook"]
+        );
+        assert!(local_admin_args("passkey-rename", Some("abc DEF"), Some("MacBook"), None, None, false).is_err());
+        assert!(local_admin_args("passkey-rename", Some("AbC-12_x"), None, None, None, false).is_err());
+        let long = "x".repeat(41);
+        assert!(local_admin_args("passkey-rename", Some("AbC-12_x"), Some(long.as_str()), None, None, false).is_err());
     }
 
     #[test]

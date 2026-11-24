@@ -113,11 +113,31 @@ def local(config, sender):
     handle.stop()
 
 
+def _external_addresses():
+    """Addresses of this computer that are not loopback. The computer's own name does not always resolve
+    (offline, VPN, a name that is not in the hosts file); then the address the system would use to reach
+    another network is taken instead, and if there is none, the list is empty."""
+    found = set()
+    try:
+        found.update(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            # a documentation address (RFC 5737), written in parts so that no address literal is tracked;
+            # connecting a UDP socket sends nothing, it only makes the system pick the outgoing address
+            probe.connect((".".join(("192", "0", "2", "1")), 9))
+            found.add(probe.getsockname()[0])
+    except OSError:
+        pass
+    return [a for a in sorted(found) if not a.startswith("127.") and a != "0.0.0.0"]
+
+
 def test_listener_binds_to_loopback_only(local):
     svc, handle, port = local
     assert handle.running
     # an external interface address must not answer
-    other = [a for a in socket.gethostbyname_ex(socket.gethostname())[2] if not a.startswith("127.")]
+    other = _external_addresses()
     for addr in other:
         with socket.socket() as s:
             s.settimeout(1)

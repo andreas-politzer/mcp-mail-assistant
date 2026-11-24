@@ -18,6 +18,7 @@ export interface Person {
 }
 export interface PasskeyRow {
   id: string
+  name: string // empty for passkeys registered before names existed
   created_at: number
   last_used_at: number | null
 }
@@ -33,6 +34,7 @@ export type Action =
   | { action: 'scope'; reference: string; value: Scope }
   | { action: 'add'; name: string; address: string; own: boolean }
   | { action: 'passkey-remove'; reference: string }
+  | { action: 'passkey-rename'; reference: string; name: string }
 
 export type Done = { ok: true } | { ok: false; reason: string }
 
@@ -85,6 +87,12 @@ export function mockLocalBackend(seed?: Partial<Snapshot>): LocalBackend {
         const n = state.passkeys.length
         state.passkeys = state.passkeys.filter((k) => k.id !== a.reference)
         return state.passkeys.length < n ? { ok: true } : { ok: false, reason: 'Dieser Passkey wurde nicht gefunden.' }
+      }
+      if (a.action === 'passkey-rename') {
+        const k = state.passkeys.find((x) => x.id === a.reference)
+        if (!k) return { ok: false, reason: 'Dieser Passkey wurde nicht gefunden.' }
+        k.name = a.name.trim()
+        return { ok: true }
       }
       if (a.action === 'add') {
         state.recipients.push({ id: next++, name: a.name, address: a.address, aliases: [], status: 'active', note: '', suggested_by: null, scope: a.own ? 'own' : 'external' })

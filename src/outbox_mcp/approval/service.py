@@ -19,7 +19,9 @@ import base64
 import hashlib
 import json
 import secrets
+import os
 import sqlite3
+import traceback
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, Mapping, Optional, Tuple
@@ -43,6 +45,16 @@ from ..errors import ConfigError
 from ..storage.database import Database, body_hash
 
 MAX_PASSKEYS = 2
+MAX_LABEL = 40
+
+
+def clean_label(value: Any) -> str:
+    """The name of a passkey as a person typed it: one line, no control characters, at most MAX_LABEL
+    characters. Anything else gives an empty string, and the caller picks a default."""
+    if not isinstance(value, str):
+        return ""
+    text = "".join(ch if ch.isprintable() else " " for ch in value)
+    return " ".join(text.split())[:MAX_LABEL].strip()
 ENROLLMENT_SECONDS = 600
 DEFAULT_CHALLENGE_SECONDS = 300
 # Upper limit of the waiting time. Clients end a tool call that takes too long (often after about a
@@ -141,6 +153,20 @@ class ApprovalConfig:
         return cls(rp_id=host, challenge_seconds=seconds, port=port, wait_seconds=wait, sends=sends)
 
 
+def _audit_detail(exc: BaseException) -> str:
+    """Audit text for a rejected approval. Our own rejections keep their short text; an unexpected
+    exception also gets the place it was raised (file:line) and the start of its message, so the cause
+    can be found without changing what the approval page shows."""
+    if isinstance(exc, _Rejected):
+        return f"{type(exc).__name__}: {exc}"
+    where = ""
+    frames = traceback.extract_tb(exc.__traceback__)
+    if frames:
+        last = frames[-1]
+        where = f" at {os.path.basename(last.filename)}:{last.lineno} in {last.name}"
+    return f"{type(exc).__name__}{where}: {str(exc)[:200]}"
+
+
 class _Rejected(Exception):
     """A check failed. Only the class of the reason leaves this module, never details."""
 
@@ -160,7 +186,7 @@ class ApprovalService:
     def list_passkeys(self) -> list:
         with self.db._connect() as conn:
             rows = conn.execute(
-                "SELECT credential_id, created_at, last_used_at FROM passkey_credentials ORDER BY created_at"
+                "SELECT credential_id, created_at, last_used_at, label FROM passkey_credentials ORDER BY created_at"
             ).fetchall()
         return [dict(r) for r in rows]
 
@@ -176,6 +202,25 @@ class ApprovalService:
             if len(rows) != 1:
                 return False
             conn.execute("DELETE FROM passkey_credentials WHERE credential_id=?", (rows[0][0],))
+            return True
+
+    def rename_passkey(self, credential_id_prefix: str, label: Any) -> bool:
+        """Give a passkey a new name. This changes only the name kept here, never the entry that the
+        device itself holds."""
+        prefix = credential_id_prefix.strip()
+        name = clean_label(label)
+        if len(prefix) < 6:
+            raise ConfigError("Give at least six characters of the passkey id.")
+        if not name:
+            raise ConfigError("Give the passkey a name.")
+        with self.db._tx() as conn:
+            rows = conn.execute(
+                "SELECT credential_id FROM passkey_credentials WHERE substr(credential_id,1,?)=?",
+                (len(prefix), prefix),
+            ).fetchall()
+            if len(rows) != 1:
+                return False
+            conn.execute("UPDATE passkey_credentials SET label=? WHERE credential_id=?", (name, rows[0][0]))
             return True
 
     # -- enrolling a passkey ------------------------------------------------------
@@ -194,7 +239,7 @@ class ApprovalService:
             )
         return token
 
-    def enroll_options(self, token: str) -> Tuple[bool, Any]:
+    def enroll_options(self, token: str, label: Any = None) -> Tuple[bool, Any]:
         now = self.clock()
         if not isinstance(token, str):
             return False, "This link is not valid."
@@ -202,8 +247,10 @@ class ApprovalService:
             row = self._open_enrollment(conn, token, now)
             if row is None:
                 return False, "This link is not valid or has expired."
-            if conn.execute("SELECT COUNT(*) FROM passkey_credentials").fetchone()[0] >= MAX_PASSKEYS:
+            count = conn.execute("SELECT COUNT(*) FROM passkey_credentials").fetchone()[0]
+            if count >= MAX_PASSKEYS:
                 return False, "The maximum number of passkeys is reached."
+            name = clean_label(label) or f"Passkey {count + 1}"
             challenge = secrets.token_bytes(32)
             conn.execute(
                 "INSERT INTO passkey_challenges(challenge_id, purpose, enrollment_hash, created_at, expires_at)"
@@ -218,8 +265,8 @@ class ApprovalService:
             rp_id=self.config.rp_id,
             rp_name=self.config.rp_name,
             user_id=secrets.token_bytes(16),  # a new handle per passkey: a second one never replaces the first
-            user_name="owner",
-            user_display_name="Mail Assistant owner",
+            user_name=name,  # the device shows this name next to the passkey
+            user_display_name=name,
             challenge=challenge,
             exclude_credentials=existing or None,
             authenticator_selection=AuthenticatorSelectionCriteria(
@@ -251,7 +298,8 @@ class ApprovalService:
                     raise _Rejected("challenge belongs to another enrollment")
                 if now > challenge["expires_at"]:
                     raise _Rejected("expired")
-                if conn.execute("SELECT COUNT(*) FROM passkey_credentials").fetchone()[0] >= MAX_PASSKEYS:
+                count = conn.execute("SELECT COUNT(*) FROM passkey_credentials").fetchone()[0]
+                if count >= MAX_PASSKEYS:
                     raise _Rejected("limit")
                 verified = verify_registration_response(
                     credential=credential,
@@ -261,9 +309,10 @@ class ApprovalService:
                     require_user_verification=True,
                 )
                 conn.execute(
-                    "INSERT INTO passkey_credentials(credential_id, public_key, sign_count, created_at)"
-                    " VALUES (?,?,?,?)",
-                    (b64url(verified.credential_id), verified.credential_public_key, verified.sign_count, now),
+                    "INSERT INTO passkey_credentials(credential_id, public_key, sign_count, created_at, label)"
+                    " VALUES (?,?,?,?,?)",
+                    (b64url(verified.credential_id), verified.credential_public_key, verified.sign_count, now,
+                     clean_label(payload.get("label")) or f"Passkey {count + 1}"),
                 )
                 conn.execute("UPDATE passkey_enrollments SET used_at=? WHERE token_hash=?", (now, row["token_hash"]))
         except Exception as exc:  # the transaction is rolled back as a whole
@@ -299,10 +348,15 @@ class ApprovalService:
                 (b64url(challenge), draft_id, fingerprint, now,
                  min(now + self.config.challenge_seconds, draft["expires_at"])),
             )
+            known = [
+                PublicKeyCredentialDescriptor(id=base64url_to_bytes(r[0]))
+                for r in conn.execute("SELECT credential_id FROM passkey_credentials")
+            ]
         self._audit("approval_issued", draft_id)
         options = generate_authentication_options(
             rp_id=self.config.rp_id,
             challenge=challenge,
+            allow_credentials=known,  # the device offers only passkeys this program knows
             user_verification=UserVerificationRequirement.REQUIRED,
         )
         return True, {"challenge_id": b64url(challenge), "publicKey": json.loads(options_to_json(options))}
@@ -395,7 +449,7 @@ class ApprovalService:
                     (max(stored, verification.new_sign_count), now, raw_id),
                 )
         except Exception as exc:
-            self._audit("approval_rejected", draft_id, type(exc).__name__ + (f": {exc}" if isinstance(exc, _Rejected) else ""))
+            self._audit("approval_rejected", draft_id, _audit_detail(exc))
             return False, f"Approval rejected: {type(exc).__name__}"
         self._audit("approval_done", draft_id)
         return True, "Draft approved."

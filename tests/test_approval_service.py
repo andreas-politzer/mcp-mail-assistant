@@ -129,6 +129,74 @@ def test_third_passkey_refused_even_with_older_token(env):
     assert not ok and env.svc.passkey_count() == MAX_PASSKEYS
 
 
+def _enroll_named(env, label, device=None):
+    token = env.svc.create_enrollment()
+    ok, opts = env.svc.enroll_options(token, label)
+    assert ok, opts
+    device = device or Device()
+    cid = opts["challenge_id"]
+    ok, msg = env.svc.enroll_verify(token, {"challenge_id": cid, "credential": device.register(cid), "label": label})
+    assert ok, msg
+    return opts, device
+
+
+def test_passkey_gets_the_name_the_person_typed(env):
+    opts, _ = _enroll_named(env, "  MacBook \n Andy ")
+    assert opts["publicKey"]["user"]["name"] == "MacBook Andy"
+    assert opts["publicKey"]["user"]["displayName"] == "MacBook Andy"
+    assert [k["label"] for k in env.svc.list_passkeys()] == ["MacBook Andy"]
+
+
+def test_without_a_name_the_passkey_gets_a_numbered_default(env):
+    opts, _ = _enroll_named(env, "")
+    assert opts["publicKey"]["user"]["name"] == "Passkey 1"
+    opts, _ = _enroll_named(env, None)
+    assert opts["publicKey"]["user"]["name"] == "Passkey 2"
+    assert [k["label"] for k in env.svc.list_passkeys()] == ["Passkey 1", "Passkey 2"]
+    assert "owner" not in str(opts).lower()
+
+
+def test_names_are_cleaned_and_cut(env):
+    from outbox_mcp.approval.service import MAX_LABEL, clean_label
+
+    assert clean_label("a\x00b\x1b[31m\tc") == "a b [31m c"
+    assert clean_label("x" * 500) == "x" * MAX_LABEL
+    assert clean_label(5) == "" and clean_label(None) == "" and clean_label("   ") == ""
+
+
+def test_rename_passkey(env, device):
+    prefix = env.svc.list_passkeys()[0]["credential_id"][:8]
+    assert env.svc.rename_passkey(prefix, " iPhone ") is True
+    assert env.svc.list_passkeys()[0]["label"] == "iPhone"
+    assert env.svc.rename_passkey("zzzzzzzz", "x") is False
+    with pytest.raises(ConfigError):
+        env.svc.rename_passkey(prefix, "   ")
+    with pytest.raises(ConfigError):
+        env.svc.rename_passkey("abc", "x")
+
+
+def test_approval_offers_only_passkeys_this_program_knows(env, device):
+    ok, opts = env.svc.approve_options(env.draft().id)
+    assert ok
+    offered = [c["id"] for c in opts["publicKey"]["allowCredentials"]]
+    assert offered == [b64(device.cred_id)]
+
+
+def test_old_database_without_names_gets_the_column(tmp_path):
+    from outbox_mcp.storage.database import Database
+
+    path = str(tmp_path / "old.db")
+    Database(path)
+    with sqlite3.connect(path) as c:
+        c.execute("ALTER TABLE passkey_credentials DROP COLUMN label")
+        c.execute(
+            "INSERT INTO passkey_credentials(credential_id, public_key, sign_count, created_at) VALUES ('a', x'00', 0, 1)"
+        )
+    Database(path)
+    with sqlite3.connect(path) as c:
+        assert c.execute("SELECT label FROM passkey_credentials").fetchone() == ("",)
+
+
 def test_existing_credentials_are_excluded_and_handle_is_random(env, device):
     token = env.svc.create_enrollment()
     _, a = env.svc.enroll_options(token)
@@ -251,6 +319,49 @@ def test_wrong_credential_type(env, device):
         cred["type"] = "password"
         return cred
     reject(env, device, env.draft(), make)
+
+
+def audit_details(env, event):
+    with sqlite3.connect(env.db.path) as c:
+        return [r[0] for r in c.execute("SELECT detail FROM audit_log WHERE event=? ORDER BY seq", (event,))]
+
+
+def test_unexpected_error_is_located_in_audit_but_page_text_stays_short(env, device, monkeypatch):
+    import outbox_mcp.approval.service as service
+
+    def boom(**kwargs):
+        raise LookupError("unknown encoding: x-test")
+
+    monkeypatch.setattr(service, "verify_authentication_response", boom)
+    d = env.draft()
+    cid = env.options(d)
+    ok, msg = env.svc.approve_verify(d.id, {"challenge_id": cid, "credential": device.assert_(cid)})
+    assert not ok
+    assert msg == "Approval rejected: LookupError"  # what the page shows does not change
+    detail = audit_details(env, "approval_rejected")[-1]
+    assert detail.startswith("LookupError at test_approval_service.py:")
+    assert "in boom" in detail and detail.endswith("unknown encoding: x-test")
+    assert env.approved(d) == 0
+
+
+def test_long_error_text_is_cut_in_audit(env, device, monkeypatch):
+    import outbox_mcp.approval.service as service
+
+    def boom(**kwargs):
+        raise ValueError("y" * 500)
+
+    monkeypatch.setattr(service, "verify_authentication_response", boom)
+    d = env.draft()
+    cid = env.options(d)
+    env.svc.approve_verify(d.id, {"challenge_id": cid, "credential": device.assert_(cid)})
+    detail = audit_details(env, "approval_rejected")[-1]
+    assert detail.endswith("y" * 200) and "y" * 201 not in detail
+
+
+def test_own_rejection_keeps_short_audit_text(env, device):
+    stranger = Device()
+    reject(env, device, env.draft(), lambda c: stranger.assert_(c))
+    assert audit_details(env, "approval_rejected")[0].startswith("_Rejected: ")
 
 
 def test_malformed_credential_does_not_crash(env, device):

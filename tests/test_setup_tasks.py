@@ -137,6 +137,19 @@ def _prepared(env):
     tasks._write_private(tasks._folder(env) / tasks.MAILBOX_FILE, json.dumps(tasks.asdict(tasks.Mailbox("me@example.org", "smtp.example.org", 587, "starttls"))))
 
 
+def test_status_lists_passkeys_by_name_and_day_only(env):
+    _prepared(env)
+    service = tasks._approval_service(env)
+    with service.db._tx() as conn:
+        conn.execute(
+            "INSERT INTO passkey_credentials(credential_id, public_key, sign_count, created_at, label)"
+            " VALUES ('abcdefghijkl', x'00', 0, 1700000000, 'MacBook')"
+        )
+    status = tasks.status(env, "/opt/mail-assistant/server")
+    assert status["passkeys"] == 1
+    assert status["passkey_list"] == [{"name": "MacBook", "created_at": 1700000000}]  # never an id or a key
+
+
 def test_connect_creates_the_file_and_the_entry(env):
     _prepared(env)
     path = tasks.claude_config_path(env)
@@ -219,7 +232,7 @@ def test_the_bundle_entry_point_runs_setup_commands(tmp_path):
     run_env = {"PATH": "", "OUTBOX_DATA_DIR": str(tmp_path / "d"), "CLAUDE_DESKTOP_CONFIG": str(tmp_path / "c.json"), "HOME": str(tmp_path)}
     done = subprocess.run([sys.executable, "-I", str(entry), "setup", "status"], capture_output=True, text=True, env=run_env, timeout=60)
     assert done.returncode == 0, done.stderr
-    assert json.loads(done.stdout) == {"ok": True, "mailbox": None, "password_stored": False, "claude_connected": False, "passkeys": 0, "install_problem": None}
+    assert json.loads(done.stdout) == {"ok": True, "mailbox": None, "password_stored": False, "claude_connected": False, "passkeys": 0, "passkey_list": [], "install_problem": None}
     shown = subprocess.run([sys.executable, "-I", str(entry), "version"], capture_output=True, text=True, env=run_env, timeout=60)
     assert shown.returncode == 0 and shown.stdout.strip() not in ("", "unknown")
     bad = subprocess.run([sys.executable, "-I", str(entry), "nope"], capture_output=True, text=True, env=run_env, timeout=60)
@@ -326,6 +339,8 @@ def test_local_administration_lists_approves_and_changes_scope(env):
     bad = _local(env, "approve", "--ref", "nobody@example.com")
     assert bad["ok"] is False and "nobody@example.com" in bad["reason"]
     assert _local(env, "passkey-remove", "--id", "abcdefabcdef")["ok"] is False
+    assert _local(env, "passkey-rename", "--id", "abcdefabcdef", "--name", "MacBook")["ok"] is False
+    assert _local(env, "snapshot")["passkeys"] == []
 
 
 def test_registration_does_not_restrict_the_kind_of_authenticator(env, monkeypatch):
