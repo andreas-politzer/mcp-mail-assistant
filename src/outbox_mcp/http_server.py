@@ -91,6 +91,13 @@ def main() -> None:
     except ConfigError as exc:
         print(f"Mail Assistant: {exc}", file=sys.stderr)
         raise SystemExit(2)
+    from .compat import LegacyEra, mode_from_env
+
+    legacy_mode = mode_from_env(os.environ.get("OUTBOX_LEGACY_ERA"))
+    if legacy_mode is not None:
+        # Off by default. Makes the server look like one of the older protocol generation (see compat.py).
+        app = LegacyEra(app, legacy_mode)
+        print(f"Mail Assistant: compatibility mode '{legacy_mode}' on (OUTBOX_LEGACY_ERA).", file=sys.stderr, flush=True)
     if os.environ.get("OUTBOX_DEBUG_HTTP", "").strip().lower() in {"1", "true", "yes"}:
         from .diag import RequestLog
 
