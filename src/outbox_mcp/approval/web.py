@@ -56,7 +56,10 @@ out.textContent=d.message;btn.hidden=true;
 if(kind==="approve"){const done=document.getElementById("done");if(done){out.textContent="";
 if(d.title){const t=document.getElementById("done-title"),x=document.getElementById("done-text");if(t)t.textContent=d.title;if(x)x.textContent=d.detail||"";if(d.outcome!=="sent")done.classList.add("warn");}
 done.hidden=false;done.scrollIntoView();}}
-}catch(e){out.textContent="Not done: "+e.message;btn.disabled=false;showHelp();}}
+else{const done=document.getElementById("done");if(done){out.textContent="";done.hidden=false;done.scrollIntoView();}}
+}catch(e){
+if(kind==="enroll"&&e&&e.name==="InvalidStateError"){out.textContent="This device already has a passkey for this computer. Nothing more to do: you can close this page.";btn.hidden=true;return;}
+out.textContent="Not done: "+(e&&e.message?e.message:"unknown error");btn.disabled=false;showHelp();}}
 const goBtn=document.getElementById("go");if(goBtn)goBtn.addEventListener("click",go);
 document.querySelectorAll("time[data-ts]").forEach(t=>{const d=new Date(Number(t.dataset.ts)*1000);if(!isNaN(d.getTime()))t.textContent=d.toLocaleString();});
 const copyBtn=document.getElementById("copy");
@@ -365,6 +368,12 @@ def build_approval_routes(
             "The link works once and for a few minutes.</p>"
             '<button id="go">Register passkey</button>'
             '<p id="result" role="status" aria-live="polite"></p>' + _HELP_HTML
+            + '<div id="done" class="done" hidden role="status">'
+            '<h2 id="done-title">Passkey registered</h2>'
+            "<p>This device can now approve mails. You can close this page and go back to the app.</p>"
+            '<button id="close" type="button">Close this page</button>'
+            '<p id="closehint" hidden>If the page did not close, close this tab or window yourself, '
+            "then switch back to the app.</p></div>"
         )
         return _page("Register passkey", body, kind="enroll", base=f"/passkey/enroll/{token}")
 

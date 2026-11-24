@@ -364,7 +364,12 @@ def test_enrollment_through_the_pages(config, sender, clock):
     app = Starlette(routes=build_approval_routes(w.approval))
     web = TestClient(app, base_url=ORIGIN)
     token = w.approval.create_enrollment()
-    assert "Register passkey" in web.get(f"/passkey/enroll/{token}").text
+    page = web.get(f"/passkey/enroll/{token}").text
+    assert "Register passkey" in page
+    # after success the page says so and offers a close button; nothing of it is visible before
+    assert 'id="done" class="done" hidden' in page and "Passkey registered" in page and 'id="close"' in page
+    js = web.get("/approval/app.js").text
+    assert "InvalidStateError" in js and "already has a passkey for this computer" in js
     o = web.post(f"/passkey/enroll/{token}/options", headers=JSON, json={}).json()
     assert o["ok"]
     cid = o["challenge_id"]

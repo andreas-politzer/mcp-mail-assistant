@@ -295,7 +295,7 @@ def test_status_on_other_systems():
 def test_status_without_tailscale(monkeypatch):
     monkeypatch.setattr(tunnel, "find_tailscale", lambda: None)
     answer = tunnel.status(run=Tailscale(), platform="darwin")
-    assert answer["state"] == "missing" and answer["address"] is None and "tailscale.com/download" in answer["reason"]
+    assert answer["state"] == "missing" and answer["address"] is None and "nicht installiert" in answer["reason"]
 
 
 def test_status_ready_shows_the_address_and_changes_nothing():

@@ -130,15 +130,29 @@ pub fn is_enroll_link(url: &str) -> bool {
         && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// The Tailscale pages the tunnel card links to: the download page and the admin pages (where Funnel is
-/// switched on). Host and scheme are fixed; the rest may only hold plain URL characters.
+/// The pages of Tailscale the tunnel card links to. Every address is one exact string, except the Funnel approval
+/// page: Tailscale's own command names it with a node in the query, so that one is matched by its fixed start and
+/// may only continue with a plain query. Nothing else of Tailscale's sites can be opened from here.
+pub const TAILSCALE_PAGES: [&str; 4] = [
+    "https://tailscale.com/download",
+    "https://login.tailscale.com/admin/dns",
+    "https://tailscale.com/docs/features/tailscale-funnel",
+    "https://tailscale.com/docs/how-to/set-up-https-certificates",
+];
+const FUNNEL_APPROVAL: &str = "https://login.tailscale.com/f/funnel";
+
 pub fn is_tailscale_link(url: &str) -> bool {
-    let plain = |s: &str| s.len() <= 300 && s.chars().all(|c| c.is_ascii_alphanumeric() || "/_-.?=&%".contains(c));
-    if let Some(rest) = url.strip_prefix("https://tailscale.com/download") {
-        return rest.is_empty() || (rest.starts_with('/') && plain(rest));
+    if TAILSCALE_PAGES.contains(&url) {
+        return true;
     }
-    match url.strip_prefix("https://login.tailscale.com/") {
-        Some(rest) => !rest.is_empty() && plain(rest),
+    match url.strip_prefix(FUNNEL_APPROVAL) {
+        Some(rest) => {
+            rest.is_empty()
+                || (rest.starts_with('?')
+                    && rest.len() <= 200
+                    && !rest.contains("..")
+                    && rest.chars().all(|c| c.is_ascii_alphanumeric() || "_-.?=&%".contains(c)))
+        }
         None => false,
     }
 }
@@ -148,9 +162,14 @@ pub fn is_claude_connectors_link(url: &str) -> bool {
     url == "https://claude.ai/settings/connectors"
 }
 
+/// The one gate for every link the window may open.
+fn open_in_browser_allows(url: &str) -> bool {
+    is_enroll_link(url) || is_tailscale_link(url) || is_claude_connectors_link(url)
+}
+
 /// Opens the link in the computer's default browser.
 pub fn open_in_browser(url: &str) -> Result<(), String> {
-    if !is_enroll_link(url) && !is_tailscale_link(url) && !is_claude_connectors_link(url) {
+    if !open_in_browser_allows(url) {
         return Err("Dieser Link darf von hier aus nicht geöffnet werden.".into());
     }
     #[cfg(target_os = "macos")]
@@ -339,32 +358,54 @@ mod tests {
     fn only_tailscale_pages_and_nothing_else_may_be_opened_besides_the_enrollment_link() {
         for good in [
             "https://tailscale.com/download",
-            "https://tailscale.com/download/mac",
-            "https://login.tailscale.com/f/funnel?node=nABC123",
             "https://login.tailscale.com/admin/dns",
+            "https://tailscale.com/docs/features/tailscale-funnel",
+            "https://tailscale.com/docs/how-to/set-up-https-certificates",
+            "https://login.tailscale.com/f/funnel",
+            "https://login.tailscale.com/f/funnel?node=nABC123",
         ] {
             assert!(is_tailscale_link(good), "{good}");
+            assert!(open_in_browser_allows(good), "{good}");
         }
         for bad in [
             "http://tailscale.com/download",
             "https://tailscale.com/",
+            "https://tailscale.com/download/mac",
+            "https://tailscale.com/download/",
             "https://tailscale.com/downloads-evil",
             "https://tailscale.com.evil.com/download",
+            "https://tailscale.com/docs/features/tailscale-funnel/extra",
+            "https://tailscale.com/docs/features/tailscale-funnel?x=1",
+            "https://tailscale.com/docs/features/tailscale-funnel#x",
+            "https://tailscale.com/docs/how-to/set-up-https-certificates/",
+            "https://login.tailscale.com/admin/dns?x=1",
+            "https://login.tailscale.com/admin/dns/",
+            "https://login.tailscale.com/admin/machines",
+            "https://login.tailscale.com/admin",
+            "https://login.tailscale.com/",
             "https://login.tailscale.com.evil.com/f/funnel",
             "https://login.tailscale.com@evil.com/f/funnel",
             "https://evil.com/?https://login.tailscale.com/f/funnel",
-            "https://login.tailscale.com/",
+            "https://login.tailscale.com/f/funnelx",
+            "https://login.tailscale.com/f/funnel/x",
+            "https://login.tailscale.com/f/funnel/../x",
+            "https://login.tailscale.com/f/funnel?node=../x",
+            "https://login.tailscale.com/f/funnel?a@b",
             "https://login.tailscale.com/f/funnel#x",
+            "https://login.tailscale.com/f/funnel?x#y",
             "https://login.tailscale.com/f/funnel y",
-            "https://login.tailscale.com/\u{202e}x",
+            "https://login.tailscale.com/f/funnel?x=\n",
+            "https://login.tailscale.com/f/funnel\u{202e}",
             "javascript:alert(1)",
         ] {
             assert!(!is_tailscale_link(bad), "{bad}");
+            assert!(!open_in_browser_allows(bad), "{bad}");
         }
-        let too_long = format!("https://login.tailscale.com/{}", "a".repeat(400));
+        let too_long = format!("https://login.tailscale.com/f/funnel?{}", "a".repeat(400));
         assert!(!is_tailscale_link(&too_long));
         // Whatever is_tailscale_link refuses, open_in_browser refuses as well.
         assert!(open_in_browser("https://tailscale.com/downloads-evil").is_err());
+        assert!(open_in_browser("https://login.tailscale.com/admin/machines").is_err());
     }
 
     #[test]

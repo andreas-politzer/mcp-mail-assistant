@@ -1,17 +1,17 @@
 // Funki's lines for the wizard: one per step, fixed texts (no model). Funny, but every sentence is correct.
 
-export type StepId = 'where' | 'mailbox' | 'password' | 'test' | 'claude' | 'passkey' | 'tunnel' | 'phonelogin' | 'phonekey' | 'done'
+export type StepId = 'where' | 'mailbox' | 'password' | 'test' | 'claude' | 'passkey' | 'tunnel' | 'phonelogin' | 'connector' | 'phonekey' | 'done'
 
 export const STEPS: StepId[] = ['where', 'mailbox', 'password', 'test', 'claude', 'passkey', 'done']
 
 // Whoever wants to use the phone as well gets the tunnel, the phone sign-in and the phone's passkey before the end.
-export const STEPS_PHONE: StepId[] = ['where', 'mailbox', 'password', 'test', 'claude', 'passkey', 'tunnel', 'phonelogin', 'phonekey', 'done']
+export const STEPS_PHONE: StepId[] = ['where', 'mailbox', 'password', 'test', 'claude', 'passkey', 'tunnel', 'phonelogin', 'connector', 'phonekey', 'done']
 
 export const HINTS: Record<StepId, string[]> = {
   where: [
     'Willkommen! Für fast alle passt die erste Antwort: „Nur an diesem Computer“. Sie braucht keine Adresse im Internet und kein zweites Konto.',
     'Vom Handy aus geht später auch. Dafür braucht dein Computer einen Tunnel, also eine Adresse, unter der das Internet ihn findet. Das richten wir dann in Ruhe ein.',
-    'Und es geht auch wieder zurück: Wähle „Nur an diesem Computer“. Ist noch ein Handy-Zugang eingerichtet, kannst du ihn dort abschalten.',
+    'Und es geht auch wieder zurück: Ist ein Handy-Zugang eingerichtet, wählst du hier „Nur an diesem Computer“ und bestätigst das Abschalten.',
   ],
   mailbox: [
     'Das ist die Adresse, von der aus deine Mails rausgehen. Nicht die deines Chefs. Auch nicht meine, ich bin ein Telefon.',
@@ -43,6 +43,10 @@ export const HINTS: Record<StepId, string[]> = {
   phonelogin: [
     'Die Passphrase ist der Schlüssel für dein Handy. Ich zeige sie dir einmal, danach kenne selbst ich sie nicht mehr. Ab damit in den Passwortmanager.',
     'Verloren? Kein Drama: Du erzeugst einfach eine neue. Die alte ist dann ungültig, und dein Handy meldet sich noch einmal an.',
+  ],
+  connector: [
+    'Jetzt der Teil im Browser: Du sagst claude.ai, wo dein Computer erreichbar ist. Einmal eintragen, dann taucht er auch in der App auf dem Handy auf.',
+    'Fragt die Seite nach der Passphrase, nimm sie aus deinem Passwortmanager. Hast du sie nicht gespeichert, geh mit „Zurück“ und erzeuge eine neue.',
   ],
   phonekey: [
     'Dein Handy bekommt seinen eigenen Passkey, denn er gehört zur Adresse deines Computers im Internet. Der vom Computer gilt dort nicht.',

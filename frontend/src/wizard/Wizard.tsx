@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Assistant } from '../components/Assistant'
 import { HINTS, STEPS, STEPS_PHONE, type StepId } from './hints'
 import { PRESETS, guessPreset, looksLikeAddress, presetFor, unsupportedReason, type Security } from './presets'
-import type { RemoteStatus, SetupBackend, TunnelStatus } from './setupApi'
+import type { RemoteStatus, SetupBackend, SetupStatus, TunnelStatus } from './setupApi'
 
 // Setup wizard in the classic window style. It comes before the sign-in: a new installation has neither a
 // server nor a passphrase yet. Whoever also wants the phone gets one more step: the tunnel (Tailscale Funnel).
@@ -24,6 +24,27 @@ const INPUT = {
 
 type Status = { kind: 'idle' } | { kind: 'busy' } | { kind: 'ok'; text: string } | { kind: 'fail'; text: string }
 const IDLE: Status = { kind: 'idle' }
+
+// Pages of Tailscale the window may open (the program refuses anything else, see setup.rs).
+const TAILSCALE = {
+  download: 'https://tailscale.com/download',
+  dns: 'https://login.tailscale.com/admin/dns',
+  funnelDocs: 'https://tailscale.com/docs/features/tailscale-funnel',
+  httpsDocs: 'https://tailscale.com/docs/how-to/set-up-https-certificates',
+} as const
+
+// A link in the classic style: blue and underlined, and it says that it leaves the app. Never a plain <a>: it
+// would load the page inside the app window. The address goes through the same gate as every other link.
+function ExtLink({ backend, url, children }: { backend: SetupBackend; url: string; children: string }) {
+  return (
+    <>
+      <button type="button" className="linkbtn" onClick={() => void backend.openLink(url)}>
+        {children}
+      </button>{' '}
+      <span className="text-[11px]">(öffnet im Browser)</span>
+    </>
+  )
+}
 
 export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onDone: () => void; onSkip?: () => void }) {
   const [step, setStep] = useState<StepId>('where')
@@ -63,6 +84,10 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   const [phoneKeysBefore, setPhoneKeysBefore] = useState(0)
   const [phoneKeyDone, setPhoneKeyDone] = useState(false)
   const [phoneKeyStatus, setPhoneKeyStatus] = useState<Status>(IDLE)
+  const [setupInfo, setSetupInfo] = useState<SetupStatus | null>(null)
+  const [againMode, setAgainMode] = useState(false)
+  const [offOpen, setOffOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   const [phoneState, setPhoneState] = useState<RemoteStatus | null>(null)
   const [offConfirmed, setOffConfirmed] = useState(false)
   const [offStatus, setOffStatus] = useState<Status>(IDLE)
@@ -112,7 +137,8 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     }
     setCopied(null)
     setCopyFailed(false)
-    if (step === 'phonelogin') {
+    setHelpOpen(false)
+    if (step === 'phonelogin' || step === 'connector') {
       void backend.remoteStatus().then((r) => {
         setLoginExisting(r.enabled && !r.passphrase_placeholder)
         if (r.address) setPhoneAddress(r.address)
@@ -125,7 +151,9 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   useEffect(() => {
     let alive = true
     void backend.status().then((st) => {
-      if (!alive || !st.mailbox) return
+      if (!alive) return
+      setSetupInfo(st)
+      if (!st.mailbox) return
       setEmail(st.mailbox.email)
       const known = PRESETS.find((p) => p.host === st.mailbox!.host)
       setProviderId(known ? known.id : 'other')
@@ -135,7 +163,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
       if (st.password_stored) setPwStatus({ kind: 'ok', text: 'Das Passwort liegt schon im Schlüsselbund. Du kannst weitergehen oder es neu eingeben.' })
       if (st.claude_connected) setClaudeStatus({ kind: 'ok', text: 'Claude Desktop ist schon verbunden.' })
       setPasskeys(st.passkeys)
-      if (st.passkeys > 0) setPkStatus({ kind: 'ok', text: 'Ein Passkey ist schon registriert.' })
+      if (st.passkeys > 0) setPkStatus({ kind: 'ok', text: 'Ein Passkey ist schon registriert. Du musst hier nichts mehr tun.' })
     })
     return () => {
       alive = false
@@ -150,6 +178,16 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
       alive = false
     }
   }, [backend])
+
+  // Page 1 always shows the real state: a running phone access is preselected. "Set up" (mailbox, password in the
+  // keychain, and Claude Desktop connected or a phone access there) only changes the wording and the buttons.
+  // A half-finished first setup stays a first setup. Decided once.
+  useEffect(() => {
+    if (againMode || !setupInfo || !phoneState) return
+    const done = !!setupInfo.mailbox && setupInfo.password_stored && (setupInfo.claude_connected || phoneState.traces)
+    if (phoneState.enabled) setWhere('phone')
+    if (done) setAgainMode(true)
+  }, [setupInfo, phoneState, againMode])
 
   const blocked = unsupportedReason(email)
   const mailboxReady = !blocked && looksLikeAddress(email) && providerId !== '' && host.trim() !== '' && Number(port) > 0
@@ -260,6 +298,8 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     setPhoneKeyDone(false)
     setPhoneKeyStatus(IDLE)
     setPhoneState(await backend.remoteStatus())
+    setWhere('here')
+    setOffOpen(false)
     setOffStatus({
       kind: 'ok',
       text: r.removed
@@ -333,6 +373,31 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     }
   }
 
+  // While a link is out, the window looks by itself every few seconds whether the passkey has appeared.
+  useEffect(() => {
+    const phone = step === 'phonekey' && phoneKeyLink !== null && !phoneKeyDone
+    const desk = step === 'passkey' && pkLink !== null && passkeys === 0
+    if (!phone && !desk) return
+    let alive = true
+    const timer = setInterval(() => {
+      void backend.status().then((st) => {
+        if (!alive) return
+        if (phone && st.passkeys > phoneKeysBefore) {
+          setPasskeys(st.passkeys)
+          setPhoneKeyDone(true)
+          setPhoneKeyStatus({ kind: 'ok', text: 'Der Passkey am Handy ist registriert. Mails an andere gibst du ab jetzt auch dort frei.' })
+        } else if (desk && st.passkeys > 0) {
+          setPasskeys(st.passkeys)
+          setPkStatus({ kind: 'ok', text: 'Passkey ist registriert. Mails an andere kannst du ab jetzt freigeben.' })
+        }
+      })
+    }, 3000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [step, phoneKeyLink, phoneKeyDone, pkLink, passkeys, phoneKeysBefore, backend])
+
   const connectClaude = async () => {
     if (claudeStatus.kind === 'busy') return
     setClaudeStatus({ kind: 'busy' })
@@ -352,10 +417,16 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     }
   }
 
+  // The warning is open while the person has chosen "only this computer" although a phone access is running, or
+  // asked to remove leftovers. "Weiter" waits then, so nothing is switched off by merely moving on.
+  const warningOpen = !offDone && !!phoneState?.traces && ((phoneState.enabled && where === 'here') || offOpen)
+  // Desktop is set up and only the phone is missing: the main button goes straight to the tunnel card.
+  const jumpToTunnel = step === 'where' && againMode && where === 'phone' && !!phoneState && !phoneState.traces
+
   const canNext = useMemo(() => {
     switch (step) {
       case 'where':
-        return true
+        return !warningOpen
       case 'mailbox':
         return mailboxReady
       case 'password':
@@ -370,15 +441,17 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
         return tunnelResult.kind === 'ok'
       case 'phonelogin':
         return loginPassphrase !== null ? loginSaved : loginExisting
+      case 'connector':
+        return true
       case 'phonekey':
         return phoneKeyDone
       default:
         return true
     }
-  }, [step, mailboxReady, pwStatus.kind, testStatus.kind, claudeStatus.kind, passkeys, tunnelResult.kind, loginPassphrase, loginSaved, loginExisting, phoneKeyDone])
+  }, [step, warningOpen, mailboxReady, pwStatus.kind, testStatus.kind, claudeStatus.kind, passkeys, tunnelResult.kind, loginPassphrase, loginSaved, loginExisting, phoneKeyDone])
 
   const back = () => index > 0 && go(steps[index - 1])
-  const next = () => (step === 'done' ? onDone() : go(steps[index + 1]))
+  const next = () => (step === 'done' ? onDone() : jumpToTunnel ? go('tunnel') : go(steps[index + 1]))
 
   const statusLine = (s: Status) =>
     s.kind === 'idle' ? null : (
@@ -398,11 +471,12 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
         <div className="p-4 text-[13px] leading-relaxed" style={{ minHeight: 300 }}>
           {step === 'where' && (
             <>
-              <div className="font-bold mb-2">Wo willst du Mail Assistant benutzen?</div>
+              <div className="font-bold mb-2">{againMode ? 'Mail Assistant ist eingerichtet' : 'Wo willst du Mail Assistant benutzen?'}</div>
               <label className="flex gap-2 mb-2 cursor-pointer">
                 <input type="radio" name="where" checked={where === 'here'} onChange={() => setWhere('here')} />
                 <span>
                   <b>Nur an diesem Computer</b>
+                  {phoneState && !phoneState.enabled ? ' (aktuell)' : ''}
                   <br />
                   Du schreibst mit Claude Desktop auf diesem Rechner. Mehr brauchst du nicht.
                 </span>
@@ -418,9 +492,10 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   }}
                 />
                 <span>
-                  <b>Auch vom Handy aus</b> (in Arbeit)
+                  <b>Auch vom Handy aus</b>
+                  {phoneState?.enabled ? ' (aktuell)' : ''}
                   <br />
-                  Für die Claude-App auf iPhone oder Android. Der Computer muss dafür eingeschaltet sein. Das geht jederzeit nachträglich.
+                  Für die Claude-App auf iPhone oder Android. Der Computer muss dafür eingeschaltet sein. Du kannst den Handy-Zugang auch später einrichten.
                 </span>
               </label>
               {where === 'phone' && (
@@ -429,9 +504,10 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   <label className="flex gap-2 mb-2 cursor-pointer">
                     <input type="radio" name="via" checked readOnly />
                     <span>
-                      <b>Tailscale Funnel</b> (empfohlen)
+                      <b>Tailscale Funnel</b>
+                      {phoneState?.enabled ? ' (aktiv)' : ''}
                       <br />
-                      Kostenlos, feste Adresse, keine Warnseite.
+                      Kostenlos für den privaten Gebrauch. Keine Warnseite. Die Adresse enthält den Namen deines Computers.
                     </span>
                   </label>
                   <label className="flex gap-2 mb-2" style={{ opacity: 0.5 }}>
@@ -439,7 +515,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                     <span>
                       <b>ngrok</b> (kommt bald)
                       <br />
-                      Ohne eigene Domain, kurze Warnseite beim ersten Aufruf.
+                      Kostenlos. Weniger Einrichtung, neutrale Adresse. Einmal pro Browser eine Warnseite beim Anmelden.
                     </span>
                   </label>
                   <label className="flex gap-2 mb-2" style={{ opacity: 0.5 }}>
@@ -447,61 +523,83 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                     <span>
                       <b>Cloudflare Tunnel, eigene Domain</b> (kommt bald)
                       <br />
-                      Für deine Domain, z. B. mail.deinname.de. Sie muss bei Cloudflare liegen.
+                      Der Tunnel ist kostenlos. Du brauchst eine eigene Domain, z. B. mail.deinname.de, und sie muss bei Cloudflare liegen. Hast du noch keine, kaufst du sie bei einem Anbieter.
                     </span>
                   </label>
                   <div>Ein späterer Wechsel ändert die Adresse. Die Anmeldung am Handy muss dann neu eingerichtet werden.</div>
                 </fieldset>
               )}
-              {where === 'phone' && (
+              {where === 'phone' && !phoneState?.enabled && (
                 <div className="mt-2 p-2 text-[12px]" style={{ background: '#ffffe1', border: '1px solid #000' }}>
-                  Zwischenstand: Tunnel, Anmeldung und Passkey fürs Handy lassen sich einrichten. Abschalten kannst du den Handy-Zugang später hier, indem du „Nur an diesem Computer“ wählst.
+                  {jumpToTunnel
+                    ? `Die Schritte 2 bis ${STEPS_PHONE.indexOf('tunnel')} sind schon erledigt. Es geht gleich bei Schritt ${STEPS_PHONE.indexOf('tunnel') + 1} weiter. Dafür brauchst du ein Tailscale-Konto.`
+                    : `Dafür brauchst du ein Tailscale-Konto. Den Tunnel richtest du erst in Schritt ${STEPS_PHONE.indexOf('tunnel') + 1} ein.`}
                 </div>
               )}
-              {where === 'here' && (phoneState?.traces || offDone) && (
-                <div className="mt-2 p-2 text-[12px]" style={{ border: '2px groove #fff' }} aria-label="Handy-Zugang abschalten">
-                  {offDone ? null : (
-                    <>
-                      <div className="font-bold mb-1">
-                        {phoneState?.enabled ? 'Der Handy-Zugang ist noch eingerichtet.' : 'Es gibt noch Reste eines Handy-Zugangs.'}
-                      </div>
-                      <div className="mb-1">Wenn du ihn abschaltest:</div>
-                      <ul className="list-disc pl-5 mb-2">
-                        <li>Die öffentliche Adresse wird abgeschaltet. Die Claude-App auf dem Handy erreicht deinen Computer dann nicht mehr.</li>
-                        <li>Alle Anmeldungen am Handy enden, die Passphrase wird ungültig.</li>
-                        <li>Die Adresse ist an Passkey und Connector gebunden. Schaltest du den Handy-Zugang später wieder ein, brauchst du eine neue Passphrase, einen neuen Connector-Eintrag und einen neuen Passkey am Handy.</li>
-                        <li>Den Connector-Eintrag in claude.ai kann diese App nicht löschen. Entferne ihn dort selbst unter Einstellungen → Connectors.</li>
-                        <li>Dein alter Handy-Passkey bleibt in der Passkey-Kachel der Verwaltung gespeichert. Dort kannst du ihn bei Bedarf entfernen (es sind insgesamt höchstens 2 Passkeys möglich).</li>
-                      </ul>
-                      <div className="mb-2">Postfach, Empfänger und der Passkey dieses Computers bleiben. An Tailscale selbst ändert sich nichts.</div>
-                      <label className="flex gap-2 mb-2 cursor-pointer">
-                        <input type="checkbox" checked={offConfirmed} disabled={offStatus.kind === 'busy'} onChange={(e) => setOffConfirmed(e.target.checked)} />
-                        <span>Ja, den Handy-Zugang abschalten.</span>
-                      </label>
-                      <div className="flex justify-end">
-                        <button type="button" className="bevel font-bold" disabled={!offConfirmed || offStatus.kind === 'busy'} onClick={() => void turnOffPhone()}>
-                          Handy-Zugang abschalten
-                        </button>
-                      </div>
-                      {!offConfirmed && offStatus.kind !== 'busy' && <div className="mt-1 text-right">Setze zuerst das Häkchen.</div>}
-                    </>
-                  )}
-                  {statusLine(offStatus)}
-                  {offNotes.map((n) => (
-                    <div key={n} className="mt-1">{n}</div>
-                  ))}
-                  {offDone && (
-                    <div className="mt-2">
-                      <div className="mb-1">Entferne jetzt noch den Connector „Mail Assistant“ in claude.ai, falls du ihn dort eingetragen hattest.</div>
-                      <div className="flex justify-end">
-                        <button type="button" className="bevel" onClick={() => void backend.openLink('https://claude.ai/settings/connectors')}>
-                          Einstellungen öffnen
-                        </button>
-                      </div>
-                    </div>
-                  )}
+              {phoneState?.traces && !phoneState.enabled && !offDone && !offOpen && (
+                <div className="mt-2 p-2 text-[12px] flex items-center gap-2" style={{ border: '2px groove #fff' }}>
+                  <span className="flex-1">Es gibt noch Reste eines Handy-Zugangs.</span>
+                  <button type="button" className="bevel" onClick={() => setOffOpen(true)}>
+                    Reste entfernen …
+                  </button>
                 </div>
               )}
+              {warningOpen && phoneState && (
+                <div className="mt-2 p-2 text-[12px]" style={{ border: '2px groove #fff' }} role="group" aria-label="Handy-Zugang abschalten">
+                  <div className="font-bold mb-1">
+                    {phoneState.enabled ? 'Der Handy-Zugang ist noch eingerichtet.' : 'Es gibt noch Reste eines Handy-Zugangs.'}
+                  </div>
+                  <div className="mb-1">Wenn du ihn abschaltest:</div>
+                  <ul className="list-disc pl-5 mb-2">
+                    <li>Die öffentliche Adresse wird abgeschaltet. Die Claude-App auf dem Handy erreicht deinen Computer dann nicht mehr.</li>
+                    <li>Alle Anmeldungen am Handy enden, die Passphrase wird ungültig.</li>
+                    <li>Die Adresse ist an Passkey und Connector gebunden. Schaltest du den Handy-Zugang später wieder ein, brauchst du eine neue Passphrase, einen neuen Connector-Eintrag und einen neuen Passkey am Handy.</li>
+                    <li>Den Connector-Eintrag in claude.ai kann diese App nicht löschen. Entferne ihn dort selbst unter Einstellungen → Connectors.</li>
+                    <li>Dein alter Handy-Passkey bleibt in der Passkey-Kachel der Verwaltung gespeichert. Dort kannst du ihn bei Bedarf entfernen (es sind insgesamt höchstens 2 Passkeys möglich).</li>
+                  </ul>
+                  <div className="mb-2">Postfach, Empfänger und der Passkey dieses Computers bleiben. An Tailscale selbst ändert sich nichts.</div>
+                  <label className="flex gap-2 mb-2 cursor-pointer">
+                    <input type="checkbox" checked={offConfirmed} disabled={offStatus.kind === 'busy'} onChange={(e) => setOffConfirmed(e.target.checked)} />
+                    <span>Ja, den Handy-Zugang abschalten.</span>
+                  </label>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      className="bevel"
+                      disabled={offStatus.kind === 'busy'}
+                      onClick={() => {
+                        setOffOpen(false)
+                        setOffConfirmed(false)
+                        setOffStatus(IDLE)
+                        if (phoneState.enabled) setWhere('phone')
+                      }}
+                    >
+                      Abbrechen
+                    </button>
+                    <button type="button" className="bevel font-bold" disabled={!offConfirmed || offStatus.kind === 'busy'} onClick={() => void turnOffPhone()}>
+                      Handy-Zugang abschalten
+                    </button>
+                  </div>
+                  {!offConfirmed && offStatus.kind !== 'busy' && <div className="mt-1 text-right">Setze zuerst das Häkchen.</div>}
+                </div>
+              )}
+              {statusLine(offStatus)}
+              {offNotes.map((n) => (
+                <div key={n} className="mt-1 text-[12px]">{n}</div>
+              ))}
+              {offDone && (
+                <div className="mt-2 text-[12px]">
+                  <div className="mb-1">Entferne jetzt noch den Connector „Mail Assistant“ in claude.ai, falls du ihn dort eingetragen hattest.</div>
+                  <div className="flex justify-end">
+                    <button type="button" className="bevel" onClick={() => void backend.openLink('https://claude.ai/settings/connectors')}>
+                      Einstellungen öffnen
+                    </button>
+                  </div>
+                </div>
+              )}
+              {warningOpen && <div className="mt-2 text-[12px]">Bestätige zuerst die Änderung oben oder wähle wieder den aktuellen Zustand.</div>}
+              {againMode && !warningOpen && !jumpToTunnel && <div className="mt-2 text-[12px]">Mit „Weiter“ kannst du deine Einstellungen Schritt für Schritt prüfen oder ändern.</div>}
+              {!againMode && <div className="mt-2 text-[12px]">Du kannst das später ändern: Startmenü → „Einrichtungs-Wizard …“.</div>}
             </>
           )}
 
@@ -641,21 +739,25 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               <div className="mb-2">
                 Mails an andere Adressen verschickt Mail Assistant erst, wenn du sie auf einer kleinen Seite auf diesem Computer mit einem Passkey (zum Beispiel Touch ID) freigibst. So kann niemand ohne dich im Namen deiner Adresse schreiben, auch Claude nicht.
               </div>
-              <ol className="list-decimal pl-5 mb-3">
-                <li>Claude Desktop ganz beenden (Cmd+Q auf dem Mac) und neu starten. Danach einen neuen Chat öffnen.</li>
-                <li>Hier „Passkey einrichten“ klicken. Die Seite öffnet sich im Browser.</li>
-                <li>Dort den Passkey anlegen, dann hierher zurückkommen und „Prüfen“ klicken.</li>
-              </ol>
-              <div className="flex gap-2 justify-end">
-                <button type="button" className="bevel font-bold" disabled={pkStatus.kind === 'busy'} onClick={() => void getPasskeyLink()}>
-                  Passkey einrichten
-                </button>
-                <button type="button" className="bevel" disabled={pkStatus.kind === 'busy'} onClick={() => void checkPasskey()}>
-                  Prüfen
-                </button>
-              </div>
+              {passkeys === 0 && (
+                <>
+                  <ol className="list-decimal pl-5 mb-3">
+                    <li>Claude Desktop ganz beenden (Cmd+Q auf dem Mac) und neu starten. Danach einen neuen Chat öffnen.</li>
+                    <li>Hier „Passkey einrichten“ klicken. Die Seite öffnet sich im Browser.</li>
+                    <li>Dort den Passkey anlegen. Danach erkennt das Fenster ihn selbst, oder du klickst „Prüfen“.</li>
+                  </ol>
+                  <div className="flex gap-2 justify-end">
+                    <button type="button" className="bevel font-bold" disabled={pkStatus.kind === 'busy'} onClick={() => void getPasskeyLink()}>
+                      Passkey einrichten
+                    </button>
+                    <button type="button" className="bevel" disabled={pkStatus.kind === 'busy'} onClick={() => void checkPasskey()}>
+                      Prüfen
+                    </button>
+                  </div>
+                </>
+              )}
               {statusLine(pkStatus)}
-              {pkLink && (
+              {pkLink && passkeys === 0 && (
                 <div className="mt-2 text-[11px] break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label="Registrierungslink">
                   {pkLink}
                 </div>
@@ -665,7 +767,23 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
 
           {step === 'tunnel' && (
             <>
-              <div className="font-bold mb-2">Tunnel für das Handy (Tailscale)</div>
+              <div className="font-bold mb-2 flex items-center gap-2">
+                <span className="flex-1">Tunnel für das Handy (Tailscale)</span>
+                <button type="button" className="bevel" aria-expanded={helpOpen} onClick={() => setHelpOpen((v) => !v)}>
+                  {helpOpen ? 'Schließen' : 'Wie geht das genau?'}
+                </button>
+              </div>
+              {helpOpen && (
+                <div className="mb-3 p-2 text-[12px]" style={{ background: '#ffffe1', border: '1px solid #000' }}>
+                  <p className="mb-1"><b>Was ist Tailscale?</b> Ein Dienst, der deinen Computer sicher mit dem Internet verbindet. Mail Assistant nutzt davon nur „Funnel“: eine öffentliche Adresse, die zu diesem einen Dienst führt.</p>
+                  <p className="mb-1"><b>Warum kein eigenes Passwort?</b> Tailscale hat keine Anmeldung mit E-Mail und Passwort. Du meldest dich über ein bestehendes Konto an: Apple, Google, Microsoft, GitHub oder ein Passkey.</p>
+                  <p className="mb-1"><b>Was passiert bei „Tunnel einschalten“?</b> Tailscale öffnet bei der ersten Nutzung eine Seite und fragt, ob Funnel eingeschaltet werden soll. Du bestätigst das dort. Danach holt Tailscale ein Zertifikat für die Adresse. Das dauert ein bis zwei Minuten.</p>
+                  <p className="mb-1">Der Name deines Computers steht danach in öffentlichen Zertifikatslisten. Wenn er etwas Privates verrät, benenne ihn vorher in Tailscale um.</p>
+                  <p>
+                    Mehr dazu: <ExtLink backend={backend} url={TAILSCALE.funnelDocs}>Tailscale Funnel</ExtLink>, <ExtLink backend={backend} url={TAILSCALE.httpsDocs}>HTTPS-Zertifikate</ExtLink>
+                  </p>
+                </div>
+              )}
               {tunnel === null ? (
                 <div>Einen Moment …</div>
               ) : tunnel.state === 'ready' && tunnel.address ? (
@@ -700,12 +818,21 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   <div className="mb-3 p-2 text-[12px]" role="alert" style={{ background: '#ffffe1', border: '1px solid #000' }}>
                     {tunnel.reason}
                   </div>
+                  {tunnel.state === 'missing' && (
+                    <ol className="list-decimal pl-5 mb-3 text-[12px]">
+                      <li>
+                        Tailscale laden und installieren: <ExtLink backend={backend} url={TAILSCALE.download}>tailscale.com/download</ExtLink>
+                      </li>
+                      <li>Tailscale öffnen und ein Konto anlegen. Das geht nur über ein bestehendes Konto: Apple, Google, Microsoft, GitHub oder ein Passkey. Nimm für den privaten Gebrauch ein privates Konto. Ein Konto mit eigener Firmen-Domain startet eine 14-Tage-Testphase.</li>
+                      <li>Danach hier auf „Erneut prüfen“ klicken.</li>
+                    </ol>
+                  )}
+                  {tunnel.state === 'no_magicdns' && (
+                    <div className="mb-3 text-[12px]">
+                      <ExtLink backend={backend} url={TAILSCALE.dns}>DNS-Seite öffnen</ExtLink>
+                    </div>
+                  )}
                   <div className="flex justify-end gap-2">
-                    {tunnel.state === 'missing' && (
-                      <button type="button" className="bevel" onClick={() => void backend.openLink('https://tailscale.com/download')}>
-                        Tailscale-Seite öffnen
-                      </button>
-                    )}
                     <button type="button" className="bevel font-bold" onClick={() => void loadTunnel()}>
                       Erneut prüfen
                     </button>
@@ -733,7 +860,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   </div>
                   {loginExisting && (
                     <div className="mb-2 p-2 text-[12px]" style={{ background: '#ffffe1', border: '1px solid #000' }}>
-                      Es gibt schon eine Passphrase. Erzeugst du eine neue, wird die alte ungültig und dein Handy muss sich neu anmelden.
+                      Es gibt schon eine gültige Passphrase. Du musst nichts tun und kannst weitergehen. Nur wenn du sie verloren hast, erzeuge eine neue. Die alte wird dann ungültig und dein Handy muss sich neu anmelden.
                     </div>
                   )}
                   <div className="flex justify-end gap-2">
@@ -754,7 +881,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                     </button>
                   </div>
                   <div className="mb-2 text-[12px]">
-                    Speichere sie jetzt in deinem Passwortmanager. Danach lässt sie sich nicht mehr anzeigen. Geht sie verloren, erzeugst du hier eine neue.
+                    Speichere sie jetzt in deinem Passwortmanager. Am bequemsten speicherst du sie dort, wo auch dein Handy sie findet, zum Beispiel in der Apple-Passwörter-App oder in einem Passwortmanager mit Handy-App. Hast du dort schon einen Eintrag dafür, ersetze ihn, statt einen zweiten anzulegen. Danach lässt sie sich nicht mehr anzeigen. Geht sie verloren, erzeugst du hier eine neue.
                   </div>
                   <label className="flex gap-2 mb-3 cursor-pointer">
                     <input type="checkbox" checked={loginSaved} onChange={(e) => setLoginSaved(e.target.checked)} />
@@ -763,12 +890,22 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                 </>
               )}
               {statusLine(loginStatus)}
-              {connectorUrl && (loginPassphrase !== null || loginExisting) && (
-                <div className="mt-3 text-[12px]">
-                  <div className="font-bold mb-1">Danach: Claude mit deinem Computer verbinden</div>
+              {copyFailed && (
+                <div className="mt-2 text-[12px]" role="alert" style={{ color: '#a01020' }}>
+                  Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand.
+                </div>
+              )}
+            </>
+          )}
+
+          {step === 'connector' && (
+            <>
+              <div className="font-bold mb-2">Claude mit deinem Computer verbinden</div>
+              {connectorUrl ? (
+                <>
                   <ol className="list-decimal pl-5 mb-2">
                     <li>
-                      claude.ai im Browser öffnen, dort <b>Einstellungen → Connectors</b> und „Eigenen Connector hinzufügen“ („Add custom connector“).{' '}
+                      claude.ai im Browser öffnen, dort <b>Einstellungen → Connectors</b> und „Benutzerdefinierten Connector hinzufügen“ („Add custom connector“).{' '}
                       <button type="button" className="bevel" onClick={() => void backend.openLink('https://claude.ai/settings/connectors')}>
                         Einstellungen öffnen
                       </button>
@@ -783,8 +920,11 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                       {copied === 'addr' ? 'Kopiert' : 'Kopieren'}
                     </button>
                   </div>
-                  <div>Beim Anmelden fragt die Seite deines Computers nach der Passphrase. Der Connector erscheint danach automatisch in der Claude-App auf dem Handy (dort einen neuen Chat beginnen).</div>
-                </div>
+                  <div className="mb-2">Beim Anmelden fragt die Seite deines Computers nach der Passphrase. Nimm sie aus deinem Passwortmanager. Der Connector erscheint danach automatisch in der Claude-App auf dem Handy (dort einen neuen Chat beginnen).</div>
+                  <div className="text-[12px]">Passphrase nicht gespeichert? Mit „Zurück“ kannst du eine neue erzeugen.</div>
+                </>
+              ) : (
+                <div>Einen Moment …</div>
               )}
               {copyFailed && (
                 <div className="mt-2 text-[12px]" role="alert" style={{ color: '#a01020' }}>
@@ -802,8 +942,8 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               </div>
               <ol className="list-decimal pl-5 mb-3">
                 <li>Hier „Link erzeugen“ klicken.</li>
-                <li>Den Link an dein Handy schicken (zum Beispiel per AirDrop oder als Nachricht an dich selbst) und dort im Browser öffnen.</li>
-                <li>Auf dem Handy den Passkey anlegen, dann hier „Prüfen“ klicken.</li>
+                <li>Den Link auf das Handy bringen. Am sichersten geht es als Nachricht an dich selbst: Link kopieren, in Nachrichten einfügen und an dich selbst schicken (AirDrop oder eine Notiz gehen auch). Auf dem Handy auf den Link tippen. Er öffnet sich im Browser.</li>
+                <li>Dort den Passkey anlegen. Danach erkennt das Fenster ihn selbst, oder du klickst „Prüfen“.</li>
               </ol>
               <div className="flex gap-2 justify-end">
                 <button type="button" className="bevel font-bold" disabled={phoneKeyStatus.kind === 'busy' || phoneKeyDone} onClick={() => void getPhoneKeyLink()}>
@@ -882,23 +1022,23 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
 
         <div className="flex items-center gap-2 px-4 pb-4">
           {onSkip && step !== 'done' && (
-            <button type="button" className="bevel" onClick={onSkip} title="Verlässt den Wizard. Was schon erledigt ist, bleibt erhalten.">Zurück zur Verwaltung</button>
+            <button type="button" className="bevel text-[11px]" onClick={onSkip} title="Verlässt den Wizard. Was schon erledigt ist, bleibt erhalten.">Zurück zur Verwaltung</button>
           )}
           {hints.length > 1 && (
-            <button type="button" className="bevel" onClick={() => setTip((t) => (t + 1) % hints.length)}>Noch ein Tipp</button>
+            <button type="button" className="bevel text-[11px]" onClick={() => setTip((t) => (t + 1) % hints.length)}>Noch ein Tipp</button>
           )}
           <div className="flex-1" />
           {index > 0 && step !== 'done' && (
             <button type="button" className="bevel" onClick={back}>Zurück</button>
           )}
           {step === 'passkey' && passkeys === 0 && (
-            <button type="button" className="bevel" onClick={() => go(where === 'phone' ? 'tunnel' : 'done')} title="Du kannst den Passkey später nachholen">Später</button>
+            <button type="button" className="bevel" onClick={() => go(where === 'phone' ? 'tunnel' : 'done')} title="Du kannst den Passkey später nachholen">Passkey später einrichten</button>
           )}
           {step === 'phonekey' && !phoneKeyDone && (
-            <button type="button" className="bevel" onClick={() => go('done')} title="Du kannst den Passkey am Handy später nachholen">Später</button>
+            <button type="button" className="bevel" onClick={() => go('done')} title="Du kannst den Passkey am Handy später nachholen">Passkey am Handy überspringen</button>
           )}
           <button type="button" className="bevel font-bold" disabled={!canNext} onClick={next}>
-            {step === 'done' ? 'Zur Verwaltung' : 'Weiter'}
+            {step === 'done' ? 'Zur Verwaltung' : jumpToTunnel ? 'Handy-Zugang einrichten' : 'Weiter'}
           </button>
         </div>
       </div>

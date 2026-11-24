@@ -56,7 +56,7 @@ export function PasskeysTile({ ask, local, setup }: { ask: AskConfirm; local: Lo
   return (
     <div className="p-3 text-[13px] leading-relaxed overflow-auto h-full" style={{ color: '#1d1d2b' }}>
       <div className="mb-2 opacity-80">
-        Ein Passkey bestätigt Mails an fremde Adressen auf der Freigabeseite. Das kann dein Handy (per QR-Code) oder ein Sicherheitsschlüssel sein.
+        Ein Passkey bestätigt Mails an fremde Adressen auf der Freigabeseite. Das kann dein Handy oder ein Sicherheitsschlüssel sein.
         Die Freigabeseite läuft nur, solange Claude Desktop geöffnet ist.
       </div>
       {note && (

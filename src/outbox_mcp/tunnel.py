@@ -120,7 +120,7 @@ def find_tailscale(
 # ---------------------------------------------------------------- what Tailscale says
 
 _STATE_TEXT = {
-    "missing": "Tailscale ist auf diesem Mac nicht installiert. Installiere es von tailscale.com/download und melde dich dort an.",
+    "missing": "Tailscale ist auf diesem Mac nicht installiert.",
     "stopped": "Tailscale ist ausgeschaltet. Schalte es in der Menüleiste ein.",
     "needs_login": "Du bist bei Tailscale nicht angemeldet. Öffne die Tailscale-App und melde dich an.",
     "needs_approval": "Dieser Mac muss in der Tailscale-Verwaltung noch freigegeben werden.",
@@ -255,8 +255,8 @@ def start_funnel(run: Runner, tailscale: str) -> None:
     link = _ADMIN_URL.search(both)
     if link:
         raise NeedsAdmin(
-            "Funnel ist in deinem Tailscale-Netz noch nicht freigeschaltet. Öffne die Seite, schalte es dort ein "
-            "und klicke danach auf „Erneut prüfen“.",
+            "Funnel ist in deinem Tailscale-Netz noch nicht freigeschaltet. Öffne die Seite bei Tailscale. "
+            "Sie fragt, ob Funnel eingeschaltet werden soll. Bestätige das dort und klicke danach hier auf „Erneut prüfen“.",
             link.group(0).rstrip(".,)"),
         )
     if done.timed_out:
