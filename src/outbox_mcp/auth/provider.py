@@ -10,6 +10,8 @@ Rules enforced here (each one has tests):
 
 from __future__ import annotations
 
+import logging
+
 from pydantic import AnyUrl
 
 from mcp.server.auth.provider import (
@@ -27,6 +29,8 @@ from .config import AuthConfig
 from .redirects import is_allowed_redirect_uri
 from .resource import same_resource
 from .store import AuthStore, ClientLimitReached, PendingLimitReached
+
+log = logging.getLogger(__name__)
 
 
 class OutboxAuthProvider:
@@ -56,9 +60,16 @@ class OutboxAuthProvider:
             self.store.register_client(
                 client_info,
                 max_clients=self.config.max_clients,
+                max_unused=self.config.max_unused_clients,
                 prune_before=self.store.now() - self.config.client_prune_seconds,
             )
-        except ClientLimitReached:
+        except ClientLimitReached as limit:
+            log.warning(
+                "client registration refused: %s clients %d of %d. Free space with "
+                "'python -m outbox_mcp.auth.admin prune --db <auth.db>' or raise "
+                "OUTBOX_OAUTH_MAX_CLIENTS / OUTBOX_OAUTH_MAX_UNUSED_CLIENTS.",
+                "never-signed-in" if limit.kind == "never_signed_in" else "registered",
+                limit.count, limit.limit)
             raise RegistrationError(
                 error="invalid_client_metadata",
                 error_description="Too many registered clients.",

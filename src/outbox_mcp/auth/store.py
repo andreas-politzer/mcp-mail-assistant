@@ -58,7 +58,11 @@ CREATE TABLE IF NOT EXISTS login_failures (
 
 
 class ClientLimitReached(Exception):
-    pass
+    """Which limit was hit ("total" or "never_signed_in"), how many exist, and the limit."""
+
+    def __init__(self, kind: str = "total", count: int = 0, limit: int = 0):
+        super().__init__(f"{kind}: {count} of {limit}")
+        self.kind, self.count, self.limit = kind, count, limit
 
 
 class PendingLimitReached(Exception):
@@ -156,7 +160,7 @@ class AuthStore:
 
     # ------------------------------------------------------------------ clients
     def register_client(self, info: OAuthClientInformationFull, *, max_clients: int,
-                        prune_before: float) -> None:
+                        prune_before: float, max_unused: Optional[int] = None) -> None:
         with self._tx() as conn:
             # A client counts as "in use" while it has a refresh token that can still be used,
             # an open login or an unused code. Everything else older than the cutoff is removed.
@@ -167,12 +171,44 @@ class AuthStore:
                 "AND client_id NOT IN (SELECT client_id FROM auth_codes WHERE consumed = 0 AND expires_at >= ?)",
                 (prune_before, self.now(), self.now(), self.now()),
             )
-            if conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0] >= max_clients:
-                raise ClientLimitReached()
+            total = conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0]
+            if total >= max_clients:
+                raise ClientLimitReached("total", total, max_clients)
+            if max_unused is not None:
+                unused = conn.execute(
+                    "SELECT COUNT(*) FROM clients WHERE client_id NOT IN (SELECT client_id FROM families)"
+                ).fetchone()[0]
+                if unused >= max_unused:
+                    raise ClientLimitReached("never_signed_in", unused, max_unused)
             conn.execute(
                 "INSERT INTO clients (client_id, info_json, created_at) VALUES (?, ?, ?)",
                 (info.client_id, info.model_dump_json(), self.now()),
             )
+
+    _NOT_IN_USE = (
+        "client_id NOT IN (SELECT client_id FROM refresh_tokens WHERE consumed = 0 AND expires_at >= :now) "
+        "AND client_id NOT IN (SELECT client_id FROM pending_requests WHERE expires_at >= :now) "
+        "AND client_id NOT IN (SELECT client_id FROM auth_codes WHERE consumed = 0 AND expires_at >= :now)"
+    )
+
+    def client_stats(self) -> dict:
+        """Counts only: all clients, those that never finished a sign-in, those not in use."""
+        with self._tx() as conn:
+            now = self.now()
+            total = conn.execute("SELECT COUNT(*) FROM clients").fetchone()[0]
+            unused = conn.execute(
+                "SELECT COUNT(*) FROM clients WHERE client_id NOT IN (SELECT client_id FROM families)"
+            ).fetchone()[0]
+            idle = conn.execute(
+                f"SELECT COUNT(*) FROM clients WHERE {self._NOT_IN_USE}", {"now": now}).fetchone()[0]
+        return {"total": total, "never_signed_in": unused, "not_in_use": idle}
+
+    def prune_clients(self) -> int:
+        """Delete every client that is not in use right now (no usable refresh token, no open
+        login, no unused code), whatever its age. Returns how many were removed."""
+        with self._tx() as conn:
+            cur = conn.execute(f"DELETE FROM clients WHERE {self._NOT_IN_USE}", {"now": self.now()})
+            return cur.rowcount
 
     def get_client(self, client_id: str) -> Optional[OAuthClientInformationFull]:
         with self._tx() as conn:

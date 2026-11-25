@@ -72,7 +72,8 @@ def test_clients_with_a_still_valid_refresh_token_are_kept_for_the_whole_lifetim
 
 
 def test_default_limits_are_the_documented_ones(auth_config):
-    assert auth_config.max_clients == 20
+    assert auth_config.max_clients == 200
+    assert auth_config.max_unused_clients == 20
     assert auth_config.client_prune_seconds == 3600
     assert auth_config.max_pending_requests == 20
     assert auth_config.max_parallel_password_checks == 2
@@ -126,3 +127,74 @@ def test_open_logins_are_capped_and_the_overflow_is_refused(auth_config, tmp_pat
         clock.advance(601)  # the old ones expired, so there is room again
         _, challenge = f.pkce()
         f.request_id(f.authorize(cid, challenge))
+
+
+def test_never_signed_in_registrations_have_their_own_strict_limit(auth_config, tmp_path, clock):
+    cfg = dataclasses.replace(auth_config, max_clients=50, max_unused_clients=3, db_path=tmp_path / "u.db")
+    store = AuthStore(cfg.db_path, clock=clock)
+    app = create_authenticated_app(cfg, store, configure=add_ping, json_response=True)
+    with TestClient(app, base_url=ISSUER, follow_redirects=False) as c:
+        f = Flow(c, store, clock)
+        for _ in range(3):
+            assert f.register().status_code == 201
+        assert f.register().status_code == 400
+
+
+def test_clients_with_a_finished_sign_in_do_not_use_up_the_strict_limit(auth_config, tmp_path, clock):
+    cfg = dataclasses.replace(auth_config, max_clients=50, max_unused_clients=2, db_path=tmp_path / "s.db")
+    store = AuthStore(cfg.db_path, clock=clock)
+    app = create_authenticated_app(cfg, store, configure=add_ping, json_response=True)
+    with TestClient(app, base_url=ISSUER, follow_redirects=False) as c:
+        f = Flow(c, store, clock)
+        for _ in range(4):
+            f.full_login()
+        assert f.register().status_code == 201
+        assert store.client_stats()["never_signed_in"] == 1
+
+
+def test_refusal_names_the_limit_without_secrets(store):
+    from mcp.shared.auth import OAuthClientInformationFull
+    from outbox_mcp.auth.store import ClientLimitReached
+    import pytest
+
+    def info(i):
+        return OAuthClientInformationFull(client_id=f"c{i}", redirect_uris=["https://claude.ai/api/mcp/auth_callback"],
+                                          token_endpoint_auth_method="none")
+    store.register_client(info(1), max_clients=10, prune_before=0, max_unused=1)
+    with pytest.raises(ClientLimitReached) as err:
+        store.register_client(info(2), max_clients=10, prune_before=0, max_unused=1)
+    assert (err.value.kind, err.value.count, err.value.limit) == ("never_signed_in", 1, 1)
+
+
+def test_prune_deletes_only_clients_not_in_use(flow, store):
+    used = flow.full_login()
+    idle = flow.new_client_id()
+    assert store.prune_clients() == 1
+    assert store.get_client(idle) is None
+    assert store.get_client(used["client_id"]) is not None
+
+
+def test_admin_prune_and_status(flow, store, tmp_path, capsys):
+    from outbox_mcp.auth import admin
+    flow.new_client_id()
+    path = store.path if hasattr(store, "path") else None
+    if path is None:
+        import pytest
+        pytest.skip("store has no path attribute")
+    assert admin.main(["status", "--db", str(path)]) == 0
+    assert "clients never signed in: 1" in capsys.readouterr().out
+    assert admin.main(["prune", "--db", str(path)]) == 0
+    assert "pruned: 1" in capsys.readouterr().out
+
+
+def test_limits_can_be_set_from_the_environment():
+    from outbox_mcp.auth.config import AuthConfig
+    import pytest
+    from outbox_mcp.auth.passwords import hash_password
+    env = {"OUTBOX_PUBLIC_BASE_URL": "https://x.example", "OUTBOX_OAUTH_PASSWORD_HASH": hash_password("pw-for-test-1234"),
+           "OUTBOX_OAUTH_MAX_CLIENTS": "300", "OUTBOX_OAUTH_MAX_UNUSED_CLIENTS": "7"}
+    cfg = AuthConfig.from_env(env)
+    assert (cfg.max_clients, cfg.max_unused_clients) == (300, 7)
+    from outbox_mcp.auth.config import ConfigError
+    with pytest.raises(ConfigError):
+        AuthConfig.from_env({**env, "OUTBOX_OAUTH_MAX_UNUSED_CLIENTS": "0"})

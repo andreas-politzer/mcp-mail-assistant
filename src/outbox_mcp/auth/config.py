@@ -31,7 +31,10 @@ class AuthConfig:
     max_attempts_per_request: int = 3
     max_login_failures: int = 5
     login_lockout_seconds: int = 900
-    max_clients: int = 20
+    # Two limits: clients that never finished a sign-in are the abuse guard (strict);
+    # clients that did are counted generously (every claude.ai reconnect makes a new one).
+    max_clients: int = 200
+    max_unused_clients: int = 20
     client_prune_seconds: int = 3600
     max_pending_requests: int = 20
     max_parallel_password_checks: int = 2
@@ -97,6 +100,8 @@ class AuthConfig:
             redirect_uris=parse_allowlist(redirects) if redirects else (CLAUDE_AI_CALLBACK,),
             access_token_ttl=positive("OUTBOX_OAUTH_ACCESS_TTL_SECONDS", 3600),
             refresh_token_ttl=positive("OUTBOX_OAUTH_REFRESH_TTL_DAYS", 90) * 86400,
+            max_clients=positive("OUTBOX_OAUTH_MAX_CLIENTS", 200),
+            max_unused_clients=positive("OUTBOX_OAUTH_MAX_UNUSED_CLIENTS", 20),
         )
 
 
