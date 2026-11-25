@@ -63,6 +63,11 @@ def with_remote_file(env: Mapping[str, str]) -> Mapping[str, str]:
     digest = data.get("password_hash")
     if isinstance(digest, str) and digest.strip() and not (merged.get("OUTBOX_OAUTH_PASSWORD_HASH") or "").strip():
         merged["OUTBOX_OAUTH_PASSWORD_HASH"] = digest.strip()
+    # Voice mode on the iPhone hides connectors with real mail tool names (docs/phone-access.md), so the
+    # phone setup lists the tools as tool_1 ... tool_8. A setting in the environment still wins.
+    names = data.get("tool_names")
+    if isinstance(names, str) and names.strip() and not (merged.get("OUTBOX_TOOL_NAMES") or "").strip():
+        merged["OUTBOX_TOOL_NAMES"] = names.strip()
     return merged
 
 
@@ -222,7 +227,8 @@ def enable(
         _write_private(
             _folder(env) / REMOTE_FILE,
             json.dumps(
-                {"public_base_url": base, "password_hash": digest, "passphrase_placeholder": placeholder}, indent=2
+                {"public_base_url": base, "password_hash": digest, "passphrase_placeholder": placeholder,
+                     "tool_names": "neutral"}, indent=2
             )
             + "\n",
         )

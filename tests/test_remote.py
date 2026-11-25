@@ -107,6 +107,24 @@ def test_file_fills_in_what_the_environment_leaves_empty(env):
     assert merged["OUTBOX_OAUTH_PASSWORD_HASH"] == "abc"
 
 
+def test_file_can_switch_on_neutral_tool_names(env):
+    write_remote(env, public_base_url="https://f.example.ts.net", password_hash="abc", tool_names="neutral")
+    assert remote.with_remote_file(env)["OUTBOX_TOOL_NAMES"] == "neutral"
+    assert remote.with_remote_file({**env, "OUTBOX_TOOL_NAMES": "off"})["OUTBOX_TOOL_NAMES"] == "off"
+
+
+def test_file_without_tool_names_leaves_the_real_names(env):
+    write_remote(env, public_base_url="https://f.example.ts.net", password_hash="abc")
+    assert "OUTBOX_TOOL_NAMES" not in remote.with_remote_file(env)
+
+
+def test_enable_switches_neutral_tool_names_on(env, program):
+    enable(env, program, Launchctl())
+    data = json.loads(open(os.path.join(env["OUTBOX_DATA_DIR"], "remote.json")).read())
+    assert data["tool_names"] == "neutral"
+    assert remote.with_remote_file(env)["OUTBOX_TOOL_NAMES"] == "neutral"
+
+
 def test_environment_wins_over_the_file(env):
     write_remote(env, public_base_url="https://file.example.ts.net", password_hash="from-file")
     env = {**env, "OUTBOX_PUBLIC_BASE_URL": "https://env.example.org", "OUTBOX_OAUTH_PASSWORD_HASH": "from-env",
