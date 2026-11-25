@@ -172,6 +172,16 @@ The service listens on `127.0.0.1:8430` only (override with `OUTBOX_HTTP_PORT`).
 - **Stateless transport.** Every request stands alone; the sign-in state lives in SQLite. A restart or update ends the running connection, and the client has to connect again. Sign-ins and tokens survive the restart.
 - **Mail work runs in worker threads** (at most four at once), so a slow SMTP server does not block the sign-in page or other requests.
 - **Owner.** Drafts belong to the signed-in owner (the subject of the access token), not to a fixed name.
+- **Needs `mcp` 2.x.** Claude asks `server/discover` first (protocol of 28 July 2026). A server on `mcp` 1.x answers that with HTTP 400, and the connector fails.
+- **Voice mode on the iPhone.** Observed on one phone in November 2026: the Claude app's voice mode did not show the connector as long as its tools carried real mail names such as `list_recipients`. With `OUTBOX_TOOL_NAMES=neutral` the tools are listed as `tool_1` to `tool_8`, and voice mode worked, including mail with passkey approval. Details and limits of this finding: [docs/phone-access.md](docs/phone-access.md#voice-mode-on-the-iphone). Write-up: [LinkedIn post](https://www.linkedin.com/feed/update/urn:li:activity:7531258118073171969/).
+- **Client limits.** At most 20 clients that never finished a sign-in and 200 in total (`OUTBOX_OAUTH_MAX_UNUSED_CLIENTS`, `OUTBOX_OAUTH_MAX_CLIENTS`). Check with `uv run python -m outbox_mcp.auth.admin status --db <auth.db>`, clean up with `prune`.
+
+**Connector does not work? Short list.**
+
+1. Connector fails at once or shows no tools: is the server on `mcp` 2.x (`uv sync --frozen` after an update)?
+2. Adding the connector fails with "registration failed": the client limit is reached. Run `status`, then `prune` (see above).
+3. Works in text chat, missing in voice mode: set `OUTBOX_TOOL_NAMES=neutral`, restart, add the connector again.
+4. Sign-in works but mail is refused: check the recipient with `outbox-admin list` (`own` or `external`).
 
 ## Desktop app
 
@@ -225,7 +235,7 @@ Documented on purpose, to be decided later:
 
 - The SQLite schema is versioned (`PRAGMA user_version`); opening an older database upgrades it in place. Back up before the first start with a new version.
 - Tool annotations (`readOnlyHint`, `destructiveHint`, ...) are set honestly, but they are only hints for the client, not a security measure. The permission prompt a client shows before a tool call belongs to that client, not to this server. Its behavior depends on the client and its settings, so it is not relied on as a boundary. Other clients have not been checked.
-- Dependencies: `mcp[cli]` pulls in extras the server does not need; the lower bound `mcp>=1.9.0` is untested (tests run against the locked version).
+- Dependencies: `mcp[cli]` pulls in extras the server does not need; the lower bound is `mcp>=2.0.0` (the protocol version of 28 July 2026 needs the 2.x SDK); tests run against the locked version.
 - Expiry uses the system clock; a backwards clock jump would extend a draft's lifetime.
 - If building the message fails before anything is sent, the draft is reported as `unknown` rather than `failed` (safe, but imprecise).
 - Not yet tested: real TLS with certificate verification, SSL mode (port 465), failed login.

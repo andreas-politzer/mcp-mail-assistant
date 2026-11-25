@@ -38,7 +38,8 @@ Sign-in is the standard OAuth 2.1 authorization code flow with PKCE (S256) for p
 
 | Setting | Default | Reasoning |
 | --- | --- | --- |
-| Registered clients | 20 | A real owner needs 1 to 3. 20 leaves room for reconnects and failed attempts. |
+| Clients that never finished a sign-in (`OUTBOX_OAUTH_MAX_UNUSED_CLIENTS`) | 20 | The abuse guard. A real owner needs 1 to 3 at a time. |
+| Registered clients in total (`OUTBOX_OAUTH_MAX_CLIENTS`) | 200 | Every connect or reconnect in claude.ai registers a new client, and one with a usable refresh token is kept for up to 90 days. The first version had a single limit of 20 and locked the owner out after a few weeks of testing. |
 | Unused client lifetime | 1 hour | A complete connection takes minutes; the login request lives 10 minutes. A client is kept only while it has a refresh token that can still be used; clients whose tokens expired or were revoked are removed. |
 | Open login requests | 20 | One owner starts at most a few at a time. |
 | Password attempts | 5 per 15 minutes, global | A strong password cannot be guessed at this rate. |
@@ -50,7 +51,7 @@ Sign-in is the standard OAuth 2.1 authorization code flow with PKCE (S256) for p
 These are deliberate. They are listed so nobody has to discover them.
 
 - **The login lockout is global.** Anyone who can reach the server can use up the 5 attempts and block *new* logins for 15 minutes, again and again. Existing connections keep working. Put a rate limit in front (see below) if this matters to you.
-- **Open client registration (denial of service for first connections).** Claude registers itself, so `/register` must be reachable by anyone. A stranger can fill all 20 client slots within seconds, and can simply do it again whenever unused clients expire (1 hour after registration). While the slots are full, a *new* first connection fails. The same applies to the 20 open login requests (they expire after 10 minutes). Existing connections are not affected. The code cannot fully prevent this; rate limiting in front of the server (see below) is the real remedy.
+- **Open client registration (denial of service for first connections).** Claude registers itself, so `/register` must be reachable by anyone. A stranger can fill the slots for clients that never finished a sign-in (20 by default) within seconds, and can simply do it again whenever unused clients expire (1 hour after registration). While those slots are full, a *new* first connection fails. Clients that did finish a sign-in have their own, larger limit and are not affected by this. The same applies to the 20 open login requests (they expire after 10 minutes). Existing connections are not affected. The code cannot fully prevent this; rate limiting in front of the server (see below) is the real remedy.
 - **Refresh rotation is strict.** If the same refresh token arrives twice (a retry after a lost response, or two parallel requests), the whole token family is revoked and the owner signs in again. This is the safest choice. It is covered by a test that documents the behaviour (`test_documented_strict_behaviour_parallel_refresh_ends_the_session`). Whether a short grace window is needed will be decided after watching how Claude actually refreshes.
 - **Revoking an already expired access token does not revoke its refresh token.** Revoke the refresh token, or use `revoke-all`.
 - **No automatic cleanup of expired codes, tokens and token families yet.** They are small and harmless but accumulate. Planned for a maintenance step.

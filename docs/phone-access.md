@@ -52,9 +52,24 @@ Switching phone access on again later needs a new passphrase, a new connector en
 - Live with one iPhone: connector sign-in with the passphrase, a passkey on the phone, a test mail sent from the Claude app on the phone.
 - **Not yet checked live with this version of the approval page:** approving a mail to a recipient who is not yours (passkey prompt, then "Approved" and "Close this page"). The enrollment page, which shares the same script, was checked.
 
+## Voice mode on the iPhone
+
+**Observed, not explained.** On one iPhone in November 2026, the voice mode of the Claude app did not show the connector while its tools had real mail names such as `list_recipients`. Text chat showed it. A test series with test connectors on the author's server gave this picture:
+
+- Tools named `tool_1` to `tool_8`: visible in voice mode. A server with a single tool `ping`: visible.
+- A single tool named `list_recipients` (with a dummy answer): not visible. Eight, four or four other real tools: not visible.
+- Real descriptions, argument names, the server title and the server instructions did **not** trigger it: with neutral names and all of those, the connector was visible.
+- The same result with only Drive, the Mail Assistant and one test connector switched on, so another connector was not the cause.
+
+**What is not known:** which part of a name triggers it, whether Anthropic does this on purpose or it is a bug, whether it also happens on other phones or app versions, and whether it will stay this way. Nothing here was reported by Anthropic. The author's write-up of the finding, with the protocol change and the client limit: [LinkedIn post](https://www.linkedin.com/feed/update/urn:li:activity:7531258118073171969/).
+
+**The switch.** `OUTBOX_TOOL_NAMES=neutral` (environment of the server, then restart) lists the tools as `tool_1` to `tool_8` and renames the names inside descriptions and error texts. Calls with the neutral names are mapped back to the real tools. Everything else, including the passkey approval for external recipients, stays the same. It is off by default. With the switch on, voice mode showed the recipients, sent mail to own addresses, sent mail with attachments from the allowed folders, and sent a mail to an external address after the passkey approval.
+
+If you switch the names on or off for a connector that already exists, remove it in claude.ai and add it again. Whether claude.ai keeps the tool list from the first connection was not tested.
+
 ## Limits
 
-- **No rate limit in front.** The sign-in limits and their known weaknesses are in [oauth-security.md](oauth-security.md): the login lockout is global (5 attempts in 15 minutes), and open client registration can be used to fill the client slots. With a Funnel, anyone can reach those pages, and the wizard puts no rate limit in front of them.
+- **No rate limit in front.** The sign-in limits and their known weaknesses are in [oauth-security.md](oauth-security.md): the login lockout is global (5 attempts in 15 minutes), and open client registration can be used to fill the slots for clients that never finished a sign-in (20 by default; clients with a finished sign-in have a separate limit of 200). With a Funnel, anyone can reach those pages, and the wizard puts no rate limit in front of them.
 - **Changing the address breaks passkeys and connector.** They are bound to the address.
 - **The passkey limit** of two counts the phone passkey too, and it stays after phone access is switched off. If the wizard says the limit is reached, remove one in the passkey tile.
 - **The passphrase has to be typed once** on the device where the connector is signed in. The app does not move it between devices.
