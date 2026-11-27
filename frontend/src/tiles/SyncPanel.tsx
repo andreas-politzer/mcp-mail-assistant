@@ -1,3 +1,4 @@
+import { t, useLang } from '../i18n'
 import { useState } from 'react'
 import type { AskConfirm } from '../core/types'
 import { asText, countText, kb, local, problem, server, type ScanOut, type SentFile, type Source } from './filesApi'
@@ -36,6 +37,7 @@ const CHANGE: Record<string, string> = { new: 'neu', changed: 'geändert', remov
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfirm; onSynced: () => Promise<void> }) {
+  useLang()
   const [phase, setPhase] = useState<Phase>({ name: 'idle' })
   const [ack, setAck] = useState(false)
 
@@ -46,10 +48,10 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
     try {
       scan = await local.scan(source.id)
     } catch (e) {
-      return setPhase({ name: 'error', text: `${asText(e)} Auf dem Server wurde nichts verändert.` })
+      return setPhase({ name: 'error', text: `${asText(e)} ${t('Auf dem Server wurde nichts verändert.')}` })
     }
     const r = await server('POST', `/admin/sources/${source.id}/sync/plan`, { manifest: scan.entries })
-    if (r.status !== 200) return setPhase({ name: 'error', text: `${problem(r)} Auf dem Server wurde nichts verändert.` })
+    if (r.status !== 200) return setPhase({ name: 'error', text: `${problem(r)} ${t('Auf dem Server wurde nichts verändert.')}` })
     setPhase({ name: 'planned', plan: r.data as Plan, scan })
   }
 
@@ -70,7 +72,7 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
     const total = { stored: 0, removed: 0, unchanged: 0 }
     const skipped: { path: string; reason: string }[] = []
     const fail = (text: string) =>
-      setPhase({ name: 'error', text: `${text} Was bis hierher übertragen wurde, bleibt auf dem Server. Gelöscht wird erst im letzten Durchgang, bisher wurde also nichts gelöscht. Gleiche erneut ab, um fortzufahren.` })
+      setPhase({ name: 'error', text: `${text} ${t('Was bis hierher übertragen wurde, bleibt auf dem Server. Gelöscht wird erst im letzten Durchgang, bisher wurde also nichts gelöscht. Gleiche erneut ab, um fortzufahren.')}` })
     let sent = 0
     for (;;) {
       setPhase({ name: 'applying', pass, passes: plan.passes, sent })
@@ -103,32 +105,32 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
       <div className="mb-4">
         {phase.name === 'done' && (
           <div data-testid="sync-done" className="mb-2 px-2 py-1.5 rounded text-[12px]" style={{ background: 'rgba(120,255,180,0.2)' }}>
-            Abgleich fertig: {phase.stored} neu oder geändert gespeichert, {phase.removed} gelöscht, {phase.unchanged} unverändert.
+            {t('Abgleich fertig: {stored} neu oder geändert gespeichert, {removed} gelöscht, {unchanged} unverändert.', { stored: phase.stored, removed: phase.removed, unchanged: phase.unchanged })}
             {phase.skipped.length > 0 && (
               <details className="mt-1">
-                <summary className="cursor-pointer">{countText(phase.skipped.length)} übersprungen</summary>
-                <div className="opacity-85">Diese Dateien wurden nicht gespeichert und erscheinen beim nächsten Abgleich wieder als neu, bis sie zulässig sind.</div>
+                <summary className="cursor-pointer">{t('{count} übersprungen', { count: countText(phase.skipped.length) })}</summary>
+                <div className="opacity-85">{t('Diese Dateien wurden nicht gespeichert und erscheinen beim nächsten Abgleich wieder als neu, bis sie zulässig sind.')}</div>
                 <ul className="list-disc ml-5">{phase.skipped.map((s) => <li key={s.path}>{s.path}: {s.reason}</li>)}</ul>
               </details>
             )}
-            {(phase.stored > 0 || phase.removed > 0) && <div className="mt-1 opacity-85">Ein Entwurf mit einer geänderten oder gelöschten Datei muss neu vorbereitet werden.</div>}
+            {(phase.stored > 0 || phase.removed > 0) && <div className="mt-1 opacity-85">{t('Ein Entwurf mit einer geänderten oder gelöschten Datei muss neu vorbereitet werden.')}</div>}
           </div>
         )}
         {phase.name === 'error' && <div data-testid="sync-error" className="mb-2 px-2 py-1.5 rounded text-[12px]" style={{ background: 'rgba(255,120,130,0.3)' }}>{phase.text}</div>}
-        <button className="gbtn primary" onClick={() => void start()}>Mit diesem Computer abgleichen</button>
-        <span className="text-[11px] opacity-70 ml-2">Du siehst vorher, was passiert.</span>
+        <button className="gbtn primary" onClick={() => void start()}>{t('Mit diesem Computer abgleichen')}</button>
+        <span className="text-[11px] opacity-70 ml-2">{t('Du siehst vorher, was passiert.')}</span>
       </div>
     )
   }
 
-  if (phase.name === 'scanning') return <div className="mb-4 text-[12px] opacity-85">Lese die Quelle auf diesem Computer und frage den Server nach einem Plan …</div>
+  if (phase.name === 'scanning') return <div className="mb-4 text-[12px] opacity-85">{t('Lese die Quelle auf diesem Computer und frage den Server nach einem Plan …')}</div>
 
   if (phase.name === 'applying') {
     return (
       <div className="mb-4 text-[12px]">
-        <div className="mb-1">Übertrage Durchgang {phase.pass} von {phase.passes} …</div>
+        <div className="mb-1">{t('Übertrage Durchgang {pass} von {passes} …', { pass: phase.pass, passes: phase.passes })}</div>
         <div className="h-3 rounded bg-white/20 overflow-hidden"><div className="h-full" style={{ width: `${Math.round(((phase.pass - 1) / Math.max(phase.passes, 1)) * 100)}%`, background: '#8fe3b0' }} /></div>
-        <div className="mt-1 opacity-70">Bitte das Fenster nicht schließen.</div>
+        <div className="mt-1 opacity-70">{t('Bitte das Fenster nicht schließen.')}</div>
       </div>
     )
   }
@@ -145,43 +147,43 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
 
   return (
     <div className="mb-4 p-3 rounded" style={{ background: 'rgba(255,255,255,0.12)' }}>
-      <div className="font-semibold text-[13px] mb-1">Vorschau des Abgleichs</div>
+      <div className="font-semibold text-[13px] mb-1">{t('Vorschau des Abgleichs')}</div>
       {nothing ? (
-        <div className="text-[12px]">Alles ist aktuell: {s.unchanged} {s.unchanged === 1 ? 'Datei ist' : 'Dateien sind'} unverändert, nichts ist zu tun.</div>
+        <div className="text-[12px]">{s.unchanged === 1 ? t('Alles ist aktuell: 1 Datei ist unverändert, nichts ist zu tun.') : t('Alles ist aktuell: {n} Dateien sind unverändert, nichts ist zu tun.', { n: s.unchanged })}</div>
       ) : (
         <div className="text-[12px]" data-testid="sync-summary">
-          <b>{s.new}</b> neu, <b>{s.changed}</b> geändert, <b>{s.removed}</b> {s.removed === 1 ? 'wird' : 'werden'} vom Server gelöscht, {s.unchanged} unverändert.
-          {plan.passes > 1 && <> Die Übertragung läuft in {plan.passes} Durchgängen.</>}
+          <b>{s.new}</b> {t('neu')}, <b>{s.changed}</b> {t('geändert')}, <b>{s.removed}</b> {s.removed === 1 ? t('wird vom Server gelöscht') : t('werden vom Server gelöscht')}, {s.unchanged} {t('unverändert')}.
+          {plan.passes > 1 && <> {t('Die Übertragung läuft in {n} Durchgängen.', { n: plan.passes })}</>}
         </div>
       )}
 
       {plan.items.length > 0 && (
         <details className="mt-2 text-[12px]" open={plan.items.length <= 8}>
-          <summary className="cursor-pointer">Einzelne Dateien</summary>
+          <summary className="cursor-pointer">{t('Einzelne Dateien')}</summary>
           <ul className="ml-4 mt-1">
             {plan.items.map((i) => (
               <li key={i.change + i.path} className="flex gap-2">
                 <span className="flex-1 min-w-0 truncate">{i.path}</span>
-                <span className="whitespace-nowrap opacity-80" style={{ color: i.change === 'removed' ? '#ffc9cd' : undefined }}>{CHANGE[i.change]} · {kb(i.size)}</span>
+                <span className="whitespace-nowrap opacity-80" style={{ color: i.change === 'removed' ? '#ffc9cd' : undefined }}>{t(CHANGE[i.change])} · {kb(i.size)}</span>
               </li>
             ))}
           </ul>
-          {plan.items_truncated && <div className="opacity-70 mt-1">Die Liste zeigt nicht alle Dateien.</div>}
+          {plan.items_truncated && <div className="opacity-70 mt-1">{t('Die Liste zeigt nicht alle Dateien.')}</div>}
         </details>
       )}
 
       {notSent > 0 && (
         <details className="mt-2 text-[12px]">
-          <summary className="cursor-pointer">{countText(notSent)} {notSent === 1 ? 'wird' : 'werden'} nicht übertragen</summary>
-          <div className="opacity-80">Das sind Dateien, die gesperrt oder nicht freigegeben sind oder die die Grenzen überschreiten.</div>
+          <summary className="cursor-pointer">{notSent === 1 ? t('{count} wird nicht übertragen', { count: countText(notSent) }) : t('{count} werden nicht übertragen', { count: countText(notSent) })}</summary>
+          <div className="opacity-80">{t('Das sind Dateien, die gesperrt oder nicht freigegeben sind oder die die Grenzen überschreiten.')}</div>
           <ul className="list-disc ml-5 mt-1">
-            {plan.rejected.map((x) => <li key={x.path}>{x.path}: {REJECT_TEXT(x.reason)}</li>)}
+            {plan.rejected.map((x) => <li key={x.path}>{x.path}: {t(REJECT_TEXT(x.reason))}</li>)}
           </ul>
-          {notSent > plan.rejected.length && <div className="opacity-70">Die Liste zeigt nicht alle.</div>}
+          {notSent > plan.rejected.length && <div className="opacity-70">{t('Die Liste zeigt nicht alle.')}</div>}
         </details>
       )}
       {scan.skipped.length > 0 && (
-        <div className="mt-1 text-[11px] opacity-70">{scan.skipped.length} {scan.skipped.length === 1 ? 'Eintrag' : 'Einträge'} auf dem Computer {scan.skipped.length === 1 ? 'wurde' : 'wurden'} übersprungen, zum Beispiel Verknüpfungen.</div>
+        <div className="mt-1 text-[11px] opacity-70">{scan.skipped.length === 1 ? t('1 Eintrag auf dem Computer wurde übersprungen, zum Beispiel Verknüpfungen.') : t('{n} Einträge auf dem Computer wurden übersprungen, zum Beispiel Verknüpfungen.', { n: scan.skipped.length })}</div>
       )}
 
       {needsAck && (
@@ -189,16 +191,16 @@ export function SyncPanel({ source, onSynced }: { source: Source; ask: AskConfir
           <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="mt-0.5" />
           <span>
             {emptyRead
-              ? <>Auf diesem Computer wurde keine einzige Textdatei gefunden, auf dem Server liegen aber <b>{serverFiles}</b>. Dieser Abgleich würde <b>alle</b> Kopien löschen. Stimmt das?</>
-              : <>Dieser Abgleich löscht <b>{s.removed}</b> von <b>{serverFiles}</b> Kopien auf dem Server. Stimmt das?</>}
-            {' '}Ja, diese Kopien sollen gelöscht werden.
+              ? <>{t('Auf diesem Computer wurde keine einzige Textdatei gefunden, auf dem Server liegen aber')} <b>{serverFiles}</b>. {t('Dieser Abgleich würde')} <b>{t('alle')}</b> {t('Kopien löschen. Stimmt das?')}</>
+              : <>{t('Dieser Abgleich löscht')} <b>{s.removed}</b> {t('von')} <b>{serverFiles}</b> {t('Kopien auf dem Server. Stimmt das?')}</>}
+            {' '}{t('Ja, diese Kopien sollen gelöscht werden.')}
           </span>
         </label>
       )}
 
       <div className="flex gap-2 mt-3">
-        {!nothing && <button className="gbtn primary" disabled={needsAck && !ack} onClick={() => void apply(plan, scan)}>Abgleich ausführen</button>}
-        <button className="gbtn" onClick={() => setPhase({ name: 'idle' })}>{nothing ? 'Schließen' : 'Abbrechen'}</button>
+        {!nothing && <button className="gbtn primary" disabled={needsAck && !ack} onClick={() => void apply(plan, scan)}>{t('Abgleich ausführen')}</button>}
+        <button className="gbtn" onClick={() => setPhase({ name: 'idle' })}>{nothing ? t('Schließen') : t('Abbrechen')}</button>
       </div>
     </div>
   )

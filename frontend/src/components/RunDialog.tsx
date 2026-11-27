@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { useState } from 'react'
 import { Win95Window } from './Win95Window'
 import type { StartCommand } from './StartMenu'
@@ -33,19 +34,19 @@ export function RunDialog({ c, onCommand }: { c: Common; onCommand: (k: StartCom
   const [text, setText] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const go = () => {
-    const t = text.trim().toLowerCase()
-    if (!t) return
-    if (/^(cmd|command|terminal|sudo|rm)/.test(t)) return setErr('Das hier ist kein Terminal. Zum Glück.')
-    const hit = WORDS.find(([re]) => re.test(t))
-    if (!hit) return setErr(`Der Name „${text.trim()}“ wurde nicht gefunden. Prüfen Sie die Schreibweise und versuchen Sie es erneut.`)
+    const word = text.trim().toLowerCase()
+    if (!word) return
+    if (/^(cmd|command|terminal|sudo|rm)/.test(word)) return setErr(t('Das hier ist kein Terminal. Zum Glück.'))
+    const hit = WORDS.find(([re]) => re.test(word))
+    if (!hit) return setErr(t('Der Name „{name}“ wurde nicht gefunden. Prüfen Sie die Schreibweise und versuchen Sie es erneut.', { name: text.trim() }))
     c.onClose()
     onCommand(hit[1])
   }
   return (
-    <Win95Window title="Ausführen" width={380} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
-      <div className="mb-2">Geben Sie den Namen eines Programms ein, zum Beispiel „kaffee“ oder „funki“.</div>
+    <Win95Window title={t('Ausführen')} width={380} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
+      <div className="mb-2">{t('Geben Sie den Namen eines Programms ein, zum Beispiel „kaffee“ oder „funki“.')}</div>
       <div className="flex items-center gap-2">
-        <span>Öffnen:</span>
+        <span>{t('Öffnen:')}</span>
         <input
           autoFocus
           value={text}
@@ -58,7 +59,7 @@ export function RunDialog({ c, onCommand }: { c: Common; onCommand: (k: StartCom
       {err && <div className="mt-2 text-[12px]" style={{ color: '#a01d2c' }}>{err}</div>}
       <div className="flex justify-end gap-2 mt-3">
         <button className="bevel font-bold" onClick={go}>OK</button>
-        <button className="bevel" onClick={c.onClose}>Abbrechen</button>
+        <button className="bevel" onClick={c.onClose}>{t('Abbrechen')}</button>
       </div>
     </Win95Window>
   )

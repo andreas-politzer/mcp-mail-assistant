@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { invoke } from '@tauri-apps/api/core'
 import { admin } from '../api/admin'
 
@@ -52,20 +53,20 @@ export interface TreeItem {
 }
 
 export const inApp = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-export const NO_ANSWER = 'Der Server antwortet nicht. Läuft der Tunnel noch?'
+export const noAnswer = () => t('Der Server antwortet nicht. Läuft der Tunnel noch?')
 
 export async function server(method: string, path: string, body?: unknown) {
   try {
     return await admin.call(method, path, body)
   } catch {
-    return { status: 0, data: { message: NO_ANSWER } }
+    return { status: 0, data: { message: noAnswer() } }
   }
 }
 export const problem = (r: { status: number; data: { message?: string } }) =>
-  r.data?.message ?? (r.status === 0 ? NO_ANSWER : `Der Server meldet Fehler ${r.status}.`)
-export const asText = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : 'Unbekannter Fehler.')
-export const kb = (b: number) => (b < 1000 ? `${b} Byte` : `${Math.round(b / 1000)} KB`)
-export const countText = (n: number) => `${n} ${n === 1 ? 'Datei' : 'Dateien'}`
+  r.data?.message ? t(r.data.message) : r.status === 0 ? noAnswer() : t('Der Server meldet Fehler {status}.', { status: r.status })
+export const asText = (e: unknown) => (typeof e === 'string' ? t(e) : e instanceof Error ? t(e.message) : t('Unbekannter Fehler.'))
+export const kb = (b: number) => (b < 1000 ? t('{n} Byte', { n: b }) : `${Math.round(b / 1000)} KB`)
+export const countText = (n: number) => (n === 1 ? t('{n} Datei', { n }) : t('{n} Dateien', { n }))
 
 export const local = {
   list: () => invoke<LocalView[]>('local_list'),

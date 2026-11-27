@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { useState } from 'react'
 import { useDraggable } from '../core/useDraggable'
 
@@ -13,9 +14,9 @@ const KEY = 'mail-assistant-sticky'
 
 function load(): string {
   try {
-    return localStorage.getItem(KEY) ?? TIPS[0]
+    return localStorage.getItem(KEY) ?? t(TIPS[0])
   } catch {
-    return TIPS[0]
+    return t(TIPS[0])
   }
 }
 
@@ -36,7 +37,7 @@ export function Sticky({ onClose, onFocus, initial, zIndex = 90 }: { onClose: ()
   const nextTip = () => {
     const n = (tip + 1) % TIPS.length
     setTip(n)
-    save(TIPS[n])
+    save(t(TIPS[n]))
   }
   const secret = /passwort|password|kennwort/i.test(text)
   return (
@@ -52,8 +53,8 @@ export function Sticky({ onClose, onFocus, initial, zIndex = 90 }: { onClose: ()
         onPointerMove={dragHandlers.onPointerMove}
         onPointerUp={(e) => dragHandlers.onPointerUp(e)}
       >
-        <span className="flex-1 font-bold">Notizzettel</span>
-        <button className="px-1 font-bold leading-none" onPointerDown={(e) => e.stopPropagation()} onClick={onClose} aria-label="Schließen">x</button>
+        <span className="flex-1 font-bold">{t('Notizzettel')}</span>
+        <button className="px-1 font-bold leading-none" onPointerDown={(e) => e.stopPropagation()} onClick={onClose} aria-label={t('Schließen')}>x</button>
       </div>
       <textarea
         value={text}
@@ -62,9 +63,9 @@ export function Sticky({ onClose, onFocus, initial, zIndex = 90 }: { onClose: ()
         className="w-full bg-transparent outline-none resize-none px-2 py-1 text-[12px] leading-snug"
         style={{ fontFamily: '"Courier New", Courier, monospace' }}
       />
-      {secret && <div className="px-2 pb-1 text-[11px]" style={{ color: '#a01d2c' }}>Psst: Passwörter gehören nicht auf Zettel. Auch nicht auf digitale.</div>}
+      {secret && <div className="px-2 pb-1 text-[11px]" style={{ color: '#a01d2c' }}>{t('Psst: Passwörter gehören nicht auf Zettel. Auch nicht auf digitale.')}</div>}
       <div className="px-2 pb-1 flex justify-end">
-        <button className="text-[11px] underline" onClick={nextTip}>Neuer Tipp</button>
+        <button className="text-[11px] underline" onClick={nextTip}>{t('Neuer Tipp')}</button>
       </div>
     </div>
   )

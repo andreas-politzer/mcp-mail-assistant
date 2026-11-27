@@ -100,10 +100,14 @@ pub fn save_mailbox_args(email: &str, host: &str, port: u16, security: &str) -> 
     ]
 }
 
-pub fn send_test_args(to: &str, mark_own: bool) -> Vec<String> {
+pub fn send_test_args(to: &str, mark_own: bool, lang: Option<&str>) -> Vec<String> {
     let mut v = vec!["send-test".to_string(), format!("--to={to}")];
     if mark_own {
         v.push("--mark-own".into());
+    }
+    // Only the two known languages are passed on; anything else leaves the German default.
+    if lang == Some("en") {
+        v.push("--lang=en".into());
     }
     v
 }
@@ -481,8 +485,10 @@ mod tests {
         let a = save_mailbox_args("--evil@example.org", "h.example.org", 587, "starttls");
         assert!(a.iter().all(|x| x == "save-mailbox" || x.starts_with("--") && x.contains('=')));
         assert!(a.contains(&"--email=--evil@example.org".to_string()));
-        assert_eq!(send_test_args("a@b.de", true), vec!["send-test", "--to=a@b.de", "--mark-own"]);
-        assert_eq!(send_test_args("a@b.de", false), vec!["send-test", "--to=a@b.de"]);
+        assert_eq!(send_test_args("a@b.de", true, None), vec!["send-test", "--to=a@b.de", "--mark-own"]);
+        assert_eq!(send_test_args("a@b.de", false, None), vec!["send-test", "--to=a@b.de"]);
+        assert_eq!(send_test_args("a@b.de", false, Some("en")), vec!["send-test", "--to=a@b.de", "--lang=en"]);
+        assert_eq!(send_test_args("a@b.de", false, Some("x; rm")), vec!["send-test", "--to=a@b.de"]);
     }
 
     #[test]

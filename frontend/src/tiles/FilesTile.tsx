@@ -1,3 +1,4 @@
+import { t, useLang } from '../i18n'
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { AskConfirm } from '../core/types'
@@ -14,7 +15,7 @@ import { SourceView } from './SourceView'
 function Group({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mb-4">
-      <div className="text-[11px] uppercase tracking-widest opacity-90 py-1.5 border-b border-white/30 mb-2">{title}</div>
+      <div className="text-[11px] uppercase tracking-widest opacity-90 py-1.5 border-b border-white/30 mb-2">{t(title)}</div>
       {children}
     </section>
   )
@@ -46,7 +47,7 @@ function NameDialog({
     if (problemText) setError(problemText)
   }
   return (
-    <Win95Modal title={title} width={420} onClose={onClose}>
+    <Win95Modal title={t(title)} width={420} onClose={onClose}>
       <div className="text-xs mb-3 leading-relaxed">{intro}</div>
       <input
         className="ginput w-full mb-2"
@@ -58,8 +59,8 @@ function NameDialog({
       />
       {error && <div className="text-[12px] mb-2" style={{ color: '#a01020' }}>{error}</div>}
       <div className="flex justify-end gap-2">
-        <button className="bevel" onClick={onClose}>Abbrechen</button>
-        <button className="bevel font-bold" disabled={busy || !name.trim()} onClick={() => void submit()}>{confirmLabel}</button>
+        <button className="bevel" onClick={onClose}>{t('Abbrechen')}</button>
+        <button className="bevel font-bold" disabled={busy || !name.trim()} onClick={() => void submit()}>{t(confirmLabel)}</button>
       </div>
     </Win95Modal>
   )
@@ -71,6 +72,7 @@ type Dialog =
   | null
 
 export function FilesTile({ ask }: { ask: AskConfirm }) {
+  useLang()
   const [sources, setSources] = useState<Source[] | null>(null)
   const [quota, setQuota] = useState<Quota | null>(null)
   const [locals, setLocals] = useState<LocalView[]>([])
@@ -132,7 +134,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
       return asText(e)
     }
     setDialog(null)
-    setNote({ text: `Die Quelle „${label}“ ist angelegt. Es ist noch nichts freigegeben und nichts auf den Server kopiert.`, bad: false })
+    setNote({ text: t('Die Quelle „{label}“ ist angelegt. Es ist noch nichts freigegeben und nichts auf den Server kopiert.', { label }), bad: false })
     await load()
     return null
   }
@@ -151,7 +153,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
     if (!picked) return
     try {
       await local.link(picked.token, source.id)
-      setNote({ text: `„${source.label}“ zeigt jetzt auf den neu gewählten Ort. Die Kopien auf dem Server bleiben, bis du abgleichst.`, bad: false })
+      setNote({ text: t('„{label}“ zeigt jetzt auf den neu gewählten Ort. Die Kopien auf dem Server bleiben, bis du abgleichst.', { label: source.label }), bad: false })
       await load()
     } catch (e) {
       setNote({ text: asText(e), bad: true })
@@ -160,13 +162,13 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
 
   const remove = (source: Source) =>
     ask({
-      title: 'Quelle entfernen?',
+      title: t('Quelle entfernen?'),
       body: (
         <>
-          Die Quelle <b>{source.label}</b> wird entfernt. Alle Kopien davon auf dem Server werden gelöscht, offene Entwürfe mit Dateien aus dieser Quelle werden verworfen. Dateien auf diesem Computer bleiben unberührt.
+          {t('Die Quelle')} <b>{source.label}</b> {t('wird entfernt. Alle Kopien davon auf dem Server werden gelöscht, offene Entwürfe mit Dateien aus dieser Quelle werden verworfen. Dateien auf diesem Computer bleiben unberührt.')}
         </>
       ),
-      confirmLabel: 'Quelle entfernen',
+      confirmLabel: t('Quelle entfernen'),
       run: () =>
         void (async () => {
           const r = await server('POST', `/admin/sources/${source.id}/remove`, {})
@@ -181,7 +183,7 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
           const files = Number(r.data.purged_files) || 0
           const drafts = Number(r.data.cancelled_drafts) || 0
           setNote({
-            text: `Entfernt. ${countText(files)} auf dem Server gelöscht${drafts ? `, ${drafts} ${drafts === 1 ? 'offener Entwurf' : 'offene Entwürfe'} verworfen` : ''}.`,
+            text: t('Entfernt. {files} auf dem Server gelöscht', { files: countText(files) }) + (drafts ? (drafts === 1 ? t(', {n} offener Entwurf verworfen', { n: drafts }) : t(', {n} offene Entwürfe verworfen', { n: drafts })) : '') + '.',
             bad: false,
           })
           await load()
@@ -207,18 +209,18 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
         {isMac && inApp && (
           <div className="text-[11px] mt-0.5" style={{ color: place && place.reachable ? undefined : '#ffc9cd' }}>
             {!place
-              ? 'Auf diesem Computer ist kein Ort für diese Quelle hinterlegt.'
+              ? t('Auf diesem Computer ist kein Ort für diese Quelle hinterlegt.')
               : !place.reachable
-                ? `Nicht erreichbar: ${place.display}`
+                ? t('Nicht erreichbar: {place}', { place: place.display })
                 : <span className="opacity-80">{place.display}</span>}
           </div>
         )}
         <div className="flex gap-2 mt-1.5">
-          <button className="gbtn primary" onClick={() => setOpenId(s.id)}>Öffnen</button>
+          <button className="gbtn primary" onClick={() => setOpenId(s.id)}>{t('Öffnen')}</button>
           {isMac && <>
-            {inApp && (!place || !place.reachable) && <button className="gbtn" onClick={() => void relink(s)}>Neu zuordnen</button>}
-            <button className="gbtn" onClick={() => setDialog({ type: 'rename', source: s })}>Umbenennen</button>
-            <button className="gbtn danger" onClick={() => remove(s)}>Entfernen</button>
+            {inApp && (!place || !place.reachable) && <button className="gbtn" onClick={() => void relink(s)}>{t('Neu zuordnen')}</button>}
+            <button className="gbtn" onClick={() => setDialog({ type: 'rename', source: s })}>{t('Umbenennen')}</button>
+            <button className="gbtn danger" onClick={() => remove(s)}>{t('Entfernen')}</button>
           </>}
         </div>
       </div>
@@ -241,13 +243,13 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
   return (
     <div className="tile-text flex-1 min-h-0 flex flex-col">
       <div className="px-6 pb-2 text-[12px] opacity-90 leading-relaxed">
-        Hier legst du fest, aus welchen Ordnern und Dateien Claude etwas an Mails anhängen darf. Claude sieht nur, was du ausdrücklich freigibst. Eine Sperre gewinnt immer.
+        {t('Hier legst du fest, aus welchen Ordnern und Dateien Claude etwas an Mails anhängen darf. Claude sieht nur, was du ausdrücklich freigibst. Eine Sperre gewinnt immer.')}
       </div>
 
       <div className="scroll-glass flex-1 min-h-0 px-6 pb-5 border-t border-white/30 pt-3">
         {error && (
           <div className="mb-3 px-2 py-1.5 rounded text-[12px]" style={{ background: 'rgba(255,120,130,0.3)' }}>
-            {error} <button className="gbtn ml-2" onClick={() => void load()}>Erneut laden</button>
+            {error} <button className="gbtn ml-2" onClick={() => void load()}>{t('Erneut laden')}</button>
           </div>
         )}
         {note && (
@@ -255,29 +257,29 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
             {note.text}
           </div>
         )}
-        {!sources && !error && <div className="opacity-70 text-[12px]">Lade …</div>}
+        {!sources && !error && <div className="opacity-70 text-[12px]">{t('Lade …')}</div>}
 
         {sources && (
           <>
             {serverFolders.length > 0 && (
-              <Group title="Ordner auf dem Server">{serverFolders.map(card)}</Group>
+              <Group title={t('Ordner auf dem Server')}>{serverFolders.map(card)}</Group>
             )}
-            <Group title="Von diesem Computer">
+            <Group title={t('Von diesem Computer')}>
               {macSources.length === 0 && (
-                <div className="text-[12px] opacity-80 mb-2">Noch keine Quelle von diesem Computer. Wähle einen Ordner oder eine einzelne Datei.</div>
+                <div className="text-[12px] opacity-80 mb-2">{t('Noch keine Quelle von diesem Computer. Wähle einen Ordner oder eine einzelne Datei.')}</div>
               )}
               {macSources.map(card)}
               {inApp ? (
                 <div className="flex gap-2 mt-3">
-                  <button className="gbtn primary" disabled={full} onClick={() => void startAdd('folder')}>Ordner hinzufügen</button>
-                  <button className="gbtn" disabled={full} onClick={() => void startAdd('file')}>Einzelne Datei hinzufügen</button>
+                  <button className="gbtn primary" disabled={full} onClick={() => void startAdd('folder')}>{t('Ordner hinzufügen')}</button>
+                  <button className="gbtn" disabled={full} onClick={() => void startAdd('file')}>{t('Einzelne Datei hinzufügen')}</button>
                 </div>
               ) : (
-                <div className="text-[12px] opacity-80 mt-2">Ordner und Dateien von diesem Computer lassen sich nur in der App auswählen, nicht im Browser.</div>
+                <div className="text-[12px] opacity-80 mt-2">{t('Ordner und Dateien von diesem Computer lassen sich nur in der App auswählen, nicht im Browser.')}</div>
               )}
               {quota && (
                 <div className="text-[11px] opacity-65 mt-2">
-                  {quota.sources} von höchstens {quota.max_sources} Quellen angelegt.{full ? ' Entferne eine Quelle, um eine neue anzulegen.' : ''}
+                  {t('{n} von höchstens {max} Quellen angelegt.', { n: quota.sources, max: quota.max_sources })}{full ? ` ${t('Entferne eine Quelle, um eine neue anzulegen.')}` : ''}
                 </div>
               )}
             </Group>
@@ -287,24 +289,24 @@ export function FilesTile({ ask }: { ask: AskConfirm }) {
 
       {dialog?.type === 'add' && (
         <NameDialog
-          title={dialog.picked.kind === 'folder' ? 'Ordner als Quelle anlegen' : 'Datei als Quelle anlegen'}
+          title={dialog.picked.kind === 'folder' ? t('Ordner als Quelle anlegen') : t('Datei als Quelle anlegen')}
           intro={
             <>
-              Unter diesem Namen sieht Claude die Quelle. Gewählt: <b>{dialog.picked.name}</b>. Der Ort auf deinem Computer bleibt hier gespeichert und geht nie an den Server. Angelegt wird nur der Name, freigegeben wird noch nichts.
+              {t('Unter diesem Namen sieht Claude die Quelle. Gewählt:')} <b>{dialog.picked.name}</b>{t('. Der Ort auf deinem Computer bleibt hier gespeichert und geht nie an den Server. Angelegt wird nur der Name, freigegeben wird noch nichts.')}
             </>
           }
           initial={dialog.picked.name.replace(/\.(md|txt)$/i, '')}
-          confirmLabel="Quelle anlegen"
+          confirmLabel={t('Quelle anlegen')}
           onSubmit={(name) => create(dialog.picked, name)}
           onClose={() => setDialog(null)}
         />
       )}
       {dialog?.type === 'rename' && (
         <NameDialog
-          title="Quelle umbenennen"
-          intro="Unter dem neuen Namen sieht Claude die Quelle."
+          title={t('Quelle umbenennen')}
+          intro={t('Unter dem neuen Namen sieht Claude die Quelle.')}
           initial={dialog.source.label}
-          confirmLabel="Umbenennen"
+          confirmLabel={t('Umbenennen')}
           onSubmit={(name) => rename(dialog.source, name)}
           onClose={() => setDialog(null)}
         />

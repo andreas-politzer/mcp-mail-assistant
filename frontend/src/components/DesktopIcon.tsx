@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { useRef, useState, type ReactNode } from 'react'
 
 const DRAG_THRESHOLD = 4
@@ -30,7 +31,7 @@ export function DesktopIcon({
   return (
     <button
       type="button"
-      title="Doppelklick zum Öffnen, ziehen zum Verschieben"
+      title={t('Doppelklick zum Öffnen, ziehen zum Verschieben')}
       className="absolute flex flex-col items-center gap-1 w-24 py-1 select-none outline-none touch-none"
       style={{ left: x, top: y, zIndex, transform: delta ? `translate(${delta.dx}px, ${delta.dy}px)` : undefined, cursor: delta ? 'grabbing' : 'default' }}
       onPointerDown={(e) => {

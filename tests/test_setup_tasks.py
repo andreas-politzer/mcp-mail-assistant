@@ -650,3 +650,14 @@ def test_a_temporary_place_is_reported_and_blocks_connecting(env, command):
 )
 def test_normal_places_are_fine(command):
     assert tasks.install_problem(command) is None
+
+
+def test_test_mail_language_follows_the_request(sink, env):
+    b = tasks.Mailbox("me@example.org", "127.0.0.1", sink.port, "none")
+    tasks._write_private(tasks._folder(env) / tasks.MAILBOX_FILE, json.dumps(tasks.asdict(b)))
+    e = {**env, "OUTBOX_SMTP_PASSWORD": PASSWORD}
+    tasks.send_test_mail(e, "you@example.org", False)
+    tasks.send_test_mail(e, "you@example.org", False, lang="en")
+    german, english = (m.content.decode("utf-8", "replace") if isinstance(m.content, bytes) else str(m.content) for m in sink.messages)
+    assert "Testmail von Mail Assistant" in german
+    assert "Test mail from Mail Assistant" in english

@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
@@ -162,7 +163,7 @@ function List({ entries, depth, open, setOpen, run }: ListProps) {
                 onClick={() => setOpen(isOpen ? open.slice(0, depth) : [...open.slice(0, depth), e.key])}
               >
                 <span className="w-8" />
-                <span className="flex-1">{e.label}</span>
+                <span className="flex-1">{t(e.label)}</span>
                 <span>▸</span>
               </button>
               {isOpen && (
@@ -181,7 +182,7 @@ function List({ entries, depth, open, setOpen, run }: ListProps) {
             onClick={() => run(e.id)}
           >
             <span className="w-8 flex justify-center">{e.sprite && <PixelSprite rows={e.sprite.rows} palette={e.sprite.palette} scale={2} />}</span>
-            {e.label}
+            {t(e.label)}
           </button>
         )
       })}
@@ -207,10 +208,10 @@ export function StartMenu({ onCommand, onClose, local = false }: { onCommand: (c
           </span>
         </div>
         <div className="flex-1 py-1">
-          <div className="px-2 py-1 text-[11px] italic opacity-80" onMouseEnter={() => setOpen([])}>Willkommen zurück, Internetreisender!</div>
+          <div className="px-2 py-1 text-[11px] italic opacity-80" onMouseEnter={() => setOpen([])}>{t('Willkommen zurück, Internetreisender!')}</div>
           {SEP}
           <List entries={menu(local)} depth={0} open={open} setOpen={setOpen} run={run} />
-          <div className="px-2 pt-1 pb-0.5 text-[10px] italic opacity-70 border-t border-black/20 mt-1" onMouseEnter={() => setOpen([])}>{saying}</div>
+          <div className="px-2 pt-1 pb-0.5 text-[10px] italic opacity-70 border-t border-black/20 mt-1" onMouseEnter={() => setOpen([])}>{t(saying)}</div>
         </div>
       </div>
     </>

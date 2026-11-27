@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Assistant } from '../components/Assistant'
+import { locale, t, useLang } from '../i18n'
+import { LangSwitch } from '../i18n/LangSwitch'
 import { Postwurf } from '../components/Postwurf'
 import { BLOB, PixelSprite } from '../components/PixelSprite'
 import { WallpaperLayer } from '../components/Desktop'
@@ -44,20 +46,28 @@ function ExtLink({ backend, url, children }: { backend: SetupBackend; url: strin
       <button type="button" className="linkbtn" onClick={() => void backend.openLink(url)}>
         {children}
       </button>{' '}
-      <span className="text-[11px]">(öffnet im Browser)</span>
+      <span className="text-[11px]">{t('(öffnet im Browser)')}</span>
     </>
   )
 }
 
-const dayOf = (t: number) => new Date(t * 1000).toLocaleDateString('de-DE')
+const dayOf = (t: number) => new Date(t * 1000).toLocaleDateString(locale())
 // "Bereits eingerichtet: MacBook (angelegt am ...)": neutral on purpose, it does not say which device holds the passkey.
-export const knownPasskeys = (list: { name: string; created_at: number }[] | undefined, count: number) => {
-  if (!list || list.length === 0) return `Bereits eingerichtet: ${count} ${count === 1 ? 'Passkey' : 'Passkeys'}. Du musst hier nichts mehr tun.`
-  const parts = list.map((k) => `${k.name || 'ohne Namen'} (angelegt am ${dayOf(k.created_at)})`)
-  return `Bereits eingerichtet: ${parts.join(', ')}. Du musst hier nichts mehr tun.`
+export const knownPasskeys = (list: { name: string; created_at: number }[] | undefined, count: number, closing = true) => {
+  if (!closing) {
+    if (!list || list.length === 0) return count === 1 ? t('Bereits eingerichtet: {count} Passkey.', { count }) : t('Bereits eingerichtet: {count} Passkeys.', { count })
+    return t('Bereits eingerichtet: {list}.', { list: list.map((k) => t('{name} (angelegt am {date})', { name: k.name || t('ohne Namen'), date: dayOf(k.created_at) })).join(', ') })
+  }
+  if (!list || list.length === 0)
+    return count === 1
+      ? t('Bereits eingerichtet: {count} Passkey. Du musst hier nichts mehr tun.', { count })
+      : t('Bereits eingerichtet: {count} Passkeys. Du musst hier nichts mehr tun.', { count })
+  const parts = list.map((k) => t('{name} (angelegt am {date})', { name: k.name || t('ohne Namen'), date: dayOf(k.created_at) }))
+  return t('Bereits eingerichtet: {list}. Du musst hier nichts mehr tun.', { list: parts.join(', ') })
 }
 
 export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onDone: () => void; onSkip?: () => void }) {
+  useLang() // redraw when the language is switched
   const [step, setStep] = useState<StepId>('where')
   const [tip, setTip] = useState(0)
   const [where, setWhere] = useState<'here' | 'phone'>('here')
@@ -114,7 +124,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   const index = steps.indexOf(step)
   const preset = providerId ? presetFor(providerId) : null
   const hints = HINTS[step]
-  const hint = hints[Math.min(tip, hints.length - 1)]
+  const hint = t(hints[Math.min(tip, hints.length - 1)])
 
   const go = (to: StepId) => {
     setStep(to)
@@ -172,8 +182,8 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
       setHost(st.mailbox.host)
       setPort(String(st.mailbox.port))
       setSecurity(st.mailbox.security)
-      if (st.password_stored) setPwStatus({ kind: 'ok', text: 'Das Passwort liegt schon im Schlüsselbund. Du kannst weitergehen oder es neu eingeben.' })
-      if (st.claude_connected) setClaudeStatus({ kind: 'ok', text: 'Claude Desktop ist schon verbunden.' })
+      if (st.password_stored) setPwStatus({ kind: 'ok', text: t('Das Passwort liegt schon im Schlüsselbund. Du kannst weitergehen oder es neu eingeben.') })
+      if (st.claude_connected) setClaudeStatus({ kind: 'ok', text: t('Claude Desktop ist schon verbunden.') })
       setPasskeys(st.passkeys)
       if (st.passkeys > 0) setPkStatus({ kind: 'ok', text: knownPasskeys(st.passkey_list, st.passkeys) })
     })
@@ -212,7 +222,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     setPwStatus({ kind: 'busy' })
     const r = await backend.saveMailbox({ email: email.trim(), host: host.trim(), port: portNumber, security }, p)
     if (r.ok) {
-      setPwStatus({ kind: 'ok', text: 'Passwort im Schlüsselbund gespeichert, Anmeldung beim Anbieter geklappt.' })
+      setPwStatus({ kind: 'ok', text: t('Passwort im Schlüsselbund gespeichert, Anmeldung beim Anbieter geklappt.') })
     } else {
       setPwStatus({ kind: 'fail', text: r.reason })
       pwInput.current?.focus()
@@ -224,7 +234,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     setTestStatus({ kind: 'busy' })
     const r = await backend.sendTestMail(testTo.trim(), markOwn)
     if (r.ok) setTestSkipped(false)
-    setTestStatus(r.ok ? { kind: 'ok', text: `Testmail an ${testTo.trim()} ist raus. Schau in dein Postfach.` } : { kind: 'fail', text: r.reason })
+    setTestStatus(r.ok ? { kind: 'ok', text: t('Testmail an {to} ist raus. Schau in dein Postfach.', { to: testTo.trim() }) } : { kind: 'fail', text: r.reason })
   }
 
   const getPasskeyLink = async () => {
@@ -241,8 +251,8 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     setPkStatus({
       kind: 'ok',
       text: opened.ok
-        ? 'Die Seite wurde im Browser geöffnet. Lege dort den Passkey an und klicke danach hier auf „Prüfen“. Der Link gilt einmal, 10 Minuten.'
-        : `${opened.reason} Der Link gilt einmal, 10 Minuten.`,
+        ? t('Die Seite wurde im Browser geöffnet. Lege dort den Passkey an und klicke danach hier auf „Prüfen“. Der Link gilt einmal, 10 Minuten.')
+        : `${opened.reason} ${t('Der Link gilt einmal, 10 Minuten.')}`,
     })
   }
 
@@ -253,8 +263,8 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     setPasskeys(st.passkeys)
     setPkStatus(
       st.passkeys > 0
-        ? { kind: 'ok', text: 'Passkey ist registriert. Mails an andere kannst du ab jetzt freigeben.' }
-        : { kind: 'fail', text: 'Es ist noch kein Passkey registriert. Hast du den Vorgang im Browser abgeschlossen?' },
+        ? { kind: 'ok', text: t('Passkey ist registriert. Mails an andere kannst du ab jetzt freigeben.') }
+        : { kind: 'fail', text: t('Es ist noch kein Passkey registriert. Hast du den Vorgang im Browser abgeschlossen?') },
     )
   }
 
@@ -276,9 +286,9 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     if (r.ok) {
       setTunnelResult({
         kind: 'ok',
-        text: `Der Tunnel steht: ${r.address}. ${
-          r.passphrase_placeholder ? 'Anmelden vom Handy geht erst mit einer Passphrase, die kommt im nächsten Schritt. ' : ''
-        }Ob dein Handy durchkommt, zeigt sich erst dort; geprüft wurde bisher von diesem Computer aus.`,
+        text: `${t('Der Tunnel steht: {address}.', { address: r.address })} ${
+          r.passphrase_placeholder ? t('Anmelden vom Handy geht erst mit einer Passphrase, die kommt im nächsten Schritt.') + ' ' : ''
+        }${t('Ob dein Handy durchkommt, zeigt sich erst dort; geprüft wurde bisher von diesem Computer aus.')}`,
       })
     } else {
       setTunnelResult({ kind: 'fail', text: r.reason })
@@ -315,8 +325,8 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     setOffStatus({
       kind: 'ok',
       text: r.removed
-        ? 'Der Handy-Zugang ist abgeschaltet. Dein Computer ist wieder nur für dich erreichbar.'
-        : 'Es war nichts mehr eingerichtet. Du bist schon bei „Nur an diesem Computer“.',
+        ? t('Der Handy-Zugang ist abgeschaltet. Dein Computer ist wieder nur für dich erreichbar.')
+        : t('Es war nichts mehr eingerichtet. Du bist schon bei „Nur an diesem Computer“.'),
     })
   }
 
@@ -361,14 +371,14 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     setPhoneKeyLink(r.url)
     setPhoneKeyStatus({
       kind: 'ok',
-      text: 'Der Link gilt einmal, 10 Minuten. Öffne ihn auf dem Handy und lege dort den Passkey an. Klicke danach hier auf „Prüfen“.',
+      text: t('Der Link gilt einmal, 10 Minuten. Öffne ihn auf dem Handy und lege dort den Passkey an. Klicke danach hier auf „Prüfen“.'),
     })
   }
 
   const checkPhoneKey = async () => {
     if (phoneKeyStatus.kind === 'busy') return
     if (phoneKeyLink === null) {
-      setPhoneKeyStatus({ kind: 'fail', text: 'Erzeuge zuerst den Link und öffne ihn auf dem Handy.' })
+      setPhoneKeyStatus({ kind: 'fail', text: t('Erzeuge zuerst den Link und öffne ihn auf dem Handy.') })
       return
     }
     setPhoneKeyStatus({ kind: 'busy' })
@@ -376,11 +386,11 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     setPasskeys(st.passkeys)
     if (st.passkeys > phoneKeysBefore) {
       setPhoneKeyDone(true)
-      setPhoneKeyStatus({ kind: 'ok', text: 'Der Passkey am Handy ist registriert. Mails an andere gibst du ab jetzt auch dort frei.' })
+      setPhoneKeyStatus({ kind: 'ok', text: t('Der Passkey am Handy ist registriert. Mails an andere gibst du ab jetzt auch dort frei.') })
     } else {
       setPhoneKeyStatus({
         kind: 'fail',
-        text: 'Es ist noch kein neuer Passkey registriert. Hast du den Vorgang auf dem Handy abgeschlossen? Der Link gilt 10 Minuten, danach erzeuge einen neuen.',
+        text: t('Es ist noch kein neuer Passkey registriert. Hast du den Vorgang auf dem Handy abgeschlossen? Der Link gilt 10 Minuten, danach erzeuge einen neuen.'),
       })
     }
   }
@@ -397,10 +407,10 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
         if (phone && st.passkeys > phoneKeysBefore) {
           setPasskeys(st.passkeys)
           setPhoneKeyDone(true)
-          setPhoneKeyStatus({ kind: 'ok', text: 'Der Passkey am Handy ist registriert. Mails an andere gibst du ab jetzt auch dort frei.' })
+          setPhoneKeyStatus({ kind: 'ok', text: t('Der Passkey am Handy ist registriert. Mails an andere gibst du ab jetzt auch dort frei.') })
         } else if (desk && st.passkeys > 0) {
           setPasskeys(st.passkeys)
-          setPkStatus({ kind: 'ok', text: 'Passkey ist registriert. Mails an andere kannst du ab jetzt freigeben.' })
+          setPkStatus({ kind: 'ok', text: t('Passkey ist registriert. Mails an andere kannst du ab jetzt freigeben.') })
         }
       })
     }, 3000)
@@ -414,7 +424,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     if (claudeStatus.kind === 'busy') return
     setClaudeStatus({ kind: 'busy' })
     const r = await backend.connectClaude()
-    setClaudeStatus(r.ok ? { kind: 'ok', text: 'Verbunden. Claude Desktop jetzt ganz beenden und neu starten.' } : { kind: 'fail', text: r.reason })
+    setClaudeStatus(r.ok ? { kind: 'ok', text: t('Verbunden. Claude Desktop jetzt ganz beenden und neu starten.') } : { kind: 'fail', text: r.reason })
   }
 
   const disconnectClaude = async () => {
@@ -423,7 +433,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
     const r = await backend.disconnectClaude()
     if (r.ok) {
       setClaudeStatus(IDLE)
-      setRemoveStatus({ kind: 'ok', text: 'Die Verbindung zu Claude Desktop ist entfernt. Deine Empfänger und Einstellungen bleiben erhalten. Claude Desktop jetzt ganz beenden (Cmd+Q) und neu starten.' })
+      setRemoveStatus({ kind: 'ok', text: t('Die Verbindung zu Claude Desktop ist entfernt. Deine Empfänger und Einstellungen bleiben erhalten. Claude Desktop jetzt ganz beenden (Cmd+Q) und neu starten.') })
     } else {
       setRemoveStatus({ kind: 'fail', text: r.reason })
     }
@@ -471,7 +481,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
   const statusLine = (s: Status) =>
     s.kind === 'idle' ? null : (
       <div className="mt-2 text-[12px]" role={s.kind === 'fail' ? 'alert' : 'status'} style={{ color: s.kind === 'fail' ? '#a01020' : s.kind === 'ok' ? '#0a6a2a' : '#1d1d2b' }}>
-        {s.kind === 'busy' ? 'Einen Moment …' : s.text}
+        {s.kind === 'busy' ? t('Einen Moment …') : s.text}
       </div>
     )
 
@@ -483,29 +493,29 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
         className="absolute flex flex-col items-center gap-1 w-24 py-1 select-none outline-none"
         style={{ left: 20, bottom: 20, zIndex: 31 }}
         onClick={() => setGameOpen(true)}
-        title="Wenn du eine Pause brauchst"
+        title={t('Wenn du eine Pause brauchst')}
       >
         <PixelSprite rows={BLOB.rows} palette={BLOB.palette} scale={3} />
-        <span className="text-[12px] px-1.5 text-white" style={{ background: '#0a246a' }}>Alienalarm</span>
+        <span className="text-[12px] px-1.5 text-white" style={{ background: '#0a246a' }}>{t('Alienalarm')}</span>
       </button>
       {gameOpen && <Postwurf onClose={() => setGameOpen(false)} initial={{ x: Math.max(8, Math.round(window.innerWidth / 2 - 200)), y: 24 }} />}
-      <div className="relative" style={{ width: 480, ...FRAME }} role="dialog" aria-label="Einrichtung">
+      <div className="relative" style={{ width: 480, ...FRAME }} role="dialog" aria-label={t('Einrichtung')}>
         <div className="px-2 py-0.5 m-0.5 select-none font-bold text-[13px] flex" style={{ background: 'linear-gradient(90deg, #0a246a, #3a6ea5)', color: '#fff' }}>
-          <span className="flex-1">Einrichtung – Mail Assistant</span>
-          <span className="font-normal">Schritt {index + 1} von {steps.length}</span>
+          <span className="flex-1">{t('Einrichtung – Mail Assistant')}</span>
+          <span className="font-normal">{t('Schritt {n} von {total}', { n: index + 1, total: steps.length })}</span>
         </div>
 
         <div className="p-4 text-[13px] leading-relaxed" style={{ minHeight: 300 }}>
           {step === 'where' && (
             <>
-              <div className="font-bold mb-2">{againMode ? 'Mail Assistant ist eingerichtet' : 'Wo willst du Mail Assistant benutzen?'}</div>
+              <div className="font-bold mb-2">{againMode ? t('Mail Assistant ist eingerichtet') : t('Wo willst du Mail Assistant benutzen?')}</div>
               <label className="flex gap-2 mb-2 cursor-pointer">
                 <input type="radio" name="where" checked={where === 'here'} onChange={() => setWhere('here')} />
                 <span>
-                  <b>Nur an diesem Computer</b>
-                  {phoneState && !phoneState.enabled ? ' (aktuell)' : ''}
+                  <b>{t('Nur an diesem Computer')}</b>
+                  {phoneState && !phoneState.enabled ? ` ${t('(aktuell)')}` : ''}
                   <br />
-                  Du schreibst mit Claude Desktop auf diesem Rechner. Mehr brauchst du nicht.
+                  {t('Du schreibst mit Claude Desktop auf diesem Rechner. Mehr brauchst du nicht.')}
                 </span>
               </label>
               <label className="flex gap-2 mb-2 cursor-pointer">
@@ -519,78 +529,78 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   }}
                 />
                 <span>
-                  <b>Auch vom Handy aus</b>
-                  {phoneState?.enabled ? ' (aktuell)' : ''}
+                  <b>{t('Auch vom Handy aus')}</b>
+                  {phoneState?.enabled ? ` ${t('(aktuell)')}` : ''}
                   <br />
-                  Für die Claude-App auf iPhone oder Android. Der Computer muss dafür eingeschaltet sein. Du kannst den Handy-Zugang auch später einrichten.
+                  {t('Für die Claude-App auf iPhone oder Android. Der Computer muss dafür eingeschaltet sein. Du kannst den Handy-Zugang auch später einrichten.')}
                 </span>
               </label>
               {where === 'phone' && (
                 <fieldset className="mt-2 p-2 text-[12px]" style={{ border: '2px groove #fff' }}>
-                  <legend className="px-1">Zugangsweg fürs Handy</legend>
+                  <legend className="px-1">{t('Zugangsweg fürs Handy')}</legend>
                   <label className="flex gap-2 mb-2 cursor-pointer">
                     <input type="radio" name="via" checked readOnly />
                     <span>
                       <b>Tailscale Funnel</b>
-                      {phoneState?.enabled ? ' (aktiv)' : ''}
+                      {phoneState?.enabled ? ` ${t('(aktiv)')}` : ''}
                       <br />
-                      Kostenlos für den privaten Gebrauch. Keine Warnseite. Die Adresse enthält den Namen deines Computers.
+                      {t('Kostenlos für den privaten Gebrauch. Keine Warnseite. Die Adresse enthält den Namen deines Computers.')}
                     </span>
                   </label>
                   <label className="flex gap-2 mb-2" style={{ opacity: 0.5 }}>
                     <input type="radio" name="via" disabled />
                     <span>
-                      <b>ngrok</b> (kommt bald)
+                      <b>ngrok</b> {t('(kommt bald)')}
                       <br />
-                      Kostenlos. Weniger Einrichtung, neutrale Adresse. Einmal pro Browser eine Warnseite beim Anmelden.
+                      {t('Kostenlos. Weniger Einrichtung, neutrale Adresse. Einmal pro Browser eine Warnseite beim Anmelden.')}
                     </span>
                   </label>
                   <label className="flex gap-2 mb-2" style={{ opacity: 0.5 }}>
                     <input type="radio" name="via" disabled />
                     <span>
-                      <b>Cloudflare Tunnel, eigene Domain</b> (kommt bald)
+                      <b>{t('Cloudflare Tunnel, eigene Domain')}</b> {t('(kommt bald)')}
                       <br />
-                      Der Tunnel ist kostenlos. Du brauchst eine eigene Domain, z. B. mail.deinname.de, und sie muss bei Cloudflare liegen. Hast du noch keine, kaufst du sie bei einem Anbieter.
+                      {t('Der Tunnel ist kostenlos. Du brauchst eine eigene Domain, z. B. mail.deinname.de, und sie muss bei Cloudflare liegen. Hast du noch keine, kaufst du sie bei einem Anbieter.')}
                     </span>
                   </label>
-                  <div>Ein späterer Wechsel ändert die Adresse. Die Anmeldung am Handy muss dann neu eingerichtet werden.</div>
+                  <div>{t('Ein späterer Wechsel ändert die Adresse. Die Anmeldung am Handy muss dann neu eingerichtet werden.')}</div>
                 </fieldset>
               )}
               {where === 'phone' && !phoneState?.enabled && (
                 <div className="mt-2 p-2 text-[12px]" style={{ background: '#ffffe1', border: '1px solid #000' }}>
                   {jumpToTunnel
-                    ? `Die Schritte 2 bis ${STEPS_PHONE.indexOf('tunnel')} sind schon erledigt. Es geht gleich bei Schritt ${STEPS_PHONE.indexOf('tunnel') + 1} weiter. Dafür brauchst du ein Tailscale-Konto.`
-                    : `Dafür brauchst du ein Tailscale-Konto. Den Tunnel richtest du erst in Schritt ${STEPS_PHONE.indexOf('tunnel') + 1} ein.`}
+                    ? t('Die Schritte 2 bis {to} sind schon erledigt. Es geht gleich bei Schritt {next} weiter. Dafür brauchst du ein Tailscale-Konto.', { to: STEPS_PHONE.indexOf('tunnel'), next: STEPS_PHONE.indexOf('tunnel') + 1 })
+                    : t('Dafür brauchst du ein Tailscale-Konto. Den Tunnel richtest du erst in Schritt {step} ein.', { step: STEPS_PHONE.indexOf('tunnel') + 1 })}
                 </div>
               )}
               {phoneState?.traces && !phoneState.enabled && !offDone && !offOpen && (
                 <div className="mt-2 p-2 text-[12px] flex items-center gap-2" style={{ border: '2px groove #fff' }}>
-                  <span className="flex-1">Es gibt noch Reste eines Handy-Zugangs.</span>
+                  <span className="flex-1">{t('Es gibt noch Reste eines Handy-Zugangs.')}</span>
                   <button type="button" className="bevel" onClick={() => setOffOpen(true)}>
-                    Reste entfernen …
+                    {t('Reste entfernen …')}
                   </button>
                 </div>
               )}
               {warningOpen && phoneState && (
-                <div className="mt-2 p-2 text-[12px]" style={{ border: '2px groove #fff' }} role="group" aria-label="Handy-Zugang abschalten">
+                <div className="mt-2 p-2 text-[12px]" style={{ border: '2px groove #fff' }} role="group" aria-label={t('Handy-Zugang abschalten')}>
                   <div className="font-bold mb-1">
-                    {phoneState.enabled ? 'Der Handy-Zugang ist noch eingerichtet.' : 'Es gibt noch Reste eines Handy-Zugangs.'}
+                    {phoneState.enabled ? t('Der Handy-Zugang ist noch eingerichtet.') : t('Es gibt noch Reste eines Handy-Zugangs.')}
                   </div>
                   <div className="mb-2" style={{ color: '#a01020' }}>
-                    „Weiter“ geht erst, wenn du den Handy-Zugang abschaltest{phoneState.enabled ? ' oder oben wieder „Auch vom Handy aus“ wählst, um ihn zu behalten' : ''}.
+                    {t('„Weiter“ geht erst, wenn du den Handy-Zugang abschaltest')}{phoneState.enabled ? ` ${t('oder oben wieder „Auch vom Handy aus“ wählst, um ihn zu behalten')}` : ''}.
                   </div>
-                  <div className="mb-1">Wenn du ihn abschaltest:</div>
+                  <div className="mb-1">{t('Wenn du ihn abschaltest:')}</div>
                   <ul className="list-disc pl-5 mb-2">
-                    <li>Die öffentliche Adresse wird abgeschaltet. Die Claude-App auf dem Handy erreicht deinen Computer dann nicht mehr.</li>
-                    <li>Alle Anmeldungen am Handy enden, die Passphrase wird ungültig.</li>
-                    <li>Die Adresse ist an Passkey und Connector gebunden. Schaltest du den Handy-Zugang später wieder ein, brauchst du eine neue Passphrase, einen neuen Connector-Eintrag und einen neuen Passkey am Handy.</li>
-                    <li>Den Connector-Eintrag in claude.ai kann diese App nicht löschen. Entferne ihn dort selbst unter Einstellungen → Connectors.</li>
-                    <li>Dein alter Handy-Passkey bleibt in der Passkey-Kachel der Verwaltung gespeichert. Dort kannst du ihn bei Bedarf entfernen (es sind insgesamt höchstens 2 Passkeys möglich).</li>
+                    <li>{t('Die öffentliche Adresse wird abgeschaltet. Die Claude-App auf dem Handy erreicht deinen Computer dann nicht mehr.')}</li>
+                    <li>{t('Alle Anmeldungen am Handy enden, die Passphrase wird ungültig.')}</li>
+                    <li>{t('Die Adresse ist an Passkey und Connector gebunden. Schaltest du den Handy-Zugang später wieder ein, brauchst du eine neue Passphrase, einen neuen Connector-Eintrag und einen neuen Passkey am Handy.')}</li>
+                    <li>{t('Den Connector-Eintrag in claude.ai kann diese App nicht löschen. Entferne ihn dort selbst unter Einstellungen → Connectors.')}</li>
+                    <li>{t('Dein alter Handy-Passkey bleibt in der Passkey-Kachel der Verwaltung gespeichert. Dort kannst du ihn bei Bedarf entfernen (es sind insgesamt höchstens 2 Passkeys möglich).')}</li>
                   </ul>
-                  <div className="mb-2">Postfach, Empfänger und der Passkey dieses Computers bleiben. An Tailscale selbst ändert sich nichts.</div>
+                  <div className="mb-2">{t('Postfach, Empfänger und der Passkey dieses Computers bleiben. An Tailscale selbst ändert sich nichts.')}</div>
                   <label className="flex gap-2 mb-2 cursor-pointer">
                     <input type="checkbox" checked={offConfirmed} disabled={offStatus.kind === 'busy'} onChange={(e) => setOffConfirmed(e.target.checked)} />
-                    <span>Ja, den Handy-Zugang abschalten.</span>
+                    <span>{t('Ja, den Handy-Zugang abschalten.')}</span>
                   </label>
                   <div className="flex justify-end gap-2">
                     <button
@@ -604,13 +614,13 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                         if (phoneState.enabled) setWhere('phone')
                       }}
                     >
-                      Abbrechen
+                      {t('Abbrechen')}
                     </button>
                     <button type="button" className="bevel font-bold" disabled={!offConfirmed || offStatus.kind === 'busy'} onClick={() => void turnOffPhone()}>
-                      Handy-Zugang abschalten
+                      {t('Handy-Zugang abschalten')}
                     </button>
                   </div>
-                  {!offConfirmed && offStatus.kind !== 'busy' && <div className="mt-1 text-right">Setze zuerst das Häkchen.</div>}
+                  {!offConfirmed && offStatus.kind !== 'busy' && <div className="mt-1 text-right">{t('Setze zuerst das Häkchen.')}</div>}
                 </div>
               )}
               {statusLine(offStatus)}
@@ -619,34 +629,34 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               ))}
               {offDone && (
                 <div className="mt-2 text-[12px]">
-                  <div className="mb-1">Entferne jetzt noch den Connector „Mail Assistant“ in claude.ai, falls du ihn dort eingetragen hattest.</div>
+                  <div className="mb-1">{t('Entferne jetzt noch den Connector „Mail Assistant“ in claude.ai, falls du ihn dort eingetragen hattest.')}</div>
                   <div className="flex justify-end">
                     <button type="button" className="bevel" onClick={() => void backend.openLink('https://claude.ai/settings/connectors')}>
-                      Einstellungen öffnen
+                      {t('Einstellungen öffnen')}
                     </button>
                   </div>
                 </div>
               )}
-              {againMode && !warningOpen && !jumpToTunnel && <div className="mt-2 text-[12px]">Mit „Weiter“ kannst du deine Einstellungen Schritt für Schritt prüfen oder ändern.</div>}
-              {!againMode && <div className="mt-2 text-[12px]">Du kannst das später ändern: Startmenü → „Einrichtungs-Wizard …“.</div>}
+              {againMode && !warningOpen && !jumpToTunnel && <div className="mt-2 text-[12px]">{t('Mit „Weiter“ kannst du deine Einstellungen Schritt für Schritt prüfen oder ändern.')}</div>}
+              {!againMode && <div className="mt-2 text-[12px]">{t('Du kannst das später ändern: Startmenü → „Einrichtungs-Wizard …“.')}</div>}
             </>
           )}
 
           {step === 'mailbox' && (
             <>
-              <div className="font-bold mb-2">Von welcher Adresse sollen die Mails kommen?</div>
-              <label className="block mb-1" htmlFor="wz-email">E-Mail-Adresse:</label>
+              <div className="font-bold mb-2">{t('Von welcher Adresse sollen die Mails kommen?')}</div>
+              <label className="block mb-1" htmlFor="wz-email">{t('E-Mail-Adresse:')}</label>
               <input id="wz-email" type="email" autoComplete="off" spellCheck={false} value={email} onChange={(e) => onEmail(e.target.value)} className="w-full px-1.5 py-1 bg-white mb-3" style={INPUT} />
-              <label className="block mb-1" htmlFor="wz-provider">Anbieter:</label>
+              <label className="block mb-1" htmlFor="wz-provider">{t('Anbieter:')}</label>
               <select id="wz-provider" value={providerId} onChange={(e) => pickProvider(e.target.value)} className="w-full px-1.5 py-1 bg-white mb-3" style={INPUT}>
-                <option value="" disabled>Bitte wählen …</option>
+                <option value="" disabled>{t('Bitte wählen …')}</option>
                 {PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
+                  <option key={p.id} value={p.id}>{t(p.label)}</option>
                 ))}
               </select>
  {blocked && (
                 <div className="mb-3 p-2 text-[12px]" role="alert" style={{ background: '#ffffe1', border: '1px solid #000' }}>
-                  {blocked}
+                  {t(blocked)}
                 </div>
               )}
               {providerId !== '' && (
@@ -660,7 +670,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                     <input id="wz-port" inputMode="numeric" value={port} readOnly={providerId !== 'other'} onChange={(e) => setPort(e.target.value.replace(/\D/g, ''))} className="w-full px-1.5 py-1 bg-white" style={{ ...INPUT, opacity: providerId === 'other' ? 1 : 0.75 }} />
                   </div>
                   <div>
-                    <label className="block mb-1" htmlFor="wz-sec">Verschlüsselung:</label>
+                    <label className="block mb-1" htmlFor="wz-sec">{t('Verschlüsselung:')}</label>
                     <select id="wz-sec" value={security} disabled={providerId !== 'other'} onChange={(e) => setSecurity(e.target.value as Security)} className="w-full px-1 py-1 bg-white" style={INPUT}>
                       <option value="starttls">STARTTLS</option>
                       <option value="ssl">SSL/TLS</option>
@@ -678,9 +688,9 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                 void checkPassword()
               }}
             >
-              <div className="font-bold mb-2">Passwort für {email.trim()}</div>
-              {preset && <div className="mb-3 text-[12px]">{preset.passwordNote}</div>}
-              <label className="block mb-1" htmlFor="wz-pw">Passwort:</label>
+              <div className="font-bold mb-2">{t('Passwort für {email}', { email: email.trim() })}</div>
+              {preset && <div className="mb-3 text-[12px]">{t(preset.passwordNote)}</div>}
+              <label className="block mb-1" htmlFor="wz-pw">{t('Passwort:')}</label>
               <div className="flex gap-1">
               <input
                 id="wz-pw"
@@ -702,9 +712,9 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               <button
                 type="button"
                 className="bevel"
-                aria-label={showPw ? 'Passwort verbergen' : 'Passwort anzeigen'}
+                aria-label={showPw ? t('Passwort verbergen') : t('Passwort anzeigen')}
                 aria-pressed={showPw}
-                title={showPw ? 'Passwort verbergen' : 'Passwort anzeigen'}
+                title={showPw ? t('Passwort verbergen') : t('Passwort anzeigen')}
                 onClick={() => setShowPw((v) => !v)}
               >
                 {showPw ? '🙈' : '👁'}
@@ -712,7 +722,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               </div>
               <div className="flex justify-end mt-2">
                 <button type="submit" className="bevel font-bold" disabled={!password || pwStatus.kind === 'busy'}>
-                  Speichern und prüfen
+                  {t('Speichern und prüfen')}
                 </button>
               </div>
               {statusLine(pwStatus)}
@@ -721,19 +731,19 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
 
           {step === 'test' && (
             <>
-              <div className="font-bold mb-2">Testmail an dich selbst</div>
-              <label className="block mb-1" htmlFor="wz-to">Empfänger:</label>
+              <div className="font-bold mb-2">{t('Testmail an dich selbst')}</div>
+              <label className="block mb-1" htmlFor="wz-to">{t('Empfänger:')}</label>
               <input id="wz-to" type="email" spellCheck={false} value={testTo} onChange={(e) => { setTestTo(e.target.value); if (testStatus.kind !== 'idle') setTestStatus(IDLE) }} className="w-full px-1.5 py-1 bg-white mb-2" style={INPUT} />
               <label className="flex gap-2 mb-3 cursor-pointer">
                 <input type="checkbox" checked={markOwn} onChange={(e) => setMarkOwn(e.target.checked)} />
-                <span>Das ist meine eigene Adresse. Mails an sie darf Claude im Chat freigeben; an alle anderen nur ich selbst.</span>
+                <span>{t('Das ist meine eigene Adresse. Mails an sie darf Claude im Chat freigeben; an alle anderen nur ich selbst.')}</span>
               </label>
               <div className="flex justify-end gap-2">
                 <button type="button" className="bevel" disabled={testStatus.kind === 'busy'} onClick={() => { setTestSkipped(true); go('claude') }}>
-                  Überspringen
+                  {t('Überspringen')}
                 </button>
                 <button type="button" className="bevel font-bold" disabled={!looksLikeAddress(testTo) || testStatus.kind === 'busy'} onClick={() => void sendTest()}>
-                  Testmail senden
+                  {t('Testmail senden')}
                 </button>
               </div>
               {statusLine(testStatus)}
@@ -742,19 +752,19 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
 
           {step === 'claude' && (
             <>
-              <div className="font-bold mb-2">Claude Desktop verbinden</div>
-              <div className="mb-2">Das passiert beim Klick:</div>
+              <div className="font-bold mb-2">{t('Claude Desktop verbinden')}</div>
+              <div className="mb-2">{t('Das passiert beim Klick:')}</div>
               <ul className="list-disc pl-5 mb-3">
-                {previewError ? <li style={{ color: '#a01020' }}>{previewError}</li> : preview.length === 0 ? <li>Einen Moment …</li> : preview.map((l) => <li key={l}>{l}</li>)}
+                {previewError ? <li style={{ color: '#a01020' }}>{previewError}</li> : preview.length === 0 ? <li>{t('Einen Moment …')}</li> : preview.map((l) => <li key={l}>{l}</li>)}
               </ul>
               <div className="flex justify-end gap-2">
                 {claudeStatus.kind === 'ok' && (
                   <button type="button" className="bevel" disabled={removeStatus.kind === 'busy'} onClick={() => void disconnectClaude()}>
-                    Aus Claude Desktop entfernen
+                    {t('Aus Claude Desktop entfernen')}
                   </button>
                 )}
                 <button type="button" className="bevel font-bold" disabled={preview.length === 0 || claudeStatus.kind === 'busy' || claudeStatus.kind === 'ok'} onClick={() => void connectClaude()}>
-                  Jetzt verbinden
+                  {t('Jetzt verbinden')}
                 </button>
               </div>
               {statusLine(claudeStatus)}
@@ -764,30 +774,30 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
 
           {step === 'passkey' && (
             <>
-              <div className="font-bold mb-2">Freigabe für Mails an andere (Passkey)</div>
+              <div className="font-bold mb-2">{t('Freigabe für Mails an andere (Passkey)')}</div>
               <div className="mb-2">
-                Mails an andere Adressen verschickt Mail Assistant erst, wenn du sie auf einer kleinen Seite auf diesem Computer mit einem Passkey (zum Beispiel Touch ID) freigibst. So kann niemand ohne dich im Namen deiner Adresse schreiben, auch Claude nicht.
+                {t('Mails an andere Adressen verschickt Mail Assistant erst, wenn du sie auf einer kleinen Seite auf diesem Computer mit einem Passkey (zum Beispiel Touch ID) freigibst. So kann niemand ohne dich im Namen deiner Adresse schreiben, auch Claude nicht.')}
               </div>
               {passkeys === 0 && (
                 <>
                   <ol className="list-decimal pl-5 mb-3">
-                    <li>Claude Desktop ganz beenden (Cmd+Q auf dem Mac) und neu starten. Danach einen neuen Chat öffnen.</li>
-                    <li>Hier „Passkey einrichten“ klicken. Die Seite öffnet sich im Browser.</li>
-                    <li>Dort dem Passkey einen Namen geben, zum Beispiel „MacBook“, und ihn anlegen. Danach erkennt das Fenster ihn selbst, oder du klickst „Prüfen“.</li>
+                    <li>{t('Claude Desktop ganz beenden (Cmd+Q auf dem Mac) und neu starten. Danach einen neuen Chat öffnen.')}</li>
+                    <li>{t('Hier „Passkey einrichten“ klicken. Die Seite öffnet sich im Browser.')}</li>
+                    <li>{t('Dort dem Passkey einen Namen geben, zum Beispiel „MacBook“, und ihn anlegen. Danach erkennt das Fenster ihn selbst, oder du klickst „Prüfen“.')}</li>
                   </ol>
                   <div className="flex gap-2 justify-end">
                     <button type="button" className="bevel font-bold" disabled={pkStatus.kind === 'busy'} onClick={() => void getPasskeyLink()}>
-                      Passkey einrichten
+                      {t('Passkey einrichten')}
                     </button>
                     <button type="button" className="bevel" disabled={pkStatus.kind === 'busy'} onClick={() => void checkPasskey()}>
-                      Prüfen
+                      {t('Prüfen')}
                     </button>
                   </div>
                 </>
               )}
               {statusLine(pkStatus)}
               {pkLink && passkeys === 0 && (
-                <div className="mt-2 text-[11px] break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label="Registrierungslink">
+                <div className="mt-2 text-[11px] break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label={t('Registrierungslink')}>
                   {pkLink}
                 </div>
               )}
@@ -797,49 +807,49 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
           {step === 'tunnel' && (
             <>
               <div className="font-bold mb-2 flex items-center gap-2">
-                <span className="flex-1">Tunnel für das Handy (Tailscale)</span>
+                <span className="flex-1">{t('Tunnel für das Handy (Tailscale)')}</span>
                 <button type="button" className="bevel" aria-expanded={helpOpen} onClick={() => setHelpOpen((v) => !v)}>
-                  {helpOpen ? 'Schließen' : 'Wie geht das genau?'}
+                  {helpOpen ? t('Schließen') : t('Wie geht das genau?')}
                 </button>
               </div>
               {helpOpen && (
                 <div className="mb-3 p-2 text-[12px]" style={{ background: '#ffffe1', border: '1px solid #000' }}>
-                  <p className="mb-1"><b>Was ist Tailscale?</b> Ein Dienst, der deinen Computer sicher mit dem Internet verbindet. Mail Assistant nutzt davon nur „Funnel“: eine öffentliche Adresse, die zu diesem einen Dienst führt.</p>
-                  <p className="mb-1"><b>Warum kein eigenes Passwort?</b> Tailscale hat keine Anmeldung mit E-Mail und Passwort. Du meldest dich über ein bestehendes Konto an: Apple, Google, Microsoft, GitHub oder ein Passkey.</p>
-                  <p className="mb-1"><b>Was passiert bei „Tunnel einschalten“?</b> Tailscale öffnet bei der ersten Nutzung eine Seite und fragt, ob Funnel eingeschaltet werden soll. Du bestätigst das dort. Danach holt Tailscale ein Zertifikat für die Adresse. Das dauert ein bis zwei Minuten.</p>
-                  <p className="mb-1">Der Name deines Computers steht danach in öffentlichen Zertifikatslisten. Wenn er etwas Privates verrät, benenne ihn vorher in Tailscale um.</p>
+                  <p className="mb-1"><b>{t('Was ist Tailscale?')}</b> {t('Ein Dienst, der deinen Computer sicher mit dem Internet verbindet. Mail Assistant nutzt davon nur „Funnel“: eine öffentliche Adresse, die zu diesem einen Dienst führt.')}</p>
+                  <p className="mb-1"><b>{t('Warum kein eigenes Passwort?')}</b> {t('Tailscale hat keine Anmeldung mit E-Mail und Passwort. Du meldest dich über ein bestehendes Konto an: Apple, Google, Microsoft, GitHub oder ein Passkey.')}</p>
+                  <p className="mb-1"><b>{t('Was passiert bei „Tunnel einschalten“?')}</b> {t('Tailscale öffnet bei der ersten Nutzung eine Seite und fragt, ob Funnel eingeschaltet werden soll. Du bestätigst das dort. Danach holt Tailscale ein Zertifikat für die Adresse. Das dauert ein bis zwei Minuten.')}</p>
+                  <p className="mb-1">{t('Der Name deines Computers steht danach in öffentlichen Zertifikatslisten. Wenn er etwas Privates verrät, benenne ihn vorher in Tailscale um.')}</p>
                   <p>
-                    Mehr dazu: <ExtLink backend={backend} url={TAILSCALE.funnelDocs}>Tailscale Funnel</ExtLink>, <ExtLink backend={backend} url={TAILSCALE.httpsDocs}>HTTPS-Zertifikate</ExtLink>
+                    {t('Mehr dazu:')} <ExtLink backend={backend} url={TAILSCALE.funnelDocs}>Tailscale Funnel</ExtLink>, <ExtLink backend={backend} url={TAILSCALE.httpsDocs}>{t('HTTPS-Zertifikate')}</ExtLink>
                   </p>
                 </div>
               )}
               {tunnel === null ? (
-                <div>Einen Moment …</div>
+                <div>{t('Einen Moment …')}</div>
               ) : tunnel.state === 'ready' && tunnel.address ? (
                 <>
-                  <div className="mb-2">Dein Computer wäre dann unter dieser Adresse erreichbar:</div>
-                  <div className="mb-2 text-[12px] break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label="Öffentliche Adresse">
+                  <div className="mb-2">{t('Dein Computer wäre dann unter dieser Adresse erreichbar:')}</div>
+                  <div className="mb-2 text-[12px] break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label={t('Öffentliche Adresse')}>
                     {tunnel.address}
                   </div>
                   <div className="mb-2 text-[12px]">
-                    Die Adresse enthält den Namen deines Computers und ist danach öffentlich sichtbar. Mail Assistant startet dafür den Hintergrunddienst und schaltet bei Tailscale den „Funnel“ ein, nur für diesen einen Dienst.
+                    {t('Die Adresse enthält den Namen deines Computers und ist danach öffentlich sichtbar. Mail Assistant startet dafür den Hintergrunddienst und schaltet bei Tailscale den „Funnel“ ein, nur für diesen einen Dienst.')}
                   </div>
                   <label className="flex gap-2 mb-3 cursor-pointer">
                     <input type="checkbox" checked={tunnelConfirmed} disabled={tunnelResult.kind === 'busy' || tunnelResult.kind === 'ok'} onChange={(e) => setTunnelConfirmed(e.target.checked)} />
-                    <span>Ja, diese Adresse darf öffentlich sichtbar sein.</span>
+                    <span>{t('Ja, diese Adresse darf öffentlich sichtbar sein.')}</span>
                   </label>
                   <div className="flex justify-end gap-2">
                     {tunnelTried && tunnelResult.kind === 'fail' && (
                       <button type="button" className="bevel" onClick={() => void enableTunnel()}>
-                        Erneut prüfen
+                        {t('Erneut prüfen')}
                       </button>
                     )}
                     <button type="button" className="bevel font-bold" disabled={!tunnelConfirmed || tunnelResult.kind === 'busy' || tunnelResult.kind === 'ok'} onClick={() => void enableTunnel()}>
-                      Tunnel einschalten
+                      {t('Tunnel einschalten')}
                     </button>
                   </div>
                   {!tunnelConfirmed && tunnelResult.kind !== 'ok' && tunnelResult.kind !== 'busy' && (
-                    <div className="mt-1 text-right text-[12px]">Setze zuerst das Häkchen.</div>
+                    <div className="mt-1 text-right text-[12px]">{t('Setze zuerst das Häkchen.')}</div>
                   )}
                 </>
               ) : (
@@ -850,20 +860,20 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
                   {tunnel.state === 'missing' && (
                     <ol className="list-decimal pl-5 mb-3 text-[12px]">
                       <li>
-                        Tailscale laden und installieren: <ExtLink backend={backend} url={TAILSCALE.download}>tailscale.com/download</ExtLink>
+                        {t('Tailscale laden und installieren:')} <ExtLink backend={backend} url={TAILSCALE.download}>tailscale.com/download</ExtLink>
                       </li>
-                      <li>Tailscale öffnen und ein Konto anlegen. Das geht nur über ein bestehendes Konto: Apple, Google, Microsoft, GitHub oder ein Passkey. Nimm für den privaten Gebrauch ein privates Konto. Ein Konto mit eigener Firmen-Domain startet eine 14-Tage-Testphase.</li>
-                      <li>Danach hier auf „Erneut prüfen“ klicken.</li>
+                      <li>{t('Tailscale öffnen und ein Konto anlegen. Das geht nur über ein bestehendes Konto: Apple, Google, Microsoft, GitHub oder ein Passkey. Nimm für den privaten Gebrauch ein privates Konto. Ein Konto mit eigener Firmen-Domain startet eine 14-Tage-Testphase.')}</li>
+                      <li>{t('Danach hier auf „Erneut prüfen“ klicken.')}</li>
                     </ol>
                   )}
                   {tunnel.state === 'no_magicdns' && (
                     <div className="mb-3 text-[12px]">
-                      <ExtLink backend={backend} url={TAILSCALE.dns}>DNS-Seite öffnen</ExtLink>
+                      <ExtLink backend={backend} url={TAILSCALE.dns}>{t('DNS-Seite öffnen')}</ExtLink>
                     </div>
                   )}
                   <div className="flex justify-end gap-2">
                     <button type="button" className="bevel font-bold" onClick={() => void loadTunnel()}>
-                      Erneut prüfen
+                      {t('Erneut prüfen')}
                     </button>
                   </div>
                 </>
@@ -872,7 +882,7 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               {tunnelAdmin && (
                 <div className="mt-2 flex justify-end">
                   <button type="button" className="bevel" onClick={() => void backend.openLink(tunnelAdmin)}>
-                    Seite bei Tailscale öffnen
+                    {t('Seite bei Tailscale öffnen')}
                   </button>
                 </div>
               )}
@@ -881,47 +891,47 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
 
           {step === 'phonelogin' && (
             <>
-              <div className="font-bold mb-2">Anmeldung vom Handy</div>
+              <div className="font-bold mb-2">{t('Anmeldung vom Handy')}</div>
               {loginPassphrase === null ? (
                 <>
                   <div className="mb-2">
-                    Damit nur du dein Handy mit Mail Assistant verbinden kannst, braucht es eine Passphrase. Mail Assistant erzeugt sie für dich und zeigt sie dir <b>genau einmal</b>. Gespeichert wird nur ein Fingerabdruck davon, nicht die Passphrase selbst.
+                    {t('Damit nur du dein Handy mit Mail Assistant verbinden kannst, braucht es eine Passphrase. Mail Assistant erzeugt sie für dich und zeigt sie dir')} <b>{t('genau einmal')}</b>{t('. Gespeichert wird nur ein Fingerabdruck davon, nicht die Passphrase selbst.')}
                   </div>
                   {loginExisting && (
                     <div className="mb-2 p-2 text-[12px]" style={{ background: '#ffffe1', border: '1px solid #000' }}>
-                      Es gibt schon eine gültige Passphrase. Du musst nichts tun und kannst weitergehen. Nur wenn du sie verloren hast, erzeuge eine neue. Die alte wird dann ungültig und dein Handy muss sich neu anmelden.
+                      {t('Es gibt schon eine gültige Passphrase. Du musst nichts tun und kannst weitergehen. Nur wenn du sie verloren hast, erzeuge eine neue. Die alte wird dann ungültig und dein Handy muss sich neu anmelden.')}
                     </div>
                   )}
                   <div className="flex justify-end gap-2">
                     <button type="button" className="bevel font-bold" disabled={loginStatus.kind === 'busy'} onClick={() => void createPassphrase()}>
-                      {loginExisting ? 'Neue Passphrase erzeugen' : 'Passphrase erzeugen'}
+                      {loginExisting ? t('Neue Passphrase erzeugen') : t('Passphrase erzeugen')}
                     </button>
                   </div>
                 </>
               ) : (
                 <>
-                  <div className="mb-1">Deine Passphrase (wird nur jetzt angezeigt):</div>
-                  <div className="mb-2 text-[15px] break-all select-all font-bold" style={{ background: '#fff', ...INPUT, padding: 6, fontFamily: 'monospace' }} aria-label="Passphrase">
+                  <div className="mb-1">{t('Deine Passphrase (wird nur jetzt angezeigt):')}</div>
+                  <div className="mb-2 text-[15px] break-all select-all font-bold" style={{ background: '#fff', ...INPUT, padding: 6, fontFamily: 'monospace' }} aria-label={t('Passphrase')}>
                     {loginPassphrase}
                   </div>
                   <div className="flex justify-end mb-2">
                     <button type="button" className="bevel" onClick={() => void copy(loginPassphrase, 'pass')}>
-                      {copied === 'pass' ? 'Kopiert' : 'Kopieren'}
+                      {copied === 'pass' ? t('Kopiert') : t('Kopieren')}
                     </button>
                   </div>
                   <div className="mb-2 text-[12px]">
-                    Speichere sie jetzt in deinem Passwortmanager. Am bequemsten speicherst du sie dort, wo auch dein Handy sie findet, zum Beispiel in der Apple-Passwörter-App oder in einem Passwortmanager mit Handy-App. Hast du dort schon einen Eintrag dafür, ersetze ihn, statt einen zweiten anzulegen. Danach lässt sie sich nicht mehr anzeigen. Geht sie verloren, erzeugst du hier eine neue.
+                    {t('Speichere sie jetzt in deinem Passwortmanager. Am bequemsten speicherst du sie dort, wo auch dein Handy sie findet, zum Beispiel in der Apple-Passwörter-App oder in einem Passwortmanager mit Handy-App. Hast du dort schon einen Eintrag dafür, ersetze ihn, statt einen zweiten anzulegen. Danach lässt sie sich nicht mehr anzeigen. Geht sie verloren, erzeugst du hier eine neue.')}
                   </div>
                   <label className="flex gap-2 mb-3 cursor-pointer">
                     <input type="checkbox" checked={loginSaved} onChange={(e) => setLoginSaved(e.target.checked)} />
-                    <span>Ja, ich habe die Passphrase gespeichert.</span>
+                    <span>{t('Ja, ich habe die Passphrase gespeichert.')}</span>
                   </label>
                 </>
               )}
               {statusLine(loginStatus)}
               {copyFailed && (
                 <div className="mt-2 text-[12px]" role="alert" style={{ color: '#a01020' }}>
-                  Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand.
+                  {t('Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand.')}
                 </div>
               )}
             </>
@@ -929,38 +939,38 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
 
           {step === 'connector' && (
             <>
-              <div className="font-bold mb-2">Claude mit deinem Computer verbinden</div>
+              <div className="font-bold mb-2">{t('Claude mit deinem Computer verbinden')}</div>
               {connectorUrl ? (
                 <>
                   <ol className="list-decimal pl-5 mb-2">
                     <li>
-                      In claude.ai die <b>Einstellungen → Connectors</b> öffnen und „Benutzerdefinierten Connector hinzufügen“ wählen.{' '}
+                      {t('In claude.ai die')} <b>{t('Einstellungen → Connectors')}</b> {t('öffnen und „Benutzerdefinierten Connector hinzufügen“ wählen.')}{' '}
                       <button type="button" className="bevel" onClick={() => void backend.openLink('https://claude.ai/settings/connectors')}>
-                        Einstellungen öffnen
+                        {t('Einstellungen öffnen')}
                       </button>
                     </li>
-                    <li>Als Name zum Beispiel „Mail Mac“ eintragen (läuft Mail Assistant auf einem eigenen Server, „Mail Server“) und als Adresse diese:</li>
+                    <li>{t('Als Name zum Beispiel „Mail Mac“ eintragen (läuft Mail Assistant auf einem eigenen Server, „Mail Server“) und als Adresse diese:')}</li>
                   </ol>
-                  <div className="mb-1 break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label="Adresse für den Connector">
+                  <div className="mb-1 break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label={t('Adresse für den Connector')}>
                     {connectorUrl}
                   </div>
                   <div className="flex justify-end mb-2">
                     <button type="button" className="bevel" onClick={() => void copy(connectorUrl, 'addr')}>
-                      {copied === 'addr' ? 'Kopiert' : 'Kopieren'}
+                      {copied === 'addr' ? t('Kopiert') : t('Kopieren')}
                     </button>
                   </div>
-                  <div className="mb-2">Beim Anmelden fragt die Seite deines Computers nach der Passphrase. Nimm sie aus deinem Passwortmanager. Danach erscheint der Connector auch in der Claude-App auf dem Handy (dort einen neuen Chat beginnen).</div>
-                  <div className="mb-2 text-[12px]" role="note" aria-label="Hinweis zu mehreren Verbindungen">
-                    Nur eine Verbindung pro Chat: Ist dieselbe Mail Assistant-Verbindung zusätzlich lokal in Claude Desktop oder ein zweiter Server eingetragen, schalte in einem Chat nur eine davon ein.
+                  <div className="mb-2">{t('Beim Anmelden fragt die Seite deines Computers nach der Passphrase. Nimm sie aus deinem Passwortmanager. Danach erscheint der Connector auch in der Claude-App auf dem Handy (dort einen neuen Chat beginnen).')}</div>
+                  <div className="mb-2 text-[12px]" role="note" aria-label={t('Hinweis zu mehreren Verbindungen')}>
+                    {t('Nur eine Verbindung pro Chat: Ist dieselbe Mail Assistant-Verbindung zusätzlich lokal in Claude Desktop oder ein zweiter Server eingetragen, schalte in einem Chat nur eine davon ein.')}
                   </div>
-                  <div className="text-[12px]">Passphrase nicht gespeichert? Mit „Zurück“ kannst du eine neue erzeugen.</div>
+                  <div className="text-[12px]">{t('Passphrase nicht gespeichert? Mit „Zurück“ kannst du eine neue erzeugen.')}</div>
                 </>
               ) : (
-                <div>Einen Moment …</div>
+                <div>{t('Einen Moment …')}</div>
               )}
               {copyFailed && (
                 <div className="mt-2 text-[12px]" role="alert" style={{ color: '#a01020' }}>
-                  Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand.
+                  {t('Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand.')}
                 </div>
               )}
             </>
@@ -968,28 +978,28 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
 
           {step === 'phonekey' && (
             <>
-              <div className="font-bold mb-2">Freigabe vom Handy (Passkey)</div>
+              <div className="font-bold mb-2">{t('Freigabe vom Handy (Passkey)')}</div>
               {phoneAtLimit ? (
                 <div className="mb-2" role="note">
-                  {knownPasskeys(setupInfo?.passkey_list, passkeys).replace(/ Du musst hier nichts mehr tun\.$/, '.')} Mehr als 2 gehen nicht. Ist dein Handy dabei, bist du fertig und kannst weitergehen. Wenn nicht, entfernst du zuerst einen in der Verwaltung (Kachel „Passkeys“) und kommst dann über den Wizard hierher zurück.
+                  {knownPasskeys(setupInfo?.passkey_list, passkeys, false)} {t('Mehr als 2 gehen nicht. Ist dein Handy dabei, bist du fertig und kannst weitergehen. Wenn nicht, entfernst du zuerst einen in der Verwaltung (Kachel „Passkeys“) und kommst dann über den Wizard hierher zurück.')}
                 </div>
               ) : (
                 <>
                   <div className="mb-2">
-                    Auch am Handy gibst du Mails an andere Adressen selbst frei, mit Face ID oder Fingerabdruck. Der Passkey gehört zur Internetadresse deines Computers und wird deshalb auf dem Handy selbst angelegt.
+                    {t('Auch am Handy gibst du Mails an andere Adressen selbst frei, mit Face ID oder Fingerabdruck. Der Passkey gehört zur Internetadresse deines Computers und wird deshalb auf dem Handy selbst angelegt.')}
                   </div>
                   <ol className="list-decimal pl-5 mb-3">
-                    <li>Hier „Link erzeugen“ klicken.</li>
-                    <li>Den Link auf das Handy bringen. Am sichersten geht es als Nachricht an dich selbst: Link kopieren, in Nachrichten einfügen und an dich selbst schicken (AirDrop oder eine Notiz gehen auch). Auf dem Handy auf den Link tippen. Er öffnet sich im Browser.</li>
-                    <li>Dort dem Passkey einen Namen geben, zum Beispiel „iPhone“, und ihn anlegen. Danach erkennt das Fenster ihn selbst.</li>
+                    <li>{t('Hier „Link erzeugen“ klicken.')}</li>
+                    <li>{t('Den Link auf das Handy bringen. Am sichersten geht es als Nachricht an dich selbst: Link kopieren, in Nachrichten einfügen und an dich selbst schicken (AirDrop oder eine Notiz gehen auch). Auf dem Handy auf den Link tippen. Er öffnet sich im Browser.')}</li>
+                    <li>{t('Dort dem Passkey einen Namen geben, zum Beispiel „iPhone“, und ihn anlegen. Danach erkennt das Fenster ihn selbst.')}</li>
                   </ol>
                   <div className="flex gap-2 justify-end">
                     <button type="button" className="bevel font-bold" disabled={phoneKeyStatus.kind === 'busy' || phoneKeyDone} onClick={() => void getPhoneKeyLink()}>
-                      {phoneKeyLink ? 'Neuen Link erzeugen' : 'Link erzeugen'}
+                      {phoneKeyLink ? t('Neuen Link erzeugen') : t('Link erzeugen')}
                     </button>
                     {phoneKeyLink && !phoneKeyDone && (
                       <button type="button" className="bevel" disabled={phoneKeyStatus.kind === 'busy'} onClick={() => void checkPhoneKey()}>
-                        Prüfen
+                        {t('Prüfen')}
                       </button>
                     )}
                   </div>
@@ -998,19 +1008,19 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
               {statusLine(phoneKeyStatus)}
               {phoneKeyLink && !phoneKeyDone && !phoneAtLimit && (
                 <>
-                  <div className="mt-2 text-[11px] break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label="Link fürs Handy">
+                  <div className="mt-2 text-[11px] break-all select-all" style={{ background: '#fff', ...INPUT, padding: 4 }} aria-label={t('Link fürs Handy')}>
                     {phoneKeyLink}
                   </div>
                   <div className="flex justify-end mt-1">
                     <button type="button" className="bevel" onClick={() => void copy(phoneKeyLink, 'link')}>
-                      {copied === 'link' ? 'Kopiert' : 'Kopieren'}
+                      {copied === 'link' ? t('Kopiert') : t('Kopieren')}
                     </button>
                   </div>
                 </>
               )}
               {copyFailed && (
                 <div className="mt-2 text-[12px]" role="alert" style={{ color: '#a01020' }}>
-                  Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand.
+                  {t('Kopieren hat nicht geklappt. Markiere den Text und kopiere ihn von Hand.')}
                 </div>
               )}
             </>
@@ -1018,44 +1028,43 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
 
           {step === 'done' && (
             <>
-              <div className="font-bold mb-2">Fertig eingerichtet</div>
+              <div className="font-bold mb-2">{t('Fertig eingerichtet')}</div>
               <ul className="list-disc pl-5 mb-3">
-                <li>Postfach: {email.trim()} ({host}, Port {port})</li>
-                <li>Passwort liegt im Schlüsselbund dieses Computers</li>
+                <li>{t('Postfach: {email} ({host}, Port {port})', { email: email.trim(), host, port })}</li>
+                <li>{t('Passwort liegt im Schlüsselbund dieses Computers')}</li>
                 {testSkipped && testStatus.kind !== 'ok' ? (
                   <li>
-                    Testmail übersprungen. Nachholen kannst du sie jederzeit: Startmenü → „Einrichtungs-Wizard …“, Schritt „Testmail“. Erst dann gilt deine
-                    Adresse als eigene Adresse; bis dahin brauchst du für jede Mail, auch an dich selbst, deine Freigabe auf der Freigabeseite
+                    {t('Testmail übersprungen. Nachholen kannst du sie jederzeit: Startmenü → „Einrichtungs-Wizard …“, Schritt „Testmail“. Erst dann gilt deine Adresse als eigene Adresse; bis dahin brauchst du für jede Mail, auch an dich selbst, deine Freigabe auf der Freigabeseite')}
                   </li>
                 ) : (
-                  <li>Testmail ist angekommen{markOwn ? `; ${testTo.trim()} gilt als eigene Adresse` : ''}</li>
+                  <li>{t('Testmail ist angekommen')}{markOwn ? t('; {to} gilt als eigene Adresse', { to: testTo.trim() }) : ''}</li>
                 )}
-                <li>Claude Desktop ist verbunden</li>
-                {tunnelResult.kind === 'ok' && tunnel?.address && <li>Tunnel steht: {tunnel.address}</li>}
-                {where === 'phone' && loginUsed && <li>Anmeldung vom Handy: Passphrase festgelegt, Connector in claude.ai eintragen nicht vergessen</li>}
+                <li>{t('Claude Desktop ist verbunden')}</li>
+                {tunnelResult.kind === 'ok' && tunnel?.address && <li>{t('Tunnel steht: {address}', { address: tunnel.address })}</li>}
+                {where === 'phone' && loginUsed && <li>{t('Anmeldung vom Handy: Passphrase festgelegt, Connector in claude.ai eintragen nicht vergessen')}</li>}
                 {where === 'phone' && (
                   <li>
                     {phoneKeyDone
-                      ? 'Passkey am Handy eingerichtet: Mails an andere Adressen gibst du auch dort frei'
-                      : 'Passkey am Handy noch nicht eingerichtet: Mails an andere Adressen lassen sich vom Handy erst danach senden'}
+                      ? t('Passkey am Handy eingerichtet: Mails an andere Adressen gibst du auch dort frei')
+                      : t('Passkey am Handy noch nicht eingerichtet: Mails an andere Adressen lassen sich vom Handy erst danach senden')}
                   </li>
                 )}
                 <li>
                   {passkeys > 0
-                    ? 'Passkey eingerichtet: Mails an andere Adressen gibst du auf der Freigabeseite frei'
-                    : 'Passkey noch nicht eingerichtet: Mails an andere Adressen lassen sich erst danach senden'}
+                    ? t('Passkey eingerichtet: Mails an andere Adressen gibst du auf der Freigabeseite frei')
+                    : t('Passkey noch nicht eingerichtet: Mails an andere Adressen lassen sich erst danach senden')}
                 </li>
               </ul>
               {where === 'phone' ? (
                 <>
-                  <div className="mb-2">Probier es am Handy aus: Schreib Claude in der Claude-App „Schick mir eine Testmail.“</div>
-                  <div className="mb-2 text-[12px]">Dein Computer ist dein persönlicher Mail-Server. Schläft er oder ist er aus, kann die Handy-App ihn vorübergehend nicht erreichen. Es geht dabei nichts verloren und nichts wird doppelt gesendet.</div>
-                  <div className="text-[12px]">Diese App brauchst du nur zum Einrichten und Verwalten. Geschrieben und verschickt wird in Claude.</div>
+                  <div className="mb-2">{t('Probier es am Handy aus: Schreib Claude in der Claude-App „Schick mir eine Testmail.“')}</div>
+                  <div className="mb-2 text-[12px]">{t('Dein Computer ist dein persönlicher Mail-Server. Schläft er oder ist er aus, kann die Handy-App ihn vorübergehend nicht erreichen. Es geht dabei nichts verloren und nichts wird doppelt gesendet.')}</div>
+                  <div className="text-[12px]">{t('Diese App brauchst du nur zum Einrichten und Verwalten. Geschrieben und verschickt wird in Claude.')}</div>
                 </>
               ) : (
                 <>
-                  <div className="mb-2">Probier es aus: Schreib Claude in Claude Desktop „Schick mir eine Testmail.“</div>
-                  <div className="text-[12px]">Diese App brauchst du nur zum Einrichten und Verwalten. Geschrieben und verschickt wird in Claude Desktop.</div>
+                  <div className="mb-2">{t('Probier es aus: Schreib Claude in Claude Desktop „Schick mir eine Testmail.“')}</div>
+                  <div className="text-[12px]">{t('Diese App brauchst du nur zum Einrichten und Verwalten. Geschrieben und verschickt wird in Claude Desktop.')}</div>
                 </>
               )}
             </>
@@ -1063,21 +1072,22 @@ export function Wizard({ backend, onDone, onSkip }: { backend: SetupBackend; onD
         </div>
 
         <div className="flex items-center gap-2 px-4 pb-4">
+          <LangSwitch />
           {onSkip && step !== 'done' && (
-            <button type="button" className="bevel text-[11px]" onClick={onSkip} title="Verlässt den Wizard. Was schon erledigt ist, bleibt erhalten.">Zurück zur Verwaltung</button>
+            <button type="button" className="bevel text-[11px]" onClick={onSkip} title={t('Verlässt den Wizard. Was schon erledigt ist, bleibt erhalten.')}>{t('Zurück zur Verwaltung')}</button>
           )}
           <div className="flex-1" />
           {index > 0 && step !== 'done' && (
-            <button type="button" className="bevel" onClick={back}>Zurück</button>
+            <button type="button" className="bevel" onClick={back}>{t('Zurück')}</button>
           )}
           {step === 'passkey' && passkeys === 0 && (
-            <button type="button" className="bevel" onClick={() => go(where === 'phone' ? 'tunnel' : 'done')} title="Du kannst den Passkey später nachholen">Passkey später einrichten</button>
+            <button type="button" className="bevel" onClick={() => go(where === 'phone' ? 'tunnel' : 'done')} title={t('Du kannst den Passkey später nachholen')}>{t('Passkey später einrichten')}</button>
           )}
           {step === 'phonekey' && !phoneKeyDone && !phoneAtLimit && (
-            <button type="button" className="bevel" onClick={() => go('done')} title="Du kannst den Passkey am Handy später nachholen">Passkey am Handy überspringen</button>
+            <button type="button" className="bevel" onClick={() => go('done')} title={t('Du kannst den Passkey am Handy später nachholen')}>{t('Passkey am Handy überspringen')}</button>
           )}
-          <button type="button" className="bevel font-bold" disabled={!canNext} onClick={next} title={!canNext && step === 'where' ? 'Zuerst den Handy-Zugang abschalten oder oben „Auch vom Handy aus“ wählen.' : undefined}>
-            {step === 'done' ? 'Zur Verwaltung' : jumpToTunnel ? 'Handy-Zugang einrichten' : 'Weiter'}
+          <button type="button" className="bevel font-bold" disabled={!canNext} onClick={next} title={!canNext && step === 'where' ? t('Zuerst den Handy-Zugang abschalten oder oben „Auch vom Handy aus“ wählen.') : undefined}>
+            {step === 'done' ? t('Zur Verwaltung') : jumpToTunnel ? t('Handy-Zugang einrichten') : t('Weiter')}
           </button>
         </div>
       </div>

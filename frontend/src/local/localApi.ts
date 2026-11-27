@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { invoke } from '@tauri-apps/api/core'
 
 // Local administration: what the screen after the wizard needs. The real version starts the bundled program's
@@ -50,17 +51,17 @@ export function tauriLocalBackend(): LocalBackend {
     try {
       return await invoke<Record<string, unknown>>('local_admin', args)
     } catch (e) {
-      return { ok: false, reason: typeof e === 'string' ? e : FAILED }
+      return { ok: false, reason: typeof e === 'string' ? t(e) : t(FAILED) }
     }
   }
   return {
     async snapshot() {
       const r = await call({ action: 'snapshot' })
-      return r.ok ? { ok: true, data: r as unknown as Snapshot } : { ok: false, reason: String(r.reason ?? FAILED) }
+      return r.ok ? { ok: true, data: r as unknown as Snapshot } : { ok: false, reason: t(String(r.reason ?? FAILED)) }
     },
     async act(a) {
       const r = await call(a as unknown as Record<string, unknown>)
-      return r.ok ? { ok: true } : { ok: false, reason: String(r.reason ?? FAILED) }
+      return r.ok ? { ok: true } : { ok: false, reason: t(String(r.reason ?? FAILED)) }
     },
   }
 }
@@ -86,11 +87,11 @@ export function mockLocalBackend(seed?: Partial<Snapshot>): LocalBackend {
       if (a.action === 'passkey-remove') {
         const n = state.passkeys.length
         state.passkeys = state.passkeys.filter((k) => k.id !== a.reference)
-        return state.passkeys.length < n ? { ok: true } : { ok: false, reason: 'Dieser Passkey wurde nicht gefunden.' }
+        return state.passkeys.length < n ? { ok: true } : { ok: false, reason: t('Dieser Passkey wurde nicht gefunden.') }
       }
       if (a.action === 'passkey-rename') {
         const k = state.passkeys.find((x) => x.id === a.reference)
-        if (!k) return { ok: false, reason: 'Dieser Passkey wurde nicht gefunden.' }
+        if (!k) return { ok: false, reason: t('Dieser Passkey wurde nicht gefunden.') }
         k.name = a.name.trim()
         return { ok: true }
       }
@@ -99,7 +100,7 @@ export function mockLocalBackend(seed?: Partial<Snapshot>): LocalBackend {
         return { ok: true }
       }
       const r = find(a.reference)
-      if (!r) return { ok: false, reason: 'Das ging nicht: Empfänger nicht gefunden.' }
+      if (!r) return { ok: false, reason: t('Das ging nicht: Empfänger nicht gefunden.') }
       if (a.action === 'approve') {
         r.status = 'active'
         r.scope = a.own ? 'own' : 'external'

@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
 
 const FRAME = {
@@ -27,9 +28,9 @@ export function LoginDialog({ error, busy, onSubmit }: { error: string | null; b
 
   return (
     <div className="fixed inset-0 flex items-center justify-center" style={{ zIndex: 20 }}>
-      <div style={{ width: 380, ...FRAME }} role="dialog" aria-label="Anmelden">
+      <div style={{ width: 380, ...FRAME }} role="dialog" aria-label={t('Anmelden')}>
         <div className="px-2 py-0.5 m-0.5 select-none font-bold text-[13px]" style={{ background: 'linear-gradient(90deg, #0a246a, #3a6ea5)', color: '#fff' }}>
-          Anmelden – Mail Assistant
+          {t('Anmelden – Mail Assistant')}
         </div>
         <form
           className="p-4 text-[13px]"
@@ -41,10 +42,10 @@ export function LoginDialog({ error, busy, onSubmit }: { error: string | null; b
           <div className="flex gap-3 mb-3">
             <div className="text-3xl leading-none select-none">🔑</div>
             <div>
-              Bitte die Verwaltungs-Passphrase eingeben. Sie wird nicht gespeichert; die Sitzung gilt nur, solange dieses Fenster offen bleibt.
+              {t('Bitte die Verwaltungs-Passphrase eingeben. Sie wird nicht gespeichert; die Sitzung gilt nur, solange dieses Fenster offen bleibt.')}
             </div>
           </div>
-          <label className="block mb-1" htmlFor="pp">Passphrase:</label>
+          <label className="block mb-1" htmlFor="pp">{t('Passphrase:')}</label>
           <input
             id="pp"
             ref={input}
@@ -60,11 +61,11 @@ export function LoginDialog({ error, busy, onSubmit }: { error: string | null; b
             style={{ border: '2px solid', borderColor: 'var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark)' }}
           />
           <div className="min-h-[20px] mt-2 text-[12px]" style={{ color: '#a01020' }} role="alert">
-            {error}
+            {error ? t(error) : error}
           </div>
           <div className="flex justify-end mt-2">
             <button type="submit" className="bevel font-bold" disabled={busy || !value}>
-              {busy ? 'Einen Moment …' : 'Anmelden'}
+              {busy ? t('Einen Moment …') : t('Anmelden')}
             </button>
           </div>
         </form>

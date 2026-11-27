@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { useRef, useState, useLayoutEffect } from 'react'
 import type { ReactNode } from 'react'
 import { useDraggable } from '../core/useDraggable'
@@ -118,7 +119,7 @@ export function DraggableGlass({
           onPointerMove={dragHandlers.onPointerMove}
           onPointerUp={headerPointerUp}
         >
-          <span className={`font-body text-xs tracking-widest uppercase ${dark ? 'text-black' : 'text-white'}`}>{title}</span>
+          <span className={`font-body text-xs tracking-widest uppercase ${dark ? 'text-black' : 'text-white'}`}>{t(title)}</span>
         </div>
           <div
           className={`flex flex-col overflow-hidden transition-all duration-300 ease-[cubic-bezier(0.4,0,0.2,1)] ${

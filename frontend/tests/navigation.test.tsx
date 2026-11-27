@@ -14,10 +14,10 @@ describe('navigation: the task bar shows open windows only', () => {
     { id: 'help', label: 'Hilfe & Anleitung', open: false },
   ]
 
-  it('shows Start and the open windows, in this order, and nothing else', () => {
+  it('shows Start and the open windows, in this order, and then only the language switch', () => {
     const { container } = render(<Taskbar items={items} onToggle={() => {}} onCommand={() => {}} />)
     const labels = [...container.querySelectorAll('button')].map((b) => (b.textContent ?? '').trim())
-    expect(labels).toEqual(['✉ Start', 'Empfänger', 'Dateien'])
+    expect(labels).toEqual(['✉ Start', 'Empfänger', 'Dateien', 'DE', 'EN'])
   })
 
   it('brings a window to the front when its button is clicked', () => {

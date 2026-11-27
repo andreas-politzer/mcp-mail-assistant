@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { useEffect, useState } from 'react'
 
 const FIRST = 'Du hast Post! Naja, so ähnlich.'
@@ -59,7 +60,7 @@ export function Assistant({ right = 124, zIndex, onFocus, hint }: { right?: numb
   const toggle = () => {
     if (hint !== undefined) return setHintHidden((v) => !v)
     if (text !== null) return setText(null)
-    setText(opened === 0 ? FIRST : OTHERS[Math.floor(Math.random() * OTHERS.length)])
+    setText(t(opened === 0 ? FIRST : OTHERS[Math.floor(Math.random() * OTHERS.length)]))
     setOpened((n) => n + 1)
   }
 

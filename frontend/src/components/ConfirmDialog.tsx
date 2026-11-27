@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import type { ReactNode } from 'react'
 import { Win95Modal } from './Win95Window'
 
@@ -18,11 +19,11 @@ export function ConfirmDialog({
   onCancel: () => void
 }) {
   return (
-    <Win95Modal title={title} width={390} onClose={onCancel}>
+    <Win95Modal title={t(title)} width={390} onClose={onCancel}>
       <div className="mb-4">{info ? 'ℹ️' : '🔓'} {children}</div>
       <div className="flex justify-end gap-2">
-        {!info && <button className="bevel" onClick={onCancel}>Abbrechen</button>}
-        <button className="bevel font-bold" onClick={onConfirm}>{confirmLabel}</button>
+        {!info && <button className="bevel" onClick={onCancel}>{t('Abbrechen')}</button>}
+        <button className="bevel font-bold" onClick={onConfirm}>{t(confirmLabel)}</button>
       </div>
     </Win95Modal>
   )

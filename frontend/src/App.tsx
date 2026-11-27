@@ -1,3 +1,5 @@
+import { t, useChosen, useLang } from './i18n'
+import { LanguagePicker } from './i18n/LanguagePicker'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Desktop, type Wallpaper } from './components/Desktop'
 import { Taskbar } from './components/Taskbar'
@@ -172,7 +174,7 @@ export function DesktopApp({ local }: { local?: LocalParts } = {}) {
     if (a === 'recipients') { setShowRecipients(true); front('recipients') }
     else if (a === 'files') { setShowFiles(true); front('files') }
     else if (a === 'bin')
-      setPending({ title: 'Papierkorb', body: 'Der Papierkorb ist leer. (Später landen hier zum Beispiel gelöschte Kontakt-Kandidaten.)', confirmLabel: 'Okay', info: true, run: () => {} })
+      setPending({ title: t('Papierkorb'), body: t('Der Papierkorb ist leer. (Später landen hier zum Beispiel gelöschte Kontakt-Kandidaten.)'), confirmLabel: t('Okay'), info: true, run: () => {} })
     else open(a)
   }
 
@@ -282,7 +284,7 @@ export function DesktopApp({ local }: { local?: LocalParts } = {}) {
         return (
           <DesktopIcon
             key={i.id}
-            label={i.label}
+            label={t(i.label)}
             selected={selectedIcon === i.id}
             x={OX + cell.c * CW}
             y={OY + cell.r * CH}
@@ -431,7 +433,7 @@ export function DesktopApp({ local }: { local?: LocalParts } = {}) {
                   m.run()
                 }}
               >
-                {m.label}
+                {t(m.label)}
               </button>
             ))}
           </div>
@@ -495,6 +497,8 @@ function wantsWizard(): boolean {
 }
 
 export default function App() {
+  useLang() // redraw everything when the language is switched
+  const chosen = useChosen()
   const [wizard, setWizard] = useState(wantsWizard)
   const backend: SetupBackend = useMemo(() => (inDesktopApp() ? tauriBackend() : mockBackend()), [])
   const [started, setStarted] = useState(false)
@@ -526,6 +530,8 @@ export default function App() {
     setWizard(false)
   }
 
+  if (!chosen) return <LanguagePicker />
+
   if (wizard) {
     return (
       <Wizard backend={backend} onDone={finishWizard} onSkip={inDesktopApp() ? finishWizard : undefined} />
@@ -536,9 +542,9 @@ export default function App() {
     return (
       <div className="fixed inset-0 flex items-center justify-center" style={{ background: 'linear-gradient(#3a6ea5, #9cc7e8)' }}>
         <div className="p-4 text-[13px]" style={{ width: 380, background: 'var(--face)', border: '2px solid', borderColor: 'var(--bevel-light) var(--bevel-dark) var(--bevel-dark) var(--bevel-light)', color: '#1d1d2b' }}>
-          <div className="font-bold mb-2">Hier endet die Vorschau</div>
-          <div className="mb-3">In der echten App folgt jetzt die Anmeldung und danach der Desktop.</div>
-          <button className="bevel font-bold" onClick={() => setWizard(true)}>Nochmal von vorn</button>
+          <div className="font-bold mb-2">{t('Hier endet die Vorschau')}</div>
+          <div className="mb-3">{t('In der echten App folgt jetzt die Anmeldung und danach der Desktop.')}</div>
+          <button className="bevel font-bold" onClick={() => setWizard(true)}>{t('Nochmal von vorn')}</button>
         </div>
       </div>
     )

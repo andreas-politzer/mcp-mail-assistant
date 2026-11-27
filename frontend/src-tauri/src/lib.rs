@@ -217,8 +217,8 @@ async fn setup_save_mailbox(
 
 /// Sends one test mail to the person's own address; optionally marks it as an own address.
 #[tauri::command]
-async fn setup_send_test(app: AppHandle, to: String, mark_own: bool) -> Result<serde_json::Value, String> {
-    run_setup(app, setup::send_test_args(&to, mark_own), None).await
+async fn setup_send_test(app: AppHandle, to: String, mark_own: bool, lang: Option<String>) -> Result<serde_json::Value, String> {
+    run_setup(app, setup::send_test_args(&to, mark_own, lang.as_deref()), None).await
 }
 
 /// What connecting Claude Desktop would change. Changes nothing.

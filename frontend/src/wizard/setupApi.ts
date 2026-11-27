@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import type { Security } from './presets'
 
 // Everything the wizard needs from the computer. The real version (Tauri commands) comes later; the wizard
@@ -110,13 +111,13 @@ export function mockBackend(delay = 700): SetupBackend {
     async saveMailbox(_s, password) {
       await wait(delay)
       return password === 'falsch'
-        ? { ok: false, reason: 'Der Anbieter hat die Anmeldung abgelehnt. Passwort oder App-Passwort stimmt nicht.' }
+        ? { ok: false, reason: t('Der Anbieter hat die Anmeldung abgelehnt. Passwort oder App-Passwort stimmt nicht.') }
         : { ok: true }
     },
     async sendTestMail(to) {
       await wait(delay)
       return to.toLowerCase().startsWith('fehler')
-        ? { ok: false, reason: 'Der Anbieter hat die Testmail nicht angenommen.' }
+        ? { ok: false, reason: t('Der Anbieter hat die Testmail nicht angenommen.') }
         : { ok: true }
     },
     async previewClaudeConnection() {
@@ -124,9 +125,9 @@ export function mockBackend(delay = 700): SetupBackend {
       return {
         ok: true,
         lines: [
-          'In der Konfigurationsdatei von Claude Desktop wird ein Eintrag „mail-assistant“ ergänzt.',
-          'Alle anderen Einstellungen bleiben unberührt.',
-          'Vorher wird eine Kopie der Datei neben das Original gelegt.',
+          t('In der Konfigurationsdatei von Claude Desktop wird ein Eintrag „mail-assistant“ ergänzt.'),
+          t('Alle anderen Einstellungen bleiben unberührt.'),
+          t('Vorher wird eine Kopie der Datei neben das Original gelegt.'),
         ],
       }
     },

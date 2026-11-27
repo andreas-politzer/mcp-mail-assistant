@@ -1,3 +1,4 @@
+import { t, useLang } from '../i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Win95Window } from './Win95Window'
 import { BOOM_TICKS, H, HALL_OF_FAME, MAX_NAME, PLAYER_W, PLAYER_Y, UFO_W, UFO_Y, W, cleanName, hallWithPlayer, newGame, step, type Game, type Input } from '../logic/postwurf'
@@ -93,6 +94,7 @@ const STARS = (() => {
 })()
 
 export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; onFocus?: () => void; initial?: { x: number; y: number } }) {
+  useLang()
   const [game, setGame] = useState<Game>(() => newGame())
   const [phase, setPhase] = useState<'ready' | 'playing' | 'over'>('ready')
   const [best, setBest] = useState(readBest)
@@ -143,11 +145,11 @@ export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; o
   const pose = (Math.floor(game.tick / 8) % 2) as 0 | 1
 
   return (
-    <Win95Window title="Alienalarm" width={400} onClose={onClose} onFocus={onFocus} initial={initial}>
-      <div ref={box} tabIndex={0} onKeyDown={key(true)} onKeyUp={key(false)} className="outline-none" aria-label="Spielfeld Alienalarm">
+    <Win95Window title={t('Alienalarm')} width={400} onClose={onClose} onFocus={onFocus} initial={initial}>
+      <div ref={box} tabIndex={0} onKeyDown={key(true)} onKeyUp={key(false)} className="outline-none" aria-label={t('Spielfeld Alienalarm')}>
         <div className="flex justify-between text-[12px] mb-1">
-          <span>Punkte: <b data-score>{game.score}</b></span>
-          <span>Level {game.level}</span>
+          <span>{t('Punkte:')} <b data-score>{game.score}</b></span>
+          <span>{t('Level')} {game.level}</span>
           <span aria-label={`Leben: ${game.lives}`}>{'▲'.repeat(Math.max(0, game.lives))}</span>
         </div>
         <svg viewBox={`0 0 ${W} ${H}`} width={360} height={Math.round((360 * H) / W)} className="block mx-auto" style={{ background: '#000000', border: '2px solid', borderColor: 'var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark)' }} role="img" aria-label="Spielfeld">
@@ -203,55 +205,55 @@ export function Postwurf({ onClose, onFocus, initial }: { onClose: () => void; o
           })()}
           {phase === 'playing' && game.clear > 0 && (
             <g data-clear>
-              <text x={W / 2} y={H / 2 - 6} textAnchor="middle" fill="#fff" fontSize={15} fontWeight="bold" fontFamily="Tahoma, sans-serif">Level {game.level} geschafft!</text>
-              <text x={W / 2} y={H / 2 + 14} textAnchor="middle" fill="#ffe27a" fontSize={12} fontFamily="Tahoma, sans-serif">Nächste Runde …</text>
+              <text x={W / 2} y={H / 2 - 6} textAnchor="middle" fill="#fff" fontSize={15} fontWeight="bold" fontFamily="Tahoma, sans-serif">{t('Level {n} geschafft!', { n: game.level })}</text>
+              <text x={W / 2} y={H / 2 + 14} textAnchor="middle" fill="#ffe27a" fontSize={12} fontFamily="Tahoma, sans-serif">{t('Nächste Runde …')}</text>
             </g>
           )}
           {phase !== 'playing' && (
             <text x={W / 2} y={H / 2} textAnchor="middle" fill="#fff" fontSize={14} fontFamily="Tahoma, sans-serif">
-              {phase === 'ready' ? 'Die Außerirdischen kommen!' : 'Die Erde ist verloren'}
+              {phase === 'ready' ? t('Die Außerirdischen kommen!') : t('Die Erde ist verloren')}
             </text>
           )}
         </svg>
 
         <div className="flex gap-2 justify-center mt-2">
-          <button className="bevel" {...hold('left')} aria-label="Nach links">◀</button>
-          <button className="bevel font-bold" {...hold('fire')} aria-label="Feuer">Feuer</button>
-          <button className="bevel" {...hold('right')} aria-label="Nach rechts">▶</button>
+          <button className="bevel" {...hold('left')} aria-label={t('Nach links')}>◀</button>
+          <button className="bevel font-bold" {...hold('fire')} aria-label={t('Feuer')}>{t('Feuer')}</button>
+          <button className="bevel" {...hold('right')} aria-label={t('Nach rechts')}>▶</button>
         </div>
-        <div className="text-[11px] mt-1 text-center" style={{ opacity: 0.75 }}>Pfeiltasten und Leertaste gehen auch.</div>
+        <div className="text-[11px] mt-1 text-center" style={{ opacity: 0.75 }}>{t('Pfeiltasten und Leertaste gehen auch.')}</div>
 
         {phase !== 'playing' && (
           <div className="mt-3">
             <label className="flex items-center gap-2 text-[12px] mb-2">
-              <span>Dein Name:</span>
+              <span>{t('Dein Name:')}</span>
               <input
                 type="text"
                 className="flex-1"
                 style={{ border: '2px inset #fff', padding: '1px 3px', background: '#fff' }}
                 value={name}
                 maxLength={MAX_NAME}
-                placeholder="Spieler"
-                aria-label="Dein Name für den Highscore"
+                placeholder={t('Spieler')}
+                aria-label={t('Dein Name für den Highscore')}
                 onChange={(e) => { setName(e.target.value); writeName(e.target.value) }}
               />
             </label>
-            <div className="font-bold text-[12px]">Highscore</div>
-            <ol className="text-[12px] mt-1" style={{ listStyle: 'none', padding: 0, margin: 0 }} aria-label="Highscore">
+            <div className="font-bold text-[12px]">{t('Highscore')}</div>
+            <ol className="text-[12px] mt-1" style={{ listStyle: 'none', padding: 0, margin: 0 }} aria-label={t('Highscore')}>
               {hall.map((h, i) => (
                 <li key={h.name + h.score} className="flex justify-between" style={h.me ? { fontWeight: 700, color: '#0a246a' } : undefined}>
                   <span>{i + 1}. {h.name}</span><span>{h.score}</span>
                 </li>
               ))}
             </ol>
-            {phase === 'over' && rank === 0 && <div className="text-[12px] mt-1" role="status">Neue Spitze! Dein Name steht jetzt ganz oben.</div>}
-            {phase === 'over' && rank > 0 && <div className="text-[12px] mt-1" role="status">Platz {rank + 1}! Dein Name steht jetzt im Highscore.</div>}
-            {phase === 'over' && rank < 0 && best > 0 && <div className="text-[12px] mt-1">Dein Bestwert: {best}. Bis in den Highscore fehlen noch {HALL_OF_FAME[HALL_OF_FAME.length - 1].score - best + 1}.</div>}
+            {phase === 'over' && rank === 0 && <div className="text-[12px] mt-1" role="status">{t('Neue Spitze! Dein Name steht jetzt ganz oben.')}</div>}
+            {phase === 'over' && rank > 0 && <div className="text-[12px] mt-1" role="status">{t('Platz {n}! Dein Name steht jetzt im Highscore.', { n: rank + 1 })}</div>}
+            {phase === 'over' && rank < 0 && best > 0 && <div className="text-[12px] mt-1">{t('Dein Bestwert: {best}. Bis in den Highscore fehlen noch {n}.', { best, n: HALL_OF_FAME[HALL_OF_FAME.length - 1].score - best + 1 })}</div>}
           </div>
         )}
         <div className="flex justify-end gap-2 mt-3">
-          {phase !== 'playing' && <button className="bevel font-bold" onClick={start}>{phase === 'ready' ? 'Start' : 'Noch einmal'}</button>}
-          <button className="bevel" onClick={onClose}>Schließen</button>
+          {phase !== 'playing' && <button className="bevel font-bold" onClick={start}>{phase === 'ready' ? t('Start') : t('Noch einmal')}</button>}
+          <button className="bevel" onClick={onClose}>{t('Schließen')}</button>
         </div>
       </div>
     </Win95Window>

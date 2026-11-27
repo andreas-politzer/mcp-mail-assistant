@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { useEffect, useRef, useState } from 'react'
 import { admin, ADMIN_BASE, EXPECTED_SCHEMA, GENERIC_TUNNEL_COMMAND, TUNNEL_COMMAND } from '../api/admin'
 import { ENVELOPE, PixelSprite } from '../components/PixelSprite'
@@ -151,11 +152,11 @@ export function Boot({ resume, onDone, local = false }: { resume: boolean; onDon
       const s = await admin.status()
       if (id !== run.current) return
       if (s.status === 200) {
-        put(id, { id: 'tunnel', label: 'Verbindung', detail: 'Programm in dieser App', mark: 'ok' })
+        put(id, { id: 'tunnel', label: t('Verbindung'), detail: t('Programm in dieser App'), mark: 'ok' })
         setTunnelOk(true)
       } else {
         const why = s.data?.message ?? `HTTP ${s.status}`
-        put(id, { id: 'tunnel', label: 'Verbindung', detail: 'keine Antwort', mark: 'fail' })
+        put(id, { id: 'tunnel', label: t('Verbindung'), detail: t('keine Antwort'), mark: 'fail' })
         setBlockWhy(String(why))
         setBlock('tunnel')
       }
@@ -164,11 +165,11 @@ export function Boot({ resume, onDone, local = false }: { resume: boolean; onDon
     const p = await admin.probe()
     if (id !== run.current) return
     if (p.result === 'up') {
-      put(id, { id: 'tunnel', label: 'Verbindung', detail: ADMIN_BASE.replace('http://', ''), mark: 'ok' })
+      put(id, { id: 'tunnel', label: t('Verbindung'), detail: ADMIN_BASE.replace('http://', ''), mark: 'ok' })
       setTunnelOk(true)
     } else {
-      put(id, { id: 'tunnel', label: 'Verbindung', detail: p.result === 'unreachable' ? 'keine Antwort' : `HTTP ${p.status}`, mark: 'fail' })
-      setBlockWhy(p.result === 'unreachable' ? 'keine Antwort' : `HTTP ${p.status}`)
+      put(id, { id: 'tunnel', label: t('Verbindung'), detail: p.result === 'unreachable' ? t('keine Antwort') : `HTTP ${p.status}`, mark: 'fail' })
+      setBlockWhy(p.result === 'unreachable' ? t('keine Antwort') : `HTTP ${p.status}`)
       setBlock('tunnel')
     }
   }
@@ -179,7 +180,7 @@ export function Boot({ resume, onDone, local = false }: { resume: boolean; onDon
     const s = await admin.status()
     if (id !== run.current) return
     if (s.status !== 200) {
-      put(id, { id: 'schema', label: 'Datenbank', detail: `Status nicht lesbar (HTTP ${s.status})`, mark: 'fail' })
+      put(id, { id: 'schema', label: t('Datenbank'), detail: t('Status nicht lesbar (HTTP {status})', { status: s.status }), mark: 'fail' })
       setBlock('status')
       return
     }
@@ -187,11 +188,11 @@ export function Boot({ resume, onDone, local = false }: { resume: boolean; onDon
     const active = s.data?.recipients?.active
     put(id, {
       id: 'schema',
-      label: `Datenbank-Schema ${schema}`,
-      detail: `erwartet ${EXPECTED_SCHEMA}`,
+      label: t('Datenbank-Schema {schema}', { schema: schema ?? '?' }),
+      detail: t('erwartet {schema}', { schema: EXPECTED_SCHEMA }),
       mark: schema === EXPECTED_SCHEMA ? 'ok' : 'warn',
     })
-    put(id, { id: 'recipients', label: `${active} Empfänger aktiv`, detail: '', mark: 'ok' })
+    put(id, { id: 'recipients', label: t('{n} Empfänger aktiv', { n: active ?? '?' }), detail: '', mark: 'ok' })
     setGreeting(true)
     await new Promise((r) => setTimeout(r, skip.current ? 150 : 900))
     if (id !== run.current) return
@@ -213,8 +214,8 @@ export function Boot({ resume, onDone, local = false }: { resume: boolean; onDon
     const id = ++run.current
     if (!resume) {
       const stored = localStorage.length + sessionStorage.length
-      put(id, { id: 'window', label: 'Fenster', detail: inTauri ? `Tauri · ${window.location.origin}` : `Browser ohne Dateizugriff · ${window.location.origin}`, mark: inTauri ? 'ok' : 'warn' })
-      put(id, { id: 'storage', label: 'Speicher leer', detail: stored === 0 ? 'es wird nichts abgelegt' : `${stored} Einträge vorhanden`, mark: stored === 0 ? 'ok' : 'warn' })
+      put(id, { id: 'window', label: t('Fenster'), detail: inTauri ? `Tauri · ${window.location.origin}` : `${t('Browser ohne Dateizugriff')} · ${window.location.origin}`, mark: inTauri ? 'ok' : 'warn' })
+      put(id, { id: 'storage', label: t('Speicher leer'), detail: stored === 0 ? t('es wird nichts abgelegt') : t('{n} Einträge vorhanden', { n: stored }), mark: stored === 0 ? 'ok' : 'warn' })
     }
     void checkTunnel(id)
     return () => {
@@ -273,14 +274,14 @@ export function Boot({ resume, onDone, local = false }: { resume: boolean; onDon
           return
         }
         const mins = Math.round((Number(r.data?.idle_seconds) || 0) / 60)
-        put(id, { id: 'login', label: 'Angemeldet', detail: `Sitzung endet nach ${mins} min Leerlauf`, mark: 'ok' })
+        put(id, { id: 'login', label: t('Angemeldet'), detail: t('Sitzung endet nach {mins} min Leerlauf', { mins }), mark: 'ok' })
         setSignedIn(true)
         await verify(id)
-      } else if (r.status === 401) setLoginError('Die Passphrase stimmt nicht.')
-      else if (r.status === 429) setLoginError('Zu viele Versuche. Bitte einen Moment warten.')
-      else setLoginError(`Der Server meldet Fehler ${r.status}.`)
+      } else if (r.status === 401) setLoginError(t('Die Passphrase stimmt nicht.'))
+      else if (r.status === 429) setLoginError(t('Zu viele Versuche. Bitte einen Moment warten.'))
+      else setLoginError(t('Der Server meldet Fehler {status}.', { status: r.status }))
     } catch {
-      setLoginError('Der Server antwortet nicht mehr. Läuft der Tunnel noch?')
+      setLoginError(t('Der Server antwortet nicht mehr. Läuft der Tunnel noch?'))
     } finally {
       setBusy(false)
     }
@@ -313,27 +314,27 @@ export function Boot({ resume, onDone, local = false }: { resume: boolean; onDon
     <div className="absolute left-1/2 -translate-x-1/2 p-4 text-[13px] leading-6" style={{ bottom: '7vh', width: 'min(640px, 92vw)', zIndex: 30, ...FRAME }} role="alert">
       {block === 'tunnel' && local ? (
         <>
-          <div className="font-bold mb-1" style={{ color: '#a01020' }}>Die Verwaltung in dieser App ist nicht angesprungen.</div>
+          <div className="font-bold mb-1" style={{ color: '#a01020' }}>{t('Die Verwaltung in dieser App ist nicht angesprungen.')}</div>
           <p className="mb-3 text-[12px]" style={{ color: '#4a4a5a' }}>{blockWhy}</p>
         </>
       ) : block === 'tunnel' ? (
         <>
-          <div className="font-bold mb-1" style={{ color: '#a01020' }}>Die Verwaltung ist nicht erreichbar: {blockWhy}.</div>
-          <p className="mb-2">Meistens fehlt der SSH-Tunnel. Öffne ein Terminal und starte ihn. Das Terminal bleibt danach offen und still, das ist richtig:</p>
+          <div className="font-bold mb-1" style={{ color: '#a01020' }}>{t('Die Verwaltung ist nicht erreichbar: {why}.', { why: blockWhy ?? '' })}</div>
+          <p className="mb-2">{t('Meistens fehlt der SSH-Tunnel. Öffne ein Terminal und starte ihn. Das Terminal bleibt danach offen und still, das ist richtig:')}</p>
           <pre className="p-2 mb-2 overflow-x-auto select-all text-[12px]" style={{ background: '#15151c', color: '#e8e8e8', fontFamily: MONO }}>{GENERIC_TUNNEL_COMMAND}</pre>
           <p className="mb-2 text-[12px]" style={{ color: '#4a4a5a' }}>
-            Ersetze BENUTZER und SERVER durch deine Angaben. Der Knopf Befehl kopieren legt den Befehl in die Zwischenablage, den du in der Datei frontend/.env.local eingetragen hast.
+            {t('Ersetze BENUTZER und SERVER durch deine Angaben. Der Knopf Befehl kopieren legt den Befehl in die Zwischenablage, den du in der Datei frontend/.env.local eingetragen hast.')}
           </p>
           <p className="mb-3 text-[12px]" style={{ color: '#4a4a5a' }}>
-            Läuft der Tunnel und es klappt trotzdem nicht, muss der Server diese Herkunft erlauben: <b>{window.location.origin}</b>. Die Einstellung dafür heißt OUTBOX_ADMIN_ALLOWED_ORIGINS.
+            {t('Läuft der Tunnel und es klappt trotzdem nicht, muss der Server diese Herkunft erlauben:')} <b>{window.location.origin}</b>{t('. Die Einstellung dafür heißt OUTBOX_ADMIN_ALLOWED_ORIGINS.')}
           </p>
         </>
       ) : (
-        <p className="mb-3" style={{ color: '#a01020' }}>Die Anmeldung hat geklappt, aber der Status der Datenbank ließ sich nicht lesen.</p>
+        <p className="mb-3" style={{ color: '#a01020' }}>{t('Die Anmeldung hat geklappt, aber der Status der Datenbank ließ sich nicht lesen.')}</p>
       )}
       <div className="flex gap-3">
-        <button className="bevel" onClick={retry}>Erneut prüfen</button>
-        {block === 'tunnel' && !local && <button className="bevel" onClick={copy}>{copied ? 'Kopiert' : 'Befehl kopieren'}</button>}
+        <button className="bevel" onClick={retry}>{t('Erneut prüfen')}</button>
+        {block === 'tunnel' && !local && <button className="bevel" onClick={copy}>{copied ? t('Kopiert') : t('Befehl kopieren')}</button>}
       </div>
     </div>
   )
@@ -342,15 +343,15 @@ export function Boot({ resume, onDone, local = false }: { resume: boolean; onDon
     <div className="fixed inset-0 overflow-hidden" style={{ zIndex: 1000, background: '#000', opacity: leaving ? 0 : 1, transition: 'opacity 450ms ease-in' }}>
       {scene === 'power' && (
         <div className="absolute inset-0 px-10 pt-12 text-[14px] leading-7" style={{ color: '#c8c8c8', fontFamily: MONO }}>
-          <div style={{ color: '#9ec5ff' }}>MAIL ASSISTANT · Startprüfung</div>
+          <div style={{ color: '#9ec5ff' }}>{t('MAIL ASSISTANT · Startprüfung')}</div>
           {(['window', 'storage', 'tunnel'] as const).map((id, i) => {
             const c = byId(id)
-            const label = id === 'window' ? 'Fenster' : id === 'storage' ? 'Speicher' : 'Verbindung'
+            const label = id === 'window' ? t('Fenster') : id === 'storage' ? t('Speicher') : t('Verbindung')
             return (
               <div key={id} className="flex gap-3" style={{ animation: `boot-line 220ms ease-out ${i * 140}ms both`, maxWidth: 720 }}>
                 <span className="shrink-0" style={{ width: 150 }}>{label}</span>
-                <span className="flex-1">{c ? c.detail : 'wird geprüft …'}</span>
-                <span style={{ color: c ? COLOR[c.mark] : '#666' }}>{c ? TAG[c.mark] : '[ … ]'}</span>
+                <span className="flex-1">{c ? c.detail : t('wird geprüft …')}</span>
+                <span style={{ color: c ? COLOR[c.mark] : '#666' }}>{c ? t(TAG[c.mark]) : '[ … ]'}</span>
               </div>
             )
           })}
@@ -366,7 +367,7 @@ export function Boot({ resume, onDone, local = false }: { resume: boolean; onDon
           </div>
           <div className="mt-6"><Wordmark text="Mail Assistant" typed /></div>
           <div className="mt-2 text-[13px]" style={{ color: '#fff', textShadow: '1px 1px 0 rgba(10,36,106,0.8)', animation: 'boot-fade 600ms ease-out 1200ms both' }}>
-            Verwaltung · Version 0.1
+            {t('Verwaltung · Version 0.1')}
           </div>
           <div className="mt-12" style={{ width: 360, height: 22, padding: 3, background: '#e8e8f4', border: '2px solid', borderColor: 'var(--bevel-dark) var(--bevel-light) var(--bevel-light) var(--bevel-dark)' }}>
             <div style={{ height: '100%', width: `${frac * 100}%`, transition: 'width 240ms linear', backgroundImage: 'repeating-linear-gradient(90deg, #0a246a 0 12px, transparent 12px 15px)' }} />
@@ -379,7 +380,7 @@ export function Boot({ resume, onDone, local = false }: { resume: boolean; onDon
         <>
           <div className="absolute inset-x-0 flex flex-col items-center" style={{ top: '9vh', animation: 'boot-fade 500ms ease-out both' }}>
             <PixelSprite rows={ENVELOPE.rows} palette={ENVELOPE.palette} scale={5} />
-            <div className="mt-3"><Wordmark text={greeting ? 'Der Briefkasten hat Dienst.' : 'Willkommen'} typed={false} /></div>
+            <div className="mt-3"><Wordmark text={greeting ? t('Der Briefkasten hat Dienst.') : t('Willkommen')} typed={false} /></div>
           </div>
           {!resume && (
             <div className="absolute inset-x-0 px-6" style={{ bottom: '5vh' }}><Chips chips={chips} /></div>

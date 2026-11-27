@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import { useState } from 'react'
 import { Win95Window } from './Win95Window'
 import { WALLPAPERS, WallpaperLayer, type Wallpaper } from './Desktop'
@@ -30,24 +31,24 @@ export function DisplayProps({ c, current, onApply }: { c: Common; current: Wall
                 style={wp.kind === w.kind ? { background: '#0a246a', color: '#fff' } : undefined}
                 onClick={() => setWp({ ...wp, kind: w.kind })}
               >
-                {w.label}
+                {t(w.label)}
               </button>
             ))}
           </div>
           <div className="mt-2 text-[12px] flex gap-3" style={{ opacity: wp.kind === 'clouds' ? 1 : 0.45 }}>
             <label className="flex items-center gap-1">
-              <input type="radio" disabled={wp.kind !== 'clouds'} checked={wp.tiled} onChange={() => setWp({ ...wp, tiled: true })} /> Nebeneinander
+              <input type="radio" disabled={wp.kind !== 'clouds'} checked={wp.tiled} onChange={() => setWp({ ...wp, tiled: true })} /> {t('Nebeneinander')}
             </label>
             <label className="flex items-center gap-1">
-              <input type="radio" disabled={wp.kind !== 'clouds'} checked={!wp.tiled} onChange={() => setWp({ ...wp, tiled: false })} /> Gestreckt
+              <input type="radio" disabled={wp.kind !== 'clouds'} checked={!wp.tiled} onChange={() => setWp({ ...wp, tiled: false })} /> {t('Gestreckt')}
             </label>
           </div>
         </div>
       </div>
       <div className="flex justify-end gap-2 mt-3">
         <button className="bevel font-bold" onClick={() => { onApply(wp); c.onClose() }}>OK</button>
-        <button className="bevel" onClick={c.onClose}>Abbrechen</button>
-        <button className="bevel" onClick={() => onApply(wp)}>Übernehmen</button>
+        <button className="bevel" onClick={c.onClose}>{t('Abbrechen')}</button>
+        <button className="bevel" onClick={() => onApply(wp)}>{t('Übernehmen')}</button>
       </div>
     </Win95Window>
   )

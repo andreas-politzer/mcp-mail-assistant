@@ -2,7 +2,7 @@
 
     setup status
     setup save-mailbox --email A --host H --port P --security starttls|ssl     (password on stdin)
-    setup send-test --to A [--mark-own]
+    setup send-test --to A [--mark-own] [--lang de|en]
     setup preview-claude --command /absolute/path/to/this/program
     setup connect-claude --command /absolute/path/to/this/program
     setup disconnect-claude                  (removes only our own entry from Claude Desktop's settings)
@@ -47,6 +47,7 @@ def _parser() -> argparse.ArgumentParser:
     t = sub.add_parser("send-test")
     t.add_argument("--to", required=True)
     t.add_argument("--mark-own", action="store_true")
+    t.add_argument("--lang", choices=["de", "en"], default="de")
     sub.add_parser("approval-link").add_argument("--phone", action="store_true")
     sub.add_parser("disconnect-claude")
     sub.add_parser("remote-disable")
@@ -87,7 +88,7 @@ def main(
             tasks.save_mailbox(environment, tasks.Mailbox(args.email, args.host, args.port, args.security), line)
             return reply({"ok": True})
         if args.command == "send-test":
-            tasks.send_test_mail(environment, args.to, args.mark_own)
+            tasks.send_test_mail(environment, args.to, args.mark_own, lang=args.lang)
             return reply({"ok": True})
         if args.command == "approval-link":
             url = remote.passkey_link(environment) if args.phone else tasks.approval_link(environment)

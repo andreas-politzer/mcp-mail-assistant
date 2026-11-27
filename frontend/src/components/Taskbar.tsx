@@ -1,3 +1,5 @@
+import { locale, t } from '../i18n'
+import { LangSwitch } from '../i18n/LangSwitch'
 import { useEffect, useState } from 'react'
 import { StartMenu, type StartCommand } from './StartMenu'
 
@@ -47,11 +49,12 @@ export function Taskbar({
               if (onClose) setClosing({ id: it.id, x: e.clientX, y: e.clientY })
             }}
           >
-            {it.label}
+            {t(it.label)}
           </button>
         ))}
-        <span className="ml-auto text-xs pr-2">
-          {now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}
+        <LangSwitch className="ml-auto" />
+        <span className="text-xs pr-2">
+          {now.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })}
         </span>
       </div>
       {menuOpen && <StartMenu local={local} onCommand={onCommand} onClose={() => setMenuOpen(false)} />}
@@ -63,7 +66,7 @@ export function Taskbar({
             style={{ left: closing.x, bottom: 40, width: 120, zIndex: 95, background: 'var(--face)', border: '2px solid', borderColor: 'var(--bevel-light) var(--bevel-dark) var(--bevel-dark) var(--bevel-light)', boxShadow: '1px 1px 0 #000', color: '#1d1d2b' }}
           >
             <button className="block w-full text-left px-3 py-1 text-[13px] hover:bg-[#0a246a] hover:text-white" onClick={() => { onClose?.(closing.id); setClosing(null) }}>
-              Schließen
+              {t('Schließen')}
             </button>
           </div>
         </>

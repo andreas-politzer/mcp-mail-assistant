@@ -1,4 +1,13 @@
-import { vi } from 'vitest'
+import { afterEach, vi } from 'vitest'
+import { setChosen, setLang } from '../../src/i18n'
+
+// The existing tests look for German text; English tests switch the language themselves.
+setLang('de', false)
+setChosen(true)
+afterEach(() => {
+  setLang('de', false)
+  setChosen(true)
+})
 
 // The app code checks for the Tauri bridge once, when it loads.
 ;(window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {}

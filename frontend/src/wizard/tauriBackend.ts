@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { getLang, t } from '../i18n'
 import type { MailboxSettings, Outcome, SetupBackend, SetupStatus, TunnelState } from './setupApi'
 
 // The real backend: Tauri commands that start the bundled server program (see src-tauri/src/setup.rs).
@@ -25,18 +26,28 @@ const FAILED = 'Der Schritt ist fehlgeschlagen. Starte die App neu und versuche 
 // A short technical reason for the rare unexpected failure, so a bug report can say what happened.
 function detail(e: unknown): string {
   const text = (e instanceof Error ? e.message : typeof e === 'object' && e !== null ? JSON.stringify(e) : String(e ?? '')).trim()
-  return text ? ` Details: ${text.slice(0, 160)}` : ''
+  return text ? ` ${t('Details:')} ${text.slice(0, 160)}` : ''
+}
+
+// The Rust side and the bundled program answer in German. The texts meant for the person are put into
+// the chosen language here, so every screen that shows them gets the right one.
+function localise<T>(r: T): T {
+  if (typeof r !== 'object' || r === null) return r
+  const o = { ...(r as Record<string, unknown>) }
+  for (const k of ['reason', 'install_problem']) if (typeof o[k] === 'string') o[k] = t(o[k] as string)
+  for (const k of ['lines', 'notes']) if (Array.isArray(o[k])) o[k] = (o[k] as unknown[]).map((x) => (typeof x === 'string' ? t(x) : x))
+  return o as T
 }
 
 async function call<T>(command: string, args?: Record<string, unknown>): Promise<T | { ok: false; reason: string }> {
   try {
-    return await invoke<T>(command, args)
+    return localise(await invoke<T>(command, args))
   } catch (e) {
-    return { ok: false, reason: typeof e === 'string' ? e : `${FAILED}${detail(e)}` }
+    return { ok: false, reason: typeof e === 'string' ? t(e) : `${t(FAILED)}${detail(e)}` }
   }
 }
 
-const outcome = (r: Reply): Outcome => (r.ok ? { ok: true } : { ok: false, reason: r.reason ?? FAILED })
+const outcome = (r: Reply): Outcome => (r.ok ? { ok: true } : { ok: false, reason: r.reason ?? t(FAILED) })
 
 export function tauriBackend(): SetupBackend {
   return {
@@ -49,11 +60,11 @@ export function tauriBackend(): SetupBackend {
       return outcome(await call<Reply>('setup_save_mailbox', { email: s.email, host: s.host, port: s.port, security: s.security, password }))
     },
     async sendTestMail(to: string, markOwn: boolean) {
-      return outcome(await call<Reply>('setup_send_test', { to, markOwn }))
+      return outcome(await call<Reply>('setup_send_test', { to, markOwn, lang: getLang() }))
     },
     async previewClaudeConnection() {
       const r = await call<Reply>('setup_preview_claude')
-      return r.ok && r.lines ? { ok: true as const, lines: r.lines } : { ok: false as const, reason: r.reason ?? FAILED }
+      return r.ok && r.lines ? { ok: true as const, lines: r.lines } : { ok: false as const, reason: r.reason ?? t(FAILED) }
     },
     async connectClaude() {
       return outcome(await call<Reply>('setup_connect_claude'))
@@ -63,14 +74,14 @@ export function tauriBackend(): SetupBackend {
     },
     async approvalLink(phone?: boolean) {
       const r = await call<Reply>('setup_approval_link', phone ? { phone: true } : undefined)
-      return r.ok && r.url ? { ok: true as const, url: r.url } : { ok: false as const, reason: r.reason ?? FAILED }
+      return r.ok && r.url ? { ok: true as const, url: r.url } : { ok: false as const, reason: r.reason ?? t(FAILED) }
     },
     async openLink(url: string) {
       return outcome(await call<Reply>('open_link', { url }))
     },
     async tunnelStatus() {
       const r = (await call<Reply>('setup_tunnel_status')) as Reply
-      if (!r.ok || !r.state) return { state: 'unreadable' as const, address: null, reason: r.reason ?? FAILED }
+      if (!r.ok || !r.state) return { state: 'unreadable' as const, address: null, reason: r.reason ?? t(FAILED) }
       return { state: r.state, address: r.address ?? null, reason: r.reason ?? null }
     },
     async remoteStatus() {
@@ -80,18 +91,18 @@ export function tauriBackend(): SetupBackend {
     },
     async tunnelDisable() {
       const r = (await call<Reply>('setup_tunnel_disable')) as Reply
-      if (!r.ok) return { ok: false as const, reason: r.reason ?? FAILED }
+      if (!r.ok) return { ok: false as const, reason: r.reason ?? t(FAILED) }
       return { ok: true as const, removed: r.removed === true, funnel_closed: r.funnel_closed === true, notes: r.notes ?? [] }
     },
     async newPassphrase() {
       const r = (await call<Reply>('setup_passphrase_new')) as Reply
       if (r.ok && r.passphrase && r.address) return { ok: true as const, passphrase: r.passphrase, address: r.address }
-      return { ok: false as const, reason: r.reason ?? FAILED }
+      return { ok: false as const, reason: r.reason ?? t(FAILED) }
     },
     async tunnelEnable(address: string) {
       const r = (await call<Reply>('setup_tunnel_enable', { address })) as Reply
       if (r.ok && r.address) return { ok: true as const, address: r.address, passphrase_placeholder: r.passphrase_placeholder ?? true }
-      return { ok: false as const, reason: r.reason ?? FAILED, ...(r.url ? { url: r.url } : {}) }
+      return { ok: false as const, reason: r.reason ?? t(FAILED), ...(r.url ? { url: r.url } : {}) }
     },
   }
 }

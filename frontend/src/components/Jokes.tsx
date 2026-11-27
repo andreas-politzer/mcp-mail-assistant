@@ -1,3 +1,4 @@
+import { t, useLang } from '../i18n'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Win95Window } from './Win95Window'
 import { invoke } from '@tauri-apps/api/core'
@@ -23,14 +24,14 @@ const sunken = { border: '2px solid', borderColor: 'var(--bevel-dark) var(--beve
 function Note({ title, text, button = 'Okay', width = 360, c }: { title: string; text: string; button?: string; width?: number; c: Common }) {
   return (
     <Win95Window title={title} width={width} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
-      <div>{text}</div>
-      <Row><button className="bevel font-bold" onClick={c.onClose}>{button}</button></Row>
+      <div>{t(text)}</div>
+      <Row><button className="bevel font-bold" onClick={c.onClose}>{t(button)}</button></Row>
     </Win95Window>
   )
 }
 
 function Modem({ c }: { c: Common }) {
-  const lines = ['Wähle 040 123 456 …', 'Modem meldet sich (14.400 Baud) …', 'Benutzername und Kennwort werden geprüft …', 'Verbindung fehlgeschlagen.']
+  const lines = [t('Wähle 040 123 456 …'), t('Modem meldet sich (14.400 Baud) …'), t('Benutzername und Kennwort werden geprüft …'), t('Verbindung fehlgeschlagen.')]
   const [shown, setShown] = useState(1)
   const [giveUp, setGiveUp] = useState(false)
   useEffect(() => {
@@ -39,16 +40,16 @@ function Modem({ c }: { c: Common }) {
     return () => clearTimeout(t)
   }, [shown, lines.length])
   return (
-    <Win95Window title="Willkommen im Internet!" width={380} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
+    <Win95Window title={t('Willkommen im Internet!')} width={380} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
       {!giveUp ? (
         <>
           <div className="font-mono text-[12px] min-h-[84px]">{lines.slice(0, shown).map((l) => <div key={l}>{l}</div>)}</div>
-          {shown >= lines.length && <Row><button className="bevel" onClick={() => setGiveUp(true)}>Erneut versuchen</button></Row>}
+          {shown >= lines.length && <Row><button className="bevel" onClick={() => setGiveUp(true)}>{t('Erneut versuchen')}</button></Row>}
         </>
       ) : (
         <>
-          <div>Ach, vergiss es. Schreib lieber eine E-Mail.</div>
-          <Row><button className="bevel font-bold" onClick={c.onClose}>Mach ich</button></Row>
+          <div>{t('Ach, vergiss es. Schreib lieber eine E-Mail.')}</div>
+          <Row><button className="bevel font-bold" onClick={c.onClose}>{t('Mach ich')}</button></Row>
         </>
       )}
     </Win95Window>
@@ -63,10 +64,10 @@ function Coffee({ c }: { c: Common }) {
     return () => clearTimeout(t)
   }, [pct])
   return (
-    <Win95Window title="Kaffeepause" width={340} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
-      <div className="mb-2">{pct < 100 ? 'Kaffee wird gekocht …' : 'Fertig. Die Pause ist leider vorbei.'}</div>
+    <Win95Window title={t('Kaffeepause')} width={340} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
+      <div className="mb-2">{pct < 100 ? t('Kaffee wird gekocht …') : t('Fertig. Die Pause ist leider vorbei.')}</div>
       <div className="h-4" style={sunken}><div className="h-full" style={{ width: `${pct}%`, background: '#0a246a' }} /></div>
-      <Row><button className="bevel" onClick={c.onClose}>{pct < 100 ? 'Abbrechen' : 'Okay'}</button></Row>
+      <Row><button className="bevel" onClick={c.onClose}>{pct < 100 ? t('Abbrechen') : t('Okay')}</button></Row>
     </Win95Window>
   )
 }
@@ -88,12 +89,12 @@ function Shutdown({ c }: { c: Common }) {
     }
   }
   return (
-    <Win95Window title="Herunterfahren" width={350} onClose={closing ? () => {} : c.onClose} onFocus={c.onFocus} initial={c.initial}>
-      <div>{closing ? 'Mail Assistant wird beendet …' : 'Mail Assistant beenden? Du wirst abgemeldet, und das Fenster schließt sich.'}</div>
+    <Win95Window title={t('Herunterfahren')} width={350} onClose={closing ? () => {} : c.onClose} onFocus={c.onFocus} initial={c.initial}>
+      <div>{closing ? t('Mail Assistant wird beendet …') : t('Mail Assistant beenden? Du wirst abgemeldet, und das Fenster schließt sich.')}</div>
       {!closing && (
         <Row>
-          <button className="bevel" onClick={() => void quit()}>Beenden</button>
-          <button className="bevel font-bold" onClick={c.onClose}>Abbrechen</button>
+          <button className="bevel" onClick={() => void quit()}>{t('Beenden')}</button>
+          <button className="bevel font-bold" onClick={c.onClose}>{t('Abbrechen')}</button>
         </Row>
       )}
     </Win95Window>
@@ -102,35 +103,35 @@ function Shutdown({ c }: { c: Common }) {
 
 function Computer({ c }: { c: Common }) {
   return (
-    <Win95Window title="Mein Computer" width={360} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
+    <Win95Window title={t('Mein Computer')} width={360} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
       <div className="p-2" style={sunken}>
-        <div>Prozessor: 133 MHz (tapfer)</div>
-        <div>Arbeitsspeicher: 16 MB (reicht für alles)</div>
-        <div>Festplatte: 540 MB, davon frei: 538 MB</div>
-        <div>Bildschirm: 640 × 480, 256 Farben</div>
-        <div>Stimmung: gut</div>
+        <div>{t('Prozessor: 133 MHz (tapfer)')}</div>
+        <div>{t('Arbeitsspeicher: 16 MB (reicht für alles)')}</div>
+        <div>{t('Festplatte: 540 MB, davon frei: 538 MB')}</div>
+        <div>{t('Bildschirm: 640 × 480, 256 Farben')}</div>
+        <div>{t('Stimmung: gut')}</div>
       </div>
-      <Row><button className="bevel font-bold" onClick={c.onClose}>Okay</button></Row>
+      <Row><button className="bevel font-bold" onClick={c.onClose}>{t('Okay')}</button></Row>
     </Win95Window>
   )
 }
 
 function Chat({ c }: { c: Common }) {
   return (
-    <Win95Window title="Plauderecke" width={400} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
+    <Win95Window title={t('Plauderecke')} width={400} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
       <div className="flex gap-2">
         <div className="w-32 p-1.5 text-[12px]" style={sunken}>
-          <div>● Funki (online)</div>
-          <div>◐ Der Drucker (beschäftigt)</div>
-          <div>○ Kaffeemaschine (abwesend)</div>
+          <div>● {t('Funki (online)')}</div>
+          <div>◐ {t('Der Drucker (beschäftigt)')}</div>
+          <div>○ {t('Kaffeemaschine (abwesend)')}</div>
         </div>
         <div className="flex-1 p-1.5 text-[12px] min-h-[96px]" style={sunken}>
-          <div><b>Funki:</b> Sie haben eine Mail!</div>
-          <div><b>Sie:</b> Von wem?</div>
-          <div><b>Funki:</b> Das wollte ich gerade fragen.</div>
+          <div><b>Funki:</b> {t('Sie haben eine Mail!')}</div>
+          <div><b>{t('Sie:')}</b> {t('Von wem?')}</div>
+          <div><b>Funki:</b> {t('Das wollte ich gerade fragen.')}</div>
         </div>
       </div>
-      <Row><button className="bevel" onClick={c.onClose}>Abmelden</button></Row>
+      <Row><button className="bevel" onClick={c.onClose}>{t('Abmelden')}</button></Row>
     </Win95Window>
   )
 }
@@ -138,23 +139,23 @@ function Chat({ c }: { c: Common }) {
 function Typewriter({ c, title = 'Unbenannt – Schreibmaschine', text = 'Hello, World!\n\n' }: { c: Common; title?: string; text?: string }) {
   return (
     <Win95Window title={title} width={380} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
-      <textarea defaultValue={text} rows={8} className="w-full p-1.5 text-[13px] outline-none resize-none" style={{ ...sunken, fontFamily: '"Courier New", monospace' }} />
+      <textarea defaultValue={t(text)} rows={8} className="w-full p-1.5 text-[13px] outline-none resize-none" style={{ ...sunken, fontFamily: '"Courier New", monospace' }} />
     </Win95Window>
   )
 }
 
 function Sheet({ c, title = 'Zahlenwerk – Tabelle1' }: { c: Common; title?: string }) {
   const cell = { border: '1px solid #8a8a99', padding: '1px 6px', textAlign: 'right' as const }
-  const rows = [['Kaffee', 3, 4, 5], ['Mails', 12, 7, 20], ['Ideen', 1, 0, 17], ['Summe', 16, 11, 42]]
+  const rows = [[t('Kaffee'), 3, 4, 5], [t('Mails'), 12, 7, 20], [t('Ideen'), 1, 0, 17], [t('Summe'), 16, 11, 42]]
   return (
     <Win95Window title={title} width={360} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
       <div style={sunken}>
         <table className="w-full text-[12px]" style={{ borderCollapse: 'collapse' }}>
-          <thead><tr>{['', 'Mo', 'Di', 'Mi'].map((h) => <th key={h} style={{ ...cell, background: 'var(--face)' }}>{h}</th>)}</tr></thead>
-          <tbody>{rows.map((r) => <tr key={String(r[0])}>{r.map((v, i) => <td key={i} style={{ ...cell, textAlign: i === 0 ? 'left' : 'right', fontWeight: r[0] === 'Summe' ? 700 : 400 }}>{v}</td>)}</tr>)}</tbody>
+          <thead><tr>{['', t('Mo'), t('Di'), t('Mi')].map((h) => <th key={h} style={{ ...cell, background: 'var(--face)' }}>{h}</th>)}</tr></thead>
+          <tbody>{rows.map((r) => <tr key={String(r[0])}>{r.map((v, i) => <td key={i} style={{ ...cell, textAlign: i === 0 ? 'left' : 'right', fontWeight: r[0] === t('Summe') ? 700 : 400 }}>{v}</td>)}</tr>)}</tbody>
         </table>
       </div>
-      <div className="text-[11px] mt-2 opacity-80">Die Summe stimmt immer. Meistens ist es 42.</div>
+      <div className="text-[11px] mt-2 opacity-80">{t('Die Summe stimmt immer. Meistens ist es 42.')}</div>
     </Win95Window>
   )
 }
@@ -185,7 +186,7 @@ function Paint({ c }: { c: Common }) {
     cv.getContext('2d')!.clearRect(0, 0, cv.width, cv.height)
   }
   return (
-    <Win95Window title="Unbenannt – Pixelmaler" width={330} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
+    <Win95Window title={t('Unbenannt – Pixelmaler')} width={330} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
       <canvas
         ref={ref}
         width={300}
@@ -200,7 +201,7 @@ function Paint({ c }: { c: Common }) {
         {['#000000', '#d6334c', '#2f6fd0', '#3fae5f', '#f5d442'].map((col) => (
           <button key={col} aria-label={col} onClick={() => setColor(col)} className="w-5 h-5" style={{ background: col, border: color === col ? '2px solid #fff' : '2px solid var(--bevel-dark)', outline: color === col ? '1px solid #000' : 'none' }} />
         ))}
-        <button className="bevel ml-auto" onClick={clear}>Löschen</button>
+        <button className="bevel ml-auto" onClick={clear}>{t('Löschen')}</button>
       </div>
     </Win95Window>
   )
@@ -209,9 +210,9 @@ function Paint({ c }: { c: Common }) {
 function Floppy({ c }: { c: Common }) {
   const [n, setN] = useState(2)
   return (
-    <Win95Window title="Diskettenbox" width={350} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
-      <div>Bitte legen Sie Diskette {n} von 47 ein.{n > 2 && ' Das kann dauern.'}</div>
-      <Row><button className="bevel" onClick={() => setN((v) => v + 1)}>Wiederholen</button><button className="bevel font-bold" onClick={c.onClose}>Abbrechen</button></Row>
+    <Win95Window title={t('Diskettenbox')} width={350} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
+      <div>{t('Bitte legen Sie Diskette {n} von 47 ein.', { n })}{n > 2 && ` ${t('Das kann dauern.')}`}</div>
+      <Row><button className="bevel" onClick={() => setN((v) => v + 1)}>{t('Wiederholen')}</button><button className="bevel font-bold" onClick={c.onClose}>{t('Abbrechen')}</button></Row>
     </Win95Window>
   )
 }
@@ -244,7 +245,7 @@ function Mines({ c }: { c: Common }) {
   const reset = () => { setMines(make()); setSeen(new Set()); setDead(false) }
   const colors = ['', '#2f6fd0', '#2e8b57', '#d6334c', '#0a246a']
   return (
-    <Win95Window title="Minenfeld" width={250} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
+    <Win95Window title={t('Minenfeld')} width={250} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
       <div className="grid mx-auto" style={{ gridTemplateColumns: `repeat(${N}, 24px)`, width: N * 24 }}>
         {Array.from({ length: N * N }, (_, i) => {
           const open = seen.has(i) || (dead && mines.has(i))
@@ -257,16 +258,17 @@ function Mines({ c }: { c: Common }) {
         })}
       </div>
       <div className="mt-2 min-h-[36px] text-[12px]">
-        {dead && 'Sie haben eine Mine gefunden. Herzlichen Glückwunsch. Das war nicht das Ziel.'}
-        {won && 'Alle sicheren Felder gefunden. Unglaublich.'}
-        {!dead && !won && 'Finden Sie alle sicheren Felder. Zehn Minen sind versteckt.'}
+        {dead && t('Sie haben eine Mine gefunden. Herzlichen Glückwunsch. Das war nicht das Ziel.')}
+        {won && t('Alle sicheren Felder gefunden. Unglaublich.')}
+        {!dead && !won && t('Finden Sie alle sicheren Felder. Zehn Minen sind versteckt.')}
       </div>
-      <Row><button className="bevel" onClick={reset}>Neu</button><button className="bevel font-bold" onClick={c.onClose}>Schließen</button></Row>
+      <Row><button className="bevel" onClick={reset}>{t('Neu')}</button><button className="bevel font-bold" onClick={c.onClose}>{t('Schließen')}</button></Row>
     </Win95Window>
   )
 }
 
 export function Joke({ kind, ...c }: { kind: JokeKind } & Common) {
+  useLang()
   switch (kind) {
     case 'internet': return <Modem c={c} />
     case 'coffee': return <Coffee c={c} />
@@ -295,9 +297,9 @@ export function Joke({ kind, ...c }: { kind: JokeKind } & Common) {
     case 'chaos-404': return <Note c={c} title="Fehler 404 – Kaffee nicht gefunden" button="Erneut versuchen" text="Die Kaffeemaschine antwortet nicht. Bitte erneut versuchen." />
     case 'chaos-ask':
       return (
-        <Win95Window title="Hinweis" width={360} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
-          <div>Es sind möglicherweise zu viele Fenster geöffnet. Möchten Sie das wirklich?</div>
-          <Row><button className="bevel font-bold" onClick={c.onClose}>Ja, natürlich!</button><button className="bevel" onClick={() => { c.onClose(); c.onOpen('help') }}>Hilfe!</button></Row>
+        <Win95Window title={t('Hinweis')} width={360} onClose={c.onClose} onFocus={c.onFocus} initial={c.initial}>
+          <div>{t('Es sind möglicherweise zu viele Fenster geöffnet. Möchten Sie das wirklich?')}</div>
+          <Row><button className="bevel font-bold" onClick={c.onClose}>{t('Ja, natürlich!')}</button><button className="bevel" onClick={() => { c.onClose(); c.onOpen('help') }}>{t('Hilfe!')}</button></Row>
         </Win95Window>
       )
   }

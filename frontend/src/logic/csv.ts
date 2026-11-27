@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 // Small, forgiving CSV reader for contact lists. Runs in the browser only;
 // nothing is uploaded. Only name and address are kept, never other columns.
 export interface Candidate {
@@ -34,7 +35,7 @@ function splitLine(line: string, delim: string): string[] {
 }
 
 export function parseContacts(text: string, known: Set<string>, maxRows: number): ParseResult {
-  if (text.length > MAX_BYTES) return { rows: [], invalid: 0, known: 0, note: 'Die Datei ist größer als 1 MB und wurde nicht gelesen.' }
+  if (text.length > MAX_BYTES) return { rows: [], invalid: 0, known: 0, note: t('Die Datei ist größer als 1 MB und wurde nicht gelesen.') }
   const lines = text.replace(/^﻿/, '').split(/\r?\n/).filter((l) => l.trim() !== '')
   if (lines.length === 0) return { rows: [], invalid: 0, known: 0, note: 'Die Datei ist leer.' }
   const delim = (lines[0].match(/;/g)?.length ?? 0) > (lines[0].match(/,/g)?.length ?? 0) ? ';' : ','
@@ -67,5 +68,5 @@ export function parseContacts(text: string, known: Set<string>, maxRows: number)
     if (!name) name = address.split('@')[0]
     rows.push({ name, address })
   }
-  return { rows, invalid, known: knownCount, note: truncated ? `Die Datei hat mehr als ${maxRows} gültige Zeilen. Gelesen wurden nur die ersten ${maxRows}. Teile die Datei, wenn du den Rest brauchst.` : undefined }
+  return { rows, invalid, known: knownCount, note: truncated ? t('Die Datei hat mehr als {max} gültige Zeilen. Gelesen wurden nur die ersten {max}. Teile die Datei, wenn du den Rest brauchst.', { max: maxRows }) : undefined }
 }

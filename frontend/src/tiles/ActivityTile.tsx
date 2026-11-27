@@ -1,3 +1,4 @@
+import { locale, t, useLang } from '../i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { admin } from '../api/admin'
 
@@ -91,9 +92,10 @@ function groupOf(event: string): string {
 const dotOf = (event: string) => GROUPS.find((g) => g.id === groupOf(event))?.dot ?? '#d0d0d0'
 
 const PAGE = 50
-const NO_ANSWER = 'Der Server antwortet nicht. Läuft der Tunnel noch?'
+const noAnswer = () => t('Der Server antwortet nicht. Läuft der Tunnel noch?')
 
 export function ActivityTile() {
+  useLang()
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [range, setRange] = useState('all')
   const [entries, setEntries] = useState<Entry[]>([])
@@ -117,14 +119,14 @@ export function ActivityTile() {
         const r = await admin.call('GET', `/admin/audit?${params}`)
         if (id !== run.current) return
         if (r.status !== 200) {
-          setError(r.data?.message ?? `Der Server meldet Fehler ${r.status}.`)
+          setError(r.data?.message ? t(r.data.message) : t('Der Server meldet Fehler {status}.', { status: r.status }))
         } else {
           const got: Entry[] = r.data.entries ?? []
           setEntries((old) => (before === null ? got : [...old, ...got]))
           setMore(r.data.next_before ?? null)
         }
       } catch {
-        if (id === run.current) setError(NO_ANSWER)
+        if (id === run.current) setError(noAnswer())
       } finally {
         if (id === run.current) {
           setLoading(false)
@@ -149,26 +151,26 @@ export function ActivityTile() {
     })
 
   const when = (ts: number) =>
-    new Date(ts * 1000).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    new Date(ts * 1000).toLocaleString(locale(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 
   return (
     <div className="p-4 text-white h-full flex flex-col text-[13px]">
       <div className="flex flex-wrap items-center gap-1.5 mb-2">
-        <button className={`gbtn ${picked.size === 0 ? 'on' : ''}`} onClick={() => setPicked(new Set())}>Alle</button>
+        <button className={`gbtn ${picked.size === 0 ? 'on' : ''}`} onClick={() => setPicked(new Set())}>{t('Alle')}</button>
         {GROUPS.map((g) => (
           <button key={g.id} className={`gbtn ${picked.has(g.id) ? 'on' : ''}`} onClick={() => toggle(g.id)}>
-            <span style={{ color: g.dot }}>●</span> {g.label}
+            <span style={{ color: g.dot }}>●</span> {t(g.label)}
           </button>
         ))}
       </div>
       <div className="flex items-center gap-2 mb-2">
-        <select className="ginput" value={range} onChange={(e) => setRange(e.target.value)} aria-label="Zeitraum">
+        <select className="ginput" value={range} onChange={(e) => setRange(e.target.value)} aria-label={t('Zeitraum')}>
           {RANGES.map((r) => (
-            <option key={r.id} value={r.id} style={{ color: '#000' }}>{r.label}</option>
+            <option key={r.id} value={r.id} style={{ color: '#000' }}>{t(r.label)}</option>
           ))}
         </select>
-        <button className="gbtn" onClick={() => void fetchPage(null)} disabled={loading}>Aktualisieren</button>
-        <span className="ml-auto text-[11px] opacity-65">Nur Aktionen, keine Mailtexte, keine Betreffzeilen.</span>
+        <button className="gbtn" onClick={() => void fetchPage(null)} disabled={loading}>{t('Aktualisieren')}</button>
+        <span className="ml-auto text-[11px] opacity-65">{t('Nur Aktionen, keine Mailtexte, keine Betreffzeilen.')}</span>
       </div>
 
       {error && (
@@ -176,13 +178,13 @@ export function ActivityTile() {
       )}
 
       <div className="flex-1 min-h-0 overflow-y-auto">
-        {loaded && !error && entries.length === 0 && <div className="opacity-70 text-[12px] py-3">Keine Einträge für diese Auswahl.</div>}
+        {loaded && !error && entries.length === 0 && <div className="opacity-70 text-[12px] py-3">{t('Keine Einträge für diese Auswahl.')}</div>}
         {entries.map((e) => (
           <div key={e.seq} className="flex gap-2 py-1.5 border-b border-white/10 leading-tight">
             <span className="mt-0.5" style={{ color: dotOf(e.event) }} aria-hidden>●</span>
             <div className="flex-1 min-w-0">
               <div className="flex gap-2 items-baseline">
-                <span className="font-semibold">{LABEL[e.event] ?? e.event.replace(/_/g, ' ')}</span>
+                <span className="font-semibold">{LABEL[e.event] ? t(LABEL[e.event]) : e.event.replace(/_/g, ' ')}</span>
                 <span className="ml-auto text-[11px] opacity-65 shrink-0">{when(e.ts)}</span>
               </div>
               {(e.address || e.detail) && (
@@ -195,7 +197,7 @@ export function ActivityTile() {
         ))}
         {more !== null && (
           <div className="py-2 text-center">
-            <button className="gbtn" onClick={() => void fetchPage(more)} disabled={loading}>{loading ? 'Lade …' : 'Ältere laden'}</button>
+            <button className="gbtn" onClick={() => void fetchPage(more)} disabled={loading}>{loading ? t('Lade …') : t('Ältere laden')}</button>
           </div>
         )}
       </div>

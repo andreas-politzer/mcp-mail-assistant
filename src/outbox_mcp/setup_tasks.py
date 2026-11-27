@@ -187,7 +187,7 @@ def save_mailbox(
 
 
 def send_test_mail(
-    env: Mapping[str, str], to: str, mark_own: bool, context: Optional[ssl.SSLContext] = None
+    env: Mapping[str, str], to: str, mark_own: bool, context: Optional[ssl.SSLContext] = None, lang: str = "de"
 ) -> None:
     box = load_mailbox(env)
     if box is None:
@@ -199,10 +199,13 @@ def send_test_mail(
     password = (env.get("OUTBOX_SMTP_PASSWORD") or "") or (secrets_store.get_smtp_password(box.host, box.email) or "")
     if not password:
         raise SetupError("Im Schlüsselbund liegt kein Passwort für dieses Postfach. Bitte das Passwort noch einmal eingeben.")
-    message = build_message(
-        box.email, "", to, "", "Testmail von Mail Assistant",
-        "Diese Mail kommt von deinem Mail Assistant. Wenn du sie liest, ist der Versand eingerichtet.\n",
-    )
+    if lang == "en":
+        subject = "Test mail from Mail Assistant"
+        body = "This mail comes from your Mail Assistant. If you are reading it, sending is set up.\n"
+    else:
+        subject = "Testmail von Mail Assistant"
+        body = "Diese Mail kommt von deinem Mail Assistant. Wenn du sie liest, ist der Versand eingerichtet.\n"
+    message = build_message(box.email, "", to, "", subject, body)
     client = SmtpClient(box.host, box.port, box.email, password, box.security, 30.0, ssl_context=context)
     try:
         client.send(message, box.email, to)

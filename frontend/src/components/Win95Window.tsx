@@ -1,3 +1,4 @@
+import { t } from '../i18n'
 import type { ReactNode } from 'react'
 import { useDraggable } from '../core/useDraggable'
 
@@ -36,8 +37,8 @@ export function Win95Window({
         onPointerMove={dragHandlers.onPointerMove}
         onPointerUp={(e) => dragHandlers.onPointerUp(e)}
       >
-        <span className="font-bold text-[13px] flex-1 truncate">{title}</span>
-        <button className="bevel !px-1.5 !py-0 text-[11px] leading-4 font-bold" onPointerDown={(e) => e.stopPropagation()} onClick={onClose} aria-label="Schließen">✕</button>
+        <span className="font-bold text-[13px] flex-1 truncate">{t(title)}</span>
+        <button className="bevel !px-1.5 !py-0 text-[11px] leading-4 font-bold" onPointerDown={(e) => e.stopPropagation()} onClick={onClose} aria-label={t('Schließen')}>✕</button>
       </div>
       <div className="p-3 text-[13px] leading-relaxed">{children}</div>
     </div>
