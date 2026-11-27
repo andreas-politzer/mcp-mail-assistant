@@ -16,6 +16,7 @@ export interface Recipient {
   status: 'suggested' | 'active' | 'rejected' | 'removed' | 'expired' | 'blocked'
   note: string
   suggested_by: string | null
+  scope?: 'own' | 'external'
 }
 
 interface ImportRow {
@@ -57,6 +58,7 @@ export function RecipientsTile({ ask }: { ask: AskConfirm }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
   const [name, setName] = useState('')
   const [address, setAddress] = useState('')
+  const [aliasText, setAliasText] = useState('')
   const [error, setError] = useState('')
   const [dragging, setDragging] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -80,6 +82,8 @@ export function RecipientsTile({ ask }: { ask: AskConfirm }) {
   const isCandidate = (r: Recipient) => r.status === 'suggested' && r.suggested_by === ADMIN_SOURCE
   const proposals = all.filter((r) => r.status === 'suggested' && !isCandidate(r))
   const active = all.filter((r) => r.status === 'active')
+  const own = active.filter((r) => r.scope === 'own')
+  const others = active.filter((r) => r.scope !== 'own')
   const blocked = all.filter((r) => r.status === 'blocked')
   const cands = all.filter(isCandidate)
 
@@ -117,6 +121,28 @@ export function RecipientsTile({ ask }: { ask: AskConfirm }) {
     await load()
   }
 
+  // Between the two classes. 'external' is applied at once, 'own' (the loosening) only after the person has confirmed
+  // here and the server has asked once more.
+  const moveTo = async (r: Recipient, scope: 'own' | 'external') => {
+    let res = await server('POST', `/admin/recipients/${r.id}/scope`, { scope })
+    if (res.status === 200 && res.data.status === 'confirmation_required') {
+      res = await server('POST', `/admin/recipients/${r.id}/scope`, { scope, confirmation_id: res.data.confirmation_id })
+    }
+    setNote(
+      res.status === 200
+        ? { text: scope === 'own' ? t('{name} gehört jetzt zu den eigenen Adressen.', { name: r.name }) : t('{name} braucht jetzt wieder deinen Passkey.', { name: r.name }), bad: false }
+        : { text: problem(res), bad: true },
+    )
+    await load()
+  }
+  const makeOwn = (r: Recipient) =>
+    ask({
+      title: t('Als eigene Adresse markieren?'),
+      body: <>{t('Für Mails an')} <b>{r.name}</b> ({r.address}) {t('reicht danach dein Okay im Chat, ohne Passkey. Tu das nur für Adressen, die wirklich dir gehören oder denen du vollständig vertraust.')}</>,
+      confirmLabel: t('Als eigene markieren'),
+      run: () => void moveTo(r, 'own'),
+    })
+
   const approve = (r: Recipient) =>
     ask({
       title: t('Empfänger freigeben?'),
@@ -127,7 +153,7 @@ export function RecipientsTile({ ask }: { ask: AskConfirm }) {
   const unblock = (r: Recipient) =>
     ask({
       title: t('Sperre aufheben?'),
-      body: <>{t('Die Adresse')} <b>{r.address}</b> {t('ist danach nicht mehr gesperrt und steht wieder bei den Freigegebenen, als fremde Adresse (Mails dorthin brauchen deinen Passkey).')}</>,
+      body: <>{t('Die Adresse')} <b>{r.address}</b> {t('ist danach nicht mehr gesperrt und steht wieder bei den anderen Empfängern (Mails dorthin brauchen deinen Passkey).')}</>,
       confirmLabel: t('Sperre aufheben'),
       run: () => void change(r, 'unblock', t('Die Sperre ist aufgehoben, die Adresse ist wieder freigegeben.')),
     })
@@ -151,20 +177,32 @@ export function RecipientsTile({ ask }: { ask: AskConfirm }) {
     if (!EMAIL.test(address.trim())) return setError(t('Das ist keine gültige Adresse.'))
     const n = name.trim()
     const a = address.trim()
+    // Aliases: comma separated, empty ones dropped, the same one only once. The server checks the rest.
+    const aliases = aliasText
+      .split(',')
+      .map((x) => x.trim())
+      .filter((x, i, list) => x && list.findIndex((y) => y.toLowerCase() === x.toLowerCase()) === i)
     const existing = all.find((r) => r.address.toLowerCase() === a.toLowerCase())
     if (existing?.status === 'blocked') return setError(t('Diese Adresse ist gesperrt. Hebe zuerst die Sperre auf.'))
     if (existing?.status === 'active') return setError(t('Diese Adresse gibt es schon.'))
     setError('')
     ask({
       title: t('Empfänger hinzufügen?'),
-      body: <>{t('Du gibst')} <b>{n}</b> {t('mit der Adresse {address} direkt frei. Claude darf dann Mails dorthin vorbereiten.', { address: a })}</>,
+      body: (
+        <>
+          {t('Du gibst')} <b>{n}</b> {t('mit der Adresse {address} direkt frei. Claude darf dann Mails dorthin vorbereiten.', { address: a })}
+          {' '}{t('Das ist eine fremde Adresse: Mails dorthin brauchen zusätzlich deinen Passkey.')}
+          {aliases.length > 0 && <> {t('Weitere Namen dafür:')} {aliases.map((x) => `„${x}“`).join(' ')}.</>}
+        </>
+      ),
       confirmLabel: t('Hinzufügen'),
       run: () =>
         void (async () => {
-          const r = await server('POST', '/admin/recipients', { name: n, address: a, aliases: [] })
+          const r = await server('POST', '/admin/recipients', { name: n, address: a, aliases })
           if (r.status !== 201) return setNote({ text: problem(r), bad: true })
           setName('')
           setAddress('')
+          setAliasText('')
           setNote({ text: t('{name} ist freigegeben.', { name: n }), bad: false })
           await load()
         })(),
@@ -271,12 +309,27 @@ export function RecipientsTile({ ask }: { ask: AskConfirm }) {
   const row = (r: Recipient, buttons: ReactNode) => (
     <div key={r.id} data-testid={`recipient-${r.address}`} className="flex items-center gap-2 py-1 border-b border-white/10">
       <div className="flex-1 min-w-0 leading-tight">
-        <div className="text-[13px] font-semibold truncate">
-          {r.name}
-          {r.aliases.length > 0 && <span className="ml-1.5 text-[11px] font-normal opacity-70">{r.aliases.map((a) => `„${a}“`).join(' ')}</span>}
+        <div className="text-[13px] font-semibold truncate">{r.name}</div>
+        <div className="text-[11px] opacity-75 truncate">
+          {r.address}
         </div>
-        <div className="text-[11px] opacity-75 truncate">{r.address}</div>
-        {r.note && <div className="text-[11px] opacity-70 truncate">{r.note}</div>}
+        {r.status === 'active' && (
+          <button className="text-[11px] underline opacity-80 hover:opacity-100" onClick={() => (r.scope === 'own' ? void moveTo(r, 'external') : makeOwn(r))}>
+            {r.scope === 'own' ? t('Auf Passkey umstellen') : t('Als eigene markieren')}
+          </button>
+        )}
+        {r.aliases.length > 0 && (
+          <details className="text-[11px] opacity-75">
+            <summary className="cursor-pointer">{t('Aliasse')} ({r.aliases.length})</summary>
+            <div>{r.aliases.map((a) => `„${a}“`).join(' ')}</div>
+          </details>
+        )}
+        {r.note && (
+          <details className="text-[11px] opacity-70">
+            <summary className="cursor-pointer">{t('Notiz')}</summary>
+            <div>{r.note}</div>
+          </details>
+        )}
       </div>
       {buttons}
     </div>
@@ -373,16 +426,32 @@ export function RecipientsTile({ ask }: { ask: AskConfirm }) {
               ))
             : empty('Nichts offen.'))}
 
-        {header('active', 'Freigegeben', active.length)}
-        {!collapsed.has('active') &&
-          (active.filter(match).length
-            ? limited(active.filter(match), (r) => (
+        {header('own', 'Eigene Adressen (Freigabe im Chat)', own.length)}
+        {!collapsed.has('own') && (
+          <>
+            <div className="text-[11px] opacity-75 py-1">{t('Claude darf hier nach deinem Okay im Chat senden.')}</div>
+            {own.length > 3 && <div className="text-[11px] py-1" style={{ color: '#ffe9a8' }}>{t('Halte diese Liste klein: Hier reicht dein Okay im Chat ohne Passkey.')}</div>}
+            {own.filter(match).length ? limited(own.filter(match), (r) => (
                 <>
                   <button className="gbtn danger" onClick={() => block(r)}>{t('Sperren')}</button>
                   <button className="gbtn" onClick={() => remove(r)}>{t('Entfernen')}</button>
                 </>
-              ))
-            : empty('Nichts gefunden.'))}
+              )) : empty('Keine eigenen Adressen.')}
+          </>
+        )}
+
+        {header('others', 'Andere Empfänger (nur mit Passkey)', others.length)}
+        {!collapsed.has('others') && (
+          <>
+            <div className="text-[11px] opacity-75 py-1">{t('Jede Mail braucht deine Bestätigung per Passkey.')}</div>
+            {others.filter(match).length ? limited(others.filter(match), (r) => (
+                <>
+                  <button className="gbtn danger" onClick={() => block(r)}>{t('Sperren')}</button>
+                  <button className="gbtn" onClick={() => remove(r)}>{t('Entfernen')}</button>
+                </>
+              )) : empty('Nichts gefunden.')}
+          </>
+        )}
 
         {header('blocked', 'Gesperrt', blocked.length)}
         {!collapsed.has('blocked') &&
@@ -439,6 +508,8 @@ export function RecipientsTile({ ask }: { ask: AskConfirm }) {
           <input value={address} onChange={(e) => setAddress(e.target.value)} placeholder={t('adresse@beispiel.de')} className="field flex-[1.4] min-w-0" />
           <button className="gbtn primary" onClick={add}>＋ {t('Hinzufügen')}</button>
         </div>
+        <input value={aliasText} onChange={(e) => setAliasText(e.target.value)} placeholder={t('Aliasse, mit Komma (freiwillig)')} aria-label={t('Aliasse')} className="field w-full mt-2" />
+        <div className="text-[11px] opacity-70 mt-1">{t('Neue Einträge brauchen automatisch deinen Passkey.')}</div>
         {error && <div className="text-xs mt-1 text-red-100">{error}</div>}
       </div>
 

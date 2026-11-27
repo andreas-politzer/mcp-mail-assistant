@@ -8,6 +8,7 @@ useSignedInServer()
 const text = (el: HTMLElement) => (el.textContent ?? '').replace(/\s+/g, ' ').trim()
 const mount = () => render(<RecipientsTile ask={ask} />)
 const list = async () => (await api('GET', '/admin/recipients')).data.recipients as { id: number; address: string; status: string; name: string }[]
+const scopeOf = async (address: string) => ((await api('GET', '/admin/recipients')).data.recipients as { address: string; scope: string }[]).find((r) => r.address === address)?.scope
 const statusOf = async (address: string) => (await list()).find((r) => r.address === address)?.status
 
 async function importCsv(csv: string) {
@@ -22,7 +23,7 @@ const click = (label: string) => fireEvent.click(screen.getByText(label))
 describe('recipients against the real admin API', () => {
   it('adds a recipient after a confirmation and lists it as approved', async () => {
     mount()
-    await screen.findByText('Freigegeben')
+    await screen.findByText('Andere Empfänger (nur mit Passkey)')
     fireEvent.change(screen.getByPlaceholderText('Name'), { target: { value: 'Neue Person' } })
     fireEvent.change(screen.getByPlaceholderText('adresse@beispiel.de'), { target: { value: 'neu1@example.org' } })
     click('＋ Hinzufügen')
@@ -33,9 +34,49 @@ describe('recipients against the real admin API', () => {
     expect(await statusOf('neu1@example.org')).toBe('active')
   })
 
+  it('adds a recipient with aliases and shows them folded away until opened', async () => {
+    mount()
+    await screen.findByText('Andere Empfänger (nur mit Passkey)')
+    fireEvent.change(screen.getByPlaceholderText('Name'), { target: { value: 'André' } })
+    fireEvent.change(screen.getByPlaceholderText('adresse@beispiel.de'), { target: { value: 'andre@example.org' } })
+    fireEvent.change(screen.getByPlaceholderText('Aliasse, mit Komma (freiwillig)'), { target: { value: 'André Lüneburg, Choi, choi ,' } })
+    click('＋ Hinzufügen')
+    await nextAsk()
+    await confirmLast()
+    const row = await screen.findByTestId('recipient-andre@example.org')
+    const summary = row.querySelector('details summary')
+    expect(summary?.textContent).toContain('Aliasse (2)')
+    expect(row.querySelector('details')?.hasAttribute('open')).toBe(false)
+    expect(row.textContent).toContain('„André Lüneburg“ „Choi“')
+  })
+
+  it('sorts recipients into own addresses and others, and moves one between them', async () => {
+    mount()
+    await screen.findByText('Andere Empfänger (nur mit Passkey)')
+    fireEvent.change(screen.getByPlaceholderText('Name'), { target: { value: 'Fremde Person' } })
+    fireEvent.change(screen.getByPlaceholderText('adresse@beispiel.de'), { target: { value: 'fremd@example.org' } })
+    click('＋ Hinzufügen')
+    const ask = await nextAsk()
+    expect(JSON.stringify(ask.body)).toContain('Passkey')
+    await confirmLast()
+    const row = await screen.findByTestId('recipient-fremd@example.org')
+    // New entries are others (passkey): the address sits in that section and offers to become an own address.
+    expect(screen.getByText('Keine eigenen Adressen.')).toBeTruthy()
+    expect(await scopeOf('fremd@example.org')).toBe('external')
+    fireEvent.click(row.querySelector('button.underline') as HTMLElement)
+    expect((await nextAsk()).title).toBe('Als eigene Adresse markieren?')
+    expect(await scopeOf('fremd@example.org')).toBe('external') // nothing before the confirmation
+    await confirmLast()
+    await waitFor(async () => expect(await scopeOf('fremd@example.org')).toBe('own'))
+    await waitFor(() => expect(screen.queryByText('Keine eigenen Adressen.')).toBeNull())
+    // Back to the passkey class at once, no question.
+    fireEvent.click(screen.getByTestId('recipient-fremd@example.org').querySelector('button.underline') as HTMLElement)
+    await waitFor(async () => expect(await scopeOf('fremd@example.org')).toBe('external'))
+  })
+
   it('refuses an empty name and a bad address without asking the server', async () => {
     mount()
-    await screen.findByText('Freigegeben')
+    await screen.findByText('Andere Empfänger (nur mit Passkey)')
     click('＋ Hinzufügen')
     await screen.findByText('Ein Empfänger braucht einen Namen.')
     fireEvent.change(screen.getByPlaceholderText('Name'), { target: { value: 'X' } })
@@ -77,7 +118,7 @@ describe('recipients against the real admin API', () => {
 
   it('previews an import, creates candidates only, and never approves anything by itself', async () => {
     mount()
-    await screen.findByText('Freigegeben')
+    await screen.findByText('Andere Empfänger (nur mit Passkey)')
     const csv = ['Name,E-Mail', 'Imp Eins,imp1@example.org', 'Imp Zwei,imp2@example.org', 'Imp Drei,imp3@example.org', 'Doppelt,imp1@example.org', 'Kaputt,kaputt-ohne-at'].join('\n')
     await importCsv(csv)
     expect(text(screen.getByTestId('import-summary'))).toContain('3 neu als Kandidat')
@@ -91,7 +132,7 @@ describe('recipients against the real admin API', () => {
 
   it('decides on candidates: approve some, reject some, and rejected ones never come back', async () => {
     mount()
-    await screen.findByText('Freigegeben')
+    await screen.findByText('Andere Empfänger (nur mit Passkey)')
     await importCsv(['Name,E-Mail', 'Dec Eins,dec1@example.org', 'Dec Zwei,dec2@example.org', 'Dec Drei,dec3@example.org'].join('\n'))
     click('3 als Kandidaten anlegen')
     await screen.findByTestId('candidate-dec1@example.org')
@@ -120,7 +161,7 @@ describe('recipients against the real admin API', () => {
 
   it('imports a large file in several passes', async () => {
     mount()
-    await screen.findByText('Freigegeben')
+    await screen.findByText('Andere Empfänger (nur mit Passkey)')
     await importCsv(rows('big', 1200))
     expect(text(screen.getByTestId('import-summary'))).toContain('1200 neu als Kandidat')
     click('1200 als Kandidaten anlegen')
@@ -130,7 +171,7 @@ describe('recipients against the real admin API', () => {
 
   it('reads only the first 2000 rows of a longer file and says so', async () => {
     mount()
-    await screen.findByText('Freigegeben')
+    await screen.findByText('Andere Empfänger (nur mit Passkey)')
     await importCsv(rows('huge', 2100))
     expect(text(screen.getByTestId('import-summary'))).toContain('2000 neu als Kandidat')
     expect(text(document.body)).toContain('mehr als 2000')

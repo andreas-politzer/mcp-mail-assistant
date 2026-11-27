@@ -32,8 +32,8 @@ export function HelpTile() {
 
         <Part title={t('Empfänger')}>
           <p>{t('Unter Neu, noch nicht freigegeben stehen Adressen, die Claude im Chat vorgeschlagen hat. Du entscheidest: freigeben, ablehnen oder für immer sperren.')}</p>
-          <p>{t('Unter Freigegeben stehen die Adressen, an die Claude Mails vorbereiten darf. Entfernen nimmt eine Adresse wieder heraus.')}</p>
-          <p>{t('Eine gesperrte Adresse kommt nie wieder, auch nicht über eine Kontaktdatei. Du kannst die Sperre aufheben. Freigegeben ist die Adresse dann noch nicht.')}</p>
+          <p>{t('Unter Eigene Adressen stehen deine eigenen, dort reicht dein Okay im Chat. Unter Andere Empfänger stehen alle übrigen, dort braucht jede Mail zusätzlich deinen Passkey. Mit dem Link unter der Adresse wechselst du die Klasse, Entfernen nimmt eine Adresse ganz heraus.')}</p>
+          <p>{t('Eine gesperrte Adresse kommt nie wieder, auch nicht über eine Kontaktdatei. Du kannst die Sperre aufheben. Die Adresse steht dann wieder bei den anderen Empfängern.')}</p>
           <p>{t('Mit CSV importieren liest du eine Kontaktdatei ein. Du siehst zuerst eine Vorschau. Danach werden die neuen Adressen nur Kandidaten, nichts wird automatisch freigegeben. Eine Datei darf höchstens 2000 Zeilen haben.')}</p>
           <p>{t('Kandidaten, über die du nicht entscheidest, verfallen nach einer Frist. Die Frist stellst du unter Einstellungen ein, die Vorgabe sind 30 Tage. Abgelehnte Kandidaten kommen nie wieder. Sind zu viele Vorschläge offen, macht Claude keine weiteren. Die Vorgabe sind fünf.')}</p>
         </Part>
